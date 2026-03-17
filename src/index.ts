@@ -123,14 +123,16 @@ Ask both together in one message. Only call this tool once you have their answer
     search: z.string().optional().describe("Filter by opportunity or account name (partial match)"),
     min_nnacv: z.number().optional().describe("Minimum NNACV in USD — default 100000 ($100K+). Set to 0 for no filter."),
     my_opportunities_only: z.boolean().optional().describe("Filter to current user's owned opportunities only — default true."),
+    include_closed: z.boolean().optional().describe("Include won/lost/closed opportunities — default false (open only). Set true when user asks about a specific opp by OPTY number or explicitly wants closed deals."),
   },
-  async ({ top, search, min_nnacv, my_opportunities_only }) => {
+  async ({ top, search, min_nnacv, my_opportunities_only, include_closed }) => {
     const progress = makeProgress(server);
     const filter: OpportunityFilter = {
       top,
       search,
       minNnacv: min_nnacv ?? 100000,
       myOpportunitiesOnly: my_opportunities_only ?? true,
+      includeClosed: include_closed ?? false,
     };
     const opportunities = await fetchOpportunities(filter, progress);
     return {
