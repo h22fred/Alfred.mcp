@@ -1,4 +1,4 @@
-import { getAuthCookies, type ProgressFn } from "../auth/tokenExtractor.js";
+import { getAuthCookies, clearAuthCache, type ProgressFn } from "../auth/tokenExtractor.js";
 
 const DYNAMICS_BASE = "https://servicenow.crm.dynamics.com/api/data/v9.2";
 
@@ -81,6 +81,23 @@ async function dynamicsFetch(path: string, options: RequestInit = {}, progress: 
 
   const url = path.startsWith("http") ? path : `${DYNAMICS_BASE}${path}`;
   const response = await fetch(url, { ...options, headers });
+
+  if (response.status === 401) {
+    // Session expired — clear cache and retry once with fresh cookies
+    clearAuthCache();
+    progress("🔄 Dynamics session expired — re-acquiring cookies...");
+    const freshCookie = await getAuthCookies(progress);
+    const retry = await fetch(url, {
+      ...options,
+      headers: { ...headers, Cookie: freshCookie },
+    });
+    if (!retry.ok) {
+      let msg = `Dynamics API error: ${retry.status} ${retry.statusText}`;
+      try { const b = await retry.json(); if (b?.error?.message) msg += ` — ${b.error.message}`; } catch { /* ignore */ }
+      throw new Error(msg);
+    }
+    return retry;
+  }
 
   if (!response.ok) {
     let msg = `Dynamics API error: ${response.status} ${response.statusText}`;
