@@ -123,10 +123,10 @@ if curl -s --max-time 1 http://localhost:9222/json/version > /dev/null 2>&1; the
   exit 0
 fi
 
-mkdir -p /tmp/chrome-debug-profile
+mkdir -p ~/.chromelink-profile
 "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
   --remote-debugging-port=9222 \
-  --user-data-dir=/tmp/chrome-debug-profile \
+  --user-data-dir=~/.chromelink-profile \
   --no-first-run \
   --no-default-browser-check \
   "https://servicenow.crm.dynamics.com" \
