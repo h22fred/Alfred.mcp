@@ -18,7 +18,7 @@ let cachedOutlookAuth: CachedAuth | null = null;
 
 export type ProgressFn = (msg: string) => void;
 
-const CHROME_PROFILE_DIR = "/tmp/chrome-debug-profile";
+const CHROME_PROFILE_DIR = `${process.env.HOME}/.chromelink-profile`;
 
 function isChromeProcessRunning(): boolean {
   try {
@@ -45,10 +45,10 @@ function launchChromeLink(): void {
   }
   console.error("[auth] Launching ChromeLink...");
   execFile("/bin/sh", ["-c",
-    `mkdir -p /tmp/chrome-debug-profile && \
+    `mkdir -p ~/.chromelink-profile && \
     "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
       --remote-debugging-port=${CDP_PORT} \
-      --user-data-dir=/tmp/chrome-debug-profile \
+      --user-data-dir=~/.chromelink-profile \
       --no-first-run \
       --no-default-browser-check \
       > /dev/null 2>&1 &`
