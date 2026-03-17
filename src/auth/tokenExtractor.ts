@@ -18,6 +18,15 @@ let cachedOutlookAuth: CachedAuth | null = null;
 
 export type ProgressFn = (msg: string) => void;
 
+function isChromeProcessRunning(): boolean {
+  try {
+    execFileSync("pgrep", ["-f", `remote-debugging-port=${CDP_PORT}`], { timeout: 2_000 });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function isChromeLinkgable(): boolean {
   try {
     execFileSync("curl", ["-s", "--max-time", "1", `http://localhost:${CDP_PORT}/json/version`], { timeout: 2_000 });
@@ -28,6 +37,11 @@ function isChromeLinkgable(): boolean {
 }
 
 function launchChromeLink(): void {
+  // Guard: if a Chrome process with the debug port already exists, don't spawn another
+  if (isChromeProcessRunning()) {
+    console.error("[auth] ChromeLink process already running — waiting for port to become ready...");
+    return;
+  }
   console.error("[auth] ChromeLink not running — launching automatically...");
   execFile("/bin/sh", ["-c",
     `mkdir -p /tmp/chrome-debug-profile && \
