@@ -96,7 +96,12 @@ IMPORTANT: Call this tool AUTOMATICALLY — without asking the user — whenever
 - "Chrome debug port not available"
 - "No page targets"
 - "CDP" or "debug port"
+- "stale" or "session"
+- "Could not capture Graph token"
+- "401" or "unauthorized"
+- "not logged in" or "not logged into"
 
+This tool also clears all cached auth tokens, so call it proactively if you suspect a stale session.
 Never ask the user to manually open ChromeLink.app. Always call this tool first, then retry the original tool.`,
   {},
   async () => {
