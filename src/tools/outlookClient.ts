@@ -41,11 +41,13 @@ async function acquireGraphToken(progress: ProgressFn): Promise<string> {
     const ctx = browser.contexts()[0];
     if (!ctx) throw new Error("No browser context found");
 
-    // Open a background page that will load Outlook and immediately make Graph calls
-    const page = await ctx.newPage();
     let capturedToken: string | null = null;
 
-    // Intercept outgoing Outlook API requests to capture the Bearer token
+    // Prefer the existing Outlook tab — avoids a full page load
+    const existingPage = ctx.pages().find(p => p.url().includes("outlook.office.com"));
+    const page = existingPage ?? await ctx.newPage();
+    const isNewPage = !existingPage;
+
     await page.route("**/outlook.office.com/**", async (route) => {
       const auth = route.request().headers()["authorization"] ?? "";
       if (!capturedToken && auth.startsWith("Bearer ")) {
@@ -54,19 +56,26 @@ async function acquireGraphToken(progress: ProgressFn): Promise<string> {
       await route.continue();
     });
 
-    progress("📧 Loading Outlook to capture auth token...");
-    await page.goto(`${OUTLOOK_ORIGIN}/mail/`, {
-      waitUntil: "domcontentloaded",
-      timeout: 30_000,
-    });
-
-    // Wait up to 10 s for background requests to fire
-    const deadline = Date.now() + 10_000;
-    while (!capturedToken && Date.now() < deadline) {
-      await page.waitForTimeout(500);
+    if (isNewPage) {
+      // No existing tab — load Outlook fresh (slow path, only happens once per session)
+      progress("📧 Loading Outlook to capture auth token...");
+      await page.goto(`${OUTLOOK_ORIGIN}/mail/`, { waitUntil: "domcontentloaded", timeout: 30_000 });
+    } else {
+      // Existing tab — trigger a lightweight API call to fire auth headers immediately
+      progress("📧 Capturing auth token from existing Outlook tab...");
+      await page.evaluate(() =>
+        fetch("/owa/service.svc?action=GetAccessTokenforResource", { method: "POST", body: "{}", credentials: "include" }).catch(() => {})
+      );
     }
 
-    await page.close();
+    // Wait up to 5 s for token (existing tab fires immediately; new tab may take longer)
+    const deadline = Date.now() + (isNewPage ? 10_000 : 5_000);
+    while (!capturedToken && Date.now() < deadline) {
+      await page.waitForTimeout(200);
+    }
+
+    await page.unroute("**/outlook.office.com/**");
+    if (isNewPage) await page.close();
 
     if (!capturedToken) {
       throw new Error(
