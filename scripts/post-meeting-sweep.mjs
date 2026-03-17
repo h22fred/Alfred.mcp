@@ -139,13 +139,15 @@ try {
 } catch (e) {
   err(`Sweep failed: ${e.message}`);
 
+  const isCdpError = e.message.includes("connectOverCDP") || e.message.includes("Timeout") ||
+                     e.message.includes("ChromeLink") || e.message.includes("stale");
   const isAuthError = e.message.includes("cookie") || e.message.includes("auth") ||
                       e.message.includes("401") || e.message.includes("logged in") ||
-                      e.message.includes("ChromeLink") || e.message.includes("Graph token");
+                      e.message.includes("Graph token");
 
-  const title = "⚠️ Friday Meeting Review — Login Required";
-  const body = isAuthError
-    ? "Session expired. Open ChromeLink.app, log into Outlook and Dynamics, then ask Claude: **\"Detect post-meeting engagements from this week\"**"
+  const title = "⚠️ Friday Meeting Review — Action Required";
+  const body = (isCdpError || isAuthError)
+    ? "ChromeLink session needs a refresh. **Close and reopen ChromeLink.app**, log into Outlook and Dynamics, then ask Claude: **\"Detect post-meeting engagements from this week\"**"
     : `Meeting sweep failed: ${e.message}. Run manually via Claude Desktop.`;
 
   if (config.teamsWebhook) await postTeamsSimple(config.teamsWebhook, title, body);
