@@ -1,10 +1,10 @@
-import { connectWithRetry } from "../auth/tokenExtractor.js";
+import { connectWithRetry, getOutlookCookies, clearAuthCache } from "../auth/tokenExtractor.js";
 import type { ProgressFn } from "../auth/tokenExtractor.js";
 import { execFileSync } from "child_process";
 
 const CDP_PORT = 9222;
 const OUTLOOK_ORIGIN = "https://outlook.office.com";
-const TOKEN_CACHE_MS  = 45 * 60 * 1000; // 45 min
+const TOKEN_CACHE_MS  = 45 * 60 * 1000; // 45 min — kept for Teams Graph token
 
 interface TokenCache {
   token: string;
@@ -114,7 +114,7 @@ async function acquireGraphToken(progress: ProgressFn): Promise<string> {
 const OUTLOOK_API = "https://outlook.office.com/api/v2.0/me";
 
 // ---------------------------------------------------------------------------
-// Outlook REST v2 fetch using the captured Bearer token
+// Outlook REST v2 fetch using Bearer token (kept for Teams Graph API usage)
 // ---------------------------------------------------------------------------
 
 async function outlookApiFetch(path: string, token: string, progress?: ProgressFn): Promise<Record<string, unknown>> {
@@ -123,12 +123,44 @@ async function outlookApiFetch(path: string, token: string, progress?: ProgressF
   });
 
   if (res.status === 401) {
-    // Token expired — clear cache and retry once with a fresh token
     tokenCache = null;
     progress?.("🔄 Graph token expired — re-acquiring...");
     const freshToken = await acquireGraphToken(progress ?? (() => {}));
     const retry = await fetch(`${OUTLOOK_API}${path}`, {
       headers: { Authorization: `Bearer ${freshToken}`, Accept: "application/json" },
+    });
+    if (!retry.ok) {
+      const body = await retry.text().catch(() => "");
+      throw new Error(`Outlook API ${retry.status} ${retry.statusText}${body ? `: ${body.slice(0, 200)}` : ""}`);
+    }
+    return retry.json() as Promise<Record<string, unknown>>;
+  }
+
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    throw new Error(`Outlook API ${res.status} ${res.statusText}${body ? `: ${body.slice(0, 200)}` : ""}`);
+  }
+
+  return res.json() as Promise<Record<string, unknown>>;
+}
+
+// ---------------------------------------------------------------------------
+// Outlook REST v2 fetch using session cookies (raw CDP — no Playwright needed)
+// This is the primary path for calendar + email — more reliable than Bearer token.
+// ---------------------------------------------------------------------------
+
+async function outlookCookieFetch(path: string, progress: ProgressFn): Promise<Record<string, unknown>> {
+  const cookieHeader = await getOutlookCookies(progress);
+  const res = await fetch(`${OUTLOOK_API}${path}`, {
+    headers: { Cookie: cookieHeader, Accept: "application/json" },
+  });
+
+  if (res.status === 401) {
+    clearAuthCache();
+    progress("🔄 Outlook session expired — re-acquiring cookies...");
+    const freshCookie = await getOutlookCookies(progress);
+    const retry = await fetch(`${OUTLOOK_API}${path}`, {
+      headers: { Cookie: freshCookie, Accept: "application/json" },
     });
     if (!retry.ok) {
       const body = await retry.text().catch(() => "");
@@ -169,7 +201,6 @@ export async function getCalendarEvents(
   progress: ProgressFn = () => {}
 ): Promise<CalendarEvent[]> {
   progress(`📅 Fetching calendar events ${startDate} → ${endDate}...`);
-  const token = await acquireGraphToken(progress);
 
   const params = new URLSearchParams({
     startDateTime: `${startDate}T00:00:00Z`,
@@ -180,7 +211,7 @@ export async function getCalendarEvents(
   });
   if (search) params.set("$search", `"${search}"`);
 
-  const data = await outlookApiFetch(`/calendarview?${params}`, token, progress);
+  const data = await outlookCookieFetch(`/calendarview?${params}`, progress);
 
   const events = (data.value as Record<string, unknown>[] ?? []).map(e => {
     const org = (e.Organizer as { EmailAddress: { Name: string; Address: string } } | undefined)?.EmailAddress;
@@ -254,7 +285,6 @@ export async function getEmails(opts: {
 }, progress: ProgressFn = () => {}): Promise<EmailMessage[]> {
   const { search, folder = "inbox", top = 25, unreadOnly, fullBody } = opts;
   progress("📧 Fetching emails...");
-  const token = await acquireGraphToken(progress);
 
   const selectFields = fullBody
     ? "Id,Subject,From,ReceivedDateTime,BodyPreview,IsRead,HasAttachments,Body"
@@ -280,7 +310,7 @@ export async function getEmails(opts: {
     path = `/mailfolders/${folder}/messages?${p}`;
   }
 
-  const data = await outlookApiFetch(path, token, progress);
+  const data = await outlookCookieFetch(path, progress);
   const messages = (data.value as Record<string, unknown>[] ?? []).map(m => {
     const fromEA = (m.From as { EmailAddress: { Name: string; Address: string } })?.EmailAddress;
     const bodyContent = (m.Body as { Content?: string; ContentType?: string } | undefined);
