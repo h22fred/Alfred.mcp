@@ -18,7 +18,7 @@ import {
   type OpportunityFilter,
   type EngagementDescription,
 } from "./tools/dynamicsClient.js";
-import { closeBrowser, setManualCookies, ensureChromeDebug } from "./auth/tokenExtractor.js";
+import { closeBrowser, setManualCookies, ensureChromeLink } from "./auth/tokenExtractor.js";
 import { getCalendarEvents, getEmails, setOutlookCookies } from "./tools/outlookClient.js";
 import { setTeamsWebhook, postTeamsNotification, getTeamsTranscript, getTeamsChats } from "./tools/teamsClient.js";
 import { runHygieneSweep, formatHygieneReport } from "./tools/hygieneClient.js";
@@ -89,21 +89,21 @@ const server = new McpServer({
 // ---------------------------------------------------------------------------
 server.tool(
   "open_chrome_debug",
-  `Launch ChromeDebug (Chrome with remote debugging on port 9222) if it's not already running. Opens Dynamics, Outlook and Teams tabs automatically.
+  `Launch ChromeLink (Chrome with remote debugging on port 9222) if it's not already running. Opens Dynamics, Outlook and Teams tabs automatically.
 
 IMPORTANT: Call this tool AUTOMATICALLY — without asking the user — whenever any tool fails with an error mentioning:
-- "ChromeDebug not running"
+- "ChromeLink not running"
 - "Chrome debug port not available"
 - "No page targets"
 - "CDP" or "debug port"
 
-Never ask the user to manually open ChromeDebug.app. Always call this tool first, then retry the original tool.`,
+Never ask the user to manually open ChromeLink.app. Always call this tool first, then retry the original tool.`,
   {},
   async () => {
     const progress = makeProgress(server);
-    await ensureChromeDebug(progress);
+    await ensureChromeLink(progress);
     return {
-      content: [{ type: "text", text: "✅ ChromeDebug is running. Log into Dynamics, Outlook and Teams in the Chrome window, then retry your request." }],
+      content: [{ type: "text", text: "✅ ChromeLink is running. Log into Dynamics, Outlook and Teams in the Chrome window, then retry your request." }],
     };
   }
 );
@@ -405,7 +405,7 @@ server.tool(
   "get_calendar_events",
   `Fetch calendar events from Outlook via the debug Chrome window.
 
-Requires the user to be logged into https://outlook.office.com in the ChromeDebug Chrome window.
+Requires the user to be logged into https://outlook.office.com in the ChromeLink Chrome window.
 No Azure registration needed — the request runs inside the already-authenticated browser tab.
 
 IMPORTANT: Before calling this tool, ask the user:
@@ -432,7 +432,7 @@ server.tool(
   "search_emails",
   `Search or list emails from Outlook via the debug Chrome window.
 
-Requires the user to be logged into https://outlook.office.com in the ChromeDebug Chrome window.
+Requires the user to be logged into https://outlook.office.com in the ChromeLink Chrome window.
 No Azure registration needed — the request runs inside the already-authenticated browser tab.
 
 Can search across all mail by keyword, or list a folder (inbox, sentitems, drafts).`,
@@ -491,7 +491,7 @@ server.tool(
   "get_teams_transcript",
   `Fetch Teams meeting transcripts via Microsoft Graph. Use this to auto-generate engagement descriptions from recorded meetings.
 
-Requires ChromeDebug to be running with Teams or Outlook open. The Graph token is captured automatically.`,
+Requires ChromeLink to be running with Teams or Outlook open. The Graph token is captured automatically.`,
   {
     search:     z.string().optional().describe("Keyword to match meeting subject (e.g. 'PMI ICW')"),
     start_date: z.string().optional().describe("Search from this date (ISO, e.g. 2026-01-01) — defaults to 30 days ago"),
@@ -512,7 +512,7 @@ server.tool(
   "get_teams_chats",
   `Fetch Teams chat conversations via Microsoft Graph. Can list recent chats, search by person/topic, or fetch messages from a specific chat.
 
-Requires ChromeDebug to be running with Teams or Outlook open. The Graph token is captured automatically.
+Requires ChromeLink to be running with Teams or Outlook open. The Graph token is captured automatically.
 
 Use cases:
 - "Show my recent Teams chats with PMI"
@@ -597,7 +597,7 @@ const transport = new StdioServerTransport();
 await server.connect(transport);
 console.error("[sc-engagement-mcp] Server running on stdio");
 
-// ChromeDebug is launched on-demand when tools need it (via ensureChromeDebug inside getAuthCookies)
+// ChromeLink is launched on-demand when tools need it (via ensureChromeLink inside getAuthCookies)
 // Do NOT auto-launch at startup — avoids spawning extra Chrome windows
 
 process.on("SIGINT", async () => {

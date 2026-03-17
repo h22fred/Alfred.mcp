@@ -3,7 +3,7 @@
  * Standalone hygiene sweep runner — called by the Monday 9:30am cron job.
  *
  * Behaviour:
- *  1. Auto-launches ChromeDebug if not already running
+ *  1. Auto-launches ChromeLink if not already running
  *  2. Tries to run the hygiene sweep using your existing Dynamics session
  *  3. If auth fails (not logged in) → posts a Teams reminder + macOS notification
  *  4. Posts results to Teams on success
@@ -14,7 +14,7 @@
 
 import { runHygieneSweep, formatHygieneReport } from "../dist/tools/hygieneClient.js";
 import { setTeamsWebhook } from "../dist/tools/teamsClient.js";
-import { ensureChromeDebug } from "../dist/auth/tokenExtractor.js";
+import { ensureChromeLink } from "../dist/auth/tokenExtractor.js";
 import { readFileSync, existsSync } from "fs";
 import { homedir } from "os";
 import { join } from "path";
@@ -77,16 +77,16 @@ function macosNotify(title, message) {
 
 log("Starting hygiene sweep...");
 
-// Step 1 — ensure ChromeDebug is running
+// Step 1 — ensure ChromeLink is running
 try {
-  log("Checking ChromeDebug...");
-  await ensureChromeDebug(log);
-  log("ChromeDebug is running");
+  log("Checking ChromeLink...");
+  await ensureChromeLink(log);
+  log("ChromeLink is running");
 } catch (e) {
-  err(`Could not launch ChromeDebug: ${e.message}`);
-  const msg = "ChromeDebug could not start. Open ChromeDebug.app, log into Dynamics, then ask Claude to run hygiene sweep.";
+  err(`Could not launch ChromeLink: ${e.message}`);
+  const msg = "ChromeLink could not start. Open ChromeLink.app, log into Dynamics, then ask Claude to run hygiene sweep.";
   if (config.teamsWebhook) await postTeamsRaw(config.teamsWebhook, "⚠️ Weekly CRM Hygiene — Action Required", msg);
-  macosNotify("CRM Hygiene Sweep", "ChromeDebug failed to start — run manually");
+  macosNotify("CRM Hygiene Sweep", "ChromeLink failed to start — run manually");
   process.exit(1);
 }
 
@@ -109,10 +109,10 @@ try {
 
   const title = "⚠️ Weekly CRM Hygiene — Login Required";
   const body = isAuthError
-    ? "Dynamics session has expired. Open ChromeDebug.app, log back into Dynamics, then ask Claude: **\"Run hygiene sweep and post to Teams\"**"
+    ? "Dynamics session has expired. Open ChromeLink.app, log back into Dynamics, then ask Claude: **\"Run hygiene sweep and post to Teams\"**"
     : `Hygiene sweep failed: ${e.message}. Please run manually via Claude Desktop.`;
 
   if (config.teamsWebhook) await postTeamsRaw(config.teamsWebhook, title, body);
-  macosNotify("CRM Hygiene Sweep", isAuthError ? "Login required — open ChromeDebug" : "Sweep failed — check Teams");
+  macosNotify("CRM Hygiene Sweep", isAuthError ? "Login required — open ChromeLink" : "Sweep failed — check Teams");
   process.exit(1);
 }

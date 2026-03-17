@@ -106,10 +106,10 @@ async function acquireTeamsGraphToken(progress: ProgressFn): Promise<string> {
   try {
     execFileSync("curl", ["-s", "--max-time", "1", `http://localhost:${CDP_PORT}/json/version`], { timeout: 2_000 });
   } catch {
-    throw new Error("ChromeDebug is not running. Open ChromeDebug.app first.");
+    throw new Error("ChromeLink is not running. Open ChromeLink.app first.");
   }
 
-  progress("🔐 Acquiring Graph token via Teams/Outlook in ChromeDebug...");
+  progress("🔐 Acquiring Graph token via Teams/Outlook in ChromeLink...");
   const browser = await connectWithRetry();
 
   try {
@@ -157,7 +157,7 @@ async function acquireTeamsGraphToken(progress: ProgressFn): Promise<string> {
 
     if (!capturedToken) {
       throw new Error(
-        "Could not capture Graph token. Make sure Teams or Outlook is loaded in ChromeDebug."
+        "Could not capture Graph token. Make sure Teams or Outlook is loaded in ChromeLink."
       );
     }
 
