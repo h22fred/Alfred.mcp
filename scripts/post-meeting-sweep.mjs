@@ -13,6 +13,7 @@
  */
 
 import { detectPostMeetingEngagements } from "../dist/tools/postMeetingClient.js";
+import { fetchEngagementsByOpportunity } from "../dist/tools/dynamicsClient.js";
 import { setTeamsWebhook } from "../dist/tools/teamsClient.js";
 import { ensureChromeLink } from "../dist/auth/tokenExtractor.js";
 import { readFileSync, existsSync } from "fs";
@@ -158,9 +159,28 @@ if (candidates.length === 0) {
   process.exit(0);
 }
 
-log(`Found ${candidates.length} meeting candidate(s) — building Teams card...`);
+log(`Found ${candidates.length} meeting candidate(s) — checking engagement hygiene...`);
 
-// Step 3 — build Adaptive Card
+// Step 3 — check hygiene for matched opps
+const SC_REQUIRED = ["Discovery", "Demo", "Technical Win"];
+
+const hygieneByOpp = new Map(); // oppId → { missing: string[], status: "red"|"yellow"|"green" }
+for (const c of candidates) {
+  if (!c.suggestedOpportunityId || hygieneByOpp.has(c.suggestedOpportunityId)) continue;
+  try {
+    const engagements = await fetchEngagementsByOpportunity(c.suggestedOpportunityId, log);
+    const typeNames = engagements.map(e => e.engagementTypeName ?? "").filter(Boolean);
+    const missing = SC_REQUIRED.filter(t => !typeNames.includes(t));
+    const status = missing.length > 0 ? "red" : "green";
+    hygieneByOpp.set(c.suggestedOpportunityId, { missing, status });
+  } catch {
+    // non-fatal — hygiene check fails gracefully
+  }
+}
+
+log("Building Teams card...");
+
+// Step 4 — build Adaptive Card
 const today = new Date().toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
 const withTranscript = candidates.filter(c => c.transcriptAvailable).length;
 const withMatch      = candidates.filter(c => c.suggestedOpportunityName).length;
@@ -187,23 +207,30 @@ const cardBody = [
       { type: "Column", width: "stretch", items: [{ type: "TextBlock", text: "MEETING", size: "Small", weight: "Bolder", isSubtle: true }] },
       { type: "Column", width: "auto",    items: [{ type: "TextBlock", text: "DAY / TIME", size: "Small", weight: "Bolder", isSubtle: true, horizontalAlignment: "Right" }] },
       { type: "Column", width: "auto",    items: [{ type: "TextBlock", text: "MIN", size: "Small", weight: "Bolder", isSubtle: true, horizontalAlignment: "Right" }] },
-      { type: "Column", width: "160px",   items: [{ type: "TextBlock", text: "OPPORTUNITY", size: "Small", weight: "Bolder", isSubtle: true, horizontalAlignment: "Right" }] },
+      { type: "Column", width: "140px",   items: [{ type: "TextBlock", text: "OPPORTUNITY", size: "Small", weight: "Bolder", isSubtle: true, horizontalAlignment: "Right" }] },
+      { type: "Column", width: "120px",   items: [{ type: "TextBlock", text: "MISSING", size: "Small", weight: "Bolder", isSubtle: true, horizontalAlignment: "Right" }] },
     ],
   },
 ];
 
 for (const c of candidates) {
-  const txIcon    = c.transcriptAvailable ? "📝" : "🎙";
-  const dayTime   = `${fmtDate(c.meetingStart)} ${fmtTime(c.meetingStart)}`;
-  const duration  = c.durationMinutes ? String(c.durationMinutes) : "—";
-  const oppText   = c.suggestedOpportunityName ? truncate(c.suggestedOpportunityName, 30) : "—";
+  const txIcon  = c.transcriptAvailable ? "📝" : "🎙";
+  const dayTime = `${fmtDate(c.meetingStart)} ${fmtTime(c.meetingStart)}`;
+  const duration = c.durationMinutes ? String(c.durationMinutes) : "—";
+  const oppText  = c.suggestedAccountName ? truncate(c.suggestedAccountName, 22) : "—";
+
+  const hygiene = c.suggestedOpportunityId ? hygieneByOpp.get(c.suggestedOpportunityId) : null;
+  const missingText = hygiene
+    ? (hygiene.missing.length ? hygiene.missing.join(" · ") : "✓ complete")
+    : "—";
+  const missingColor = hygiene?.status === "red" ? "Attention" : hygiene ? "Good" : "Default";
 
   cardBody.push({
     type: "ColumnSet", spacing: "Small",
     columns: [
       {
         type: "Column", width: "stretch",
-        items: [{ type: "TextBlock", text: `${txIcon}  ${truncate(c.meetingSubject, 40)}`, size: "Small", wrap: false }],
+        items: [{ type: "TextBlock", text: `${txIcon}  ${truncate(c.meetingSubject, 38)}`, size: "Small", wrap: false }],
       },
       {
         type: "Column", width: "auto",
@@ -214,10 +241,15 @@ for (const c of candidates) {
         items: [{ type: "TextBlock", text: duration, size: "Small", isSubtle: true, horizontalAlignment: "Right" }],
       },
       {
-        type: "Column", width: "160px",
+        type: "Column", width: "140px",
         items: [{ type: "TextBlock", text: oppText, size: "Small",
-          color: c.suggestedOpportunityName ? "Accent" : "Default",
+          color: c.suggestedAccountName ? "Accent" : "Default",
           wrap: false, horizontalAlignment: "Right" }],
+      },
+      {
+        type: "Column", width: "120px",
+        items: [{ type: "TextBlock", text: missingText, size: "Small",
+          color: missingColor, wrap: false, horizontalAlignment: "Right" }],
       },
     ],
   });

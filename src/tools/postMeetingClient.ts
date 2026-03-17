@@ -8,19 +8,43 @@ export interface PostMeetingCandidate {
   meetingSubject: string;
   meetingStart: string;
   meetingEnd?: string;
-  attendees: string[];
+  organizer?: string;
+  attendees: { name: string; email: string }[];
+  attendeeNames: string[];   // convenience flat list for display
   durationMinutes?: number;
 
   // Transcript (if available)
   transcriptAvailable: boolean;
   transcript?: string;
 
-  // Opportunity match (best guess from attendee domains / subject)
+  // Opportunity match (best guess from attendee domains / subject / email domains)
   suggestedOpportunityId?: string;
   suggestedOpportunityName?: string;
+  suggestedAccountName?: string;
+  matchReason?: string;  // e.g. "subject", "domain", "organizer"
 
   // Raw data for Claude to reason about
   calendarEvent: Record<string, unknown>;
+}
+
+// Internal domains to exclude from attendee domain matching
+const INTERNAL_DOMAINS = new Set([
+  "servicenow.com", "now.com",
+  "gmail.com", "outlook.com", "hotmail.com", "yahoo.com", "live.com",
+  "microsoft.com", "google.com",
+]);
+
+function attendeeDomainWord(email: string): string | null {
+  const domain = email.split("@")[1]?.toLowerCase();
+  if (!domain || INTERNAL_DOMAINS.has(domain)) return null;
+  return domain.split(".")[0]; // e.g. "pmi" from "pmi.org"
+}
+
+function matchScore(accountName: string, domainWord: string): boolean {
+  const account = accountName.toLowerCase().replace(/[^a-z0-9]/g, "");
+  const dw = domainWord.replace(/[^a-z0-9]/g, "");
+  if (dw.length < 3) return false;
+  return account.includes(dw) || dw.includes(account.slice(0, Math.max(4, account.length - 2)));
 }
 
 /**
@@ -95,22 +119,47 @@ export async function detectPostMeetingEngagements(opts: {
       // Transcript unavailable — continue without it
     }
 
-    // Best-effort opportunity matching: look for account name in meeting subject / attendee domains
+    // Best-effort opportunity matching: subject words, organizer name, attendee email domains
     let suggestedOpportunityId: string | undefined;
     let suggestedOpportunityName: string | undefined;
+    let suggestedAccountName: string | undefined;
+    let matchReason: string | undefined;
+
+    // Collect external domain words from all attendees (excl. internal)
+    const externalDomainWords = (event.attendees ?? [])
+      .map(a => attendeeDomainWord(a.email))
+      .filter((d): d is string => d !== null);
+    if (event.organizerEmail) {
+      const od = attendeeDomainWord(event.organizerEmail);
+      if (od) externalDomainWords.push(od);
+    }
 
     for (const opp of opportunities) {
       const accountWords = opp.accountName.split(/\s+/).filter(w => w.length > 3);
+
       const inSubject = accountWords.some(w =>
         event.subject?.toLowerCase().includes(w.toLowerCase())
       );
-      const inAttendees = event.organizer &&
+      const inOrganizer = event.organizer &&
         accountWords.some(w => event.organizer!.toLowerCase().includes(w.toLowerCase()));
+      const inDomain = externalDomainWords.some(dw => matchScore(opp.accountName, dw));
 
-      if (inSubject || inAttendees) {
+      if (inSubject) {
         suggestedOpportunityId   = opp.opportunityid;
         suggestedOpportunityName = opp.name;
+        suggestedAccountName     = opp.accountName;
+        matchReason              = "subject";
         break;
+      } else if (inDomain && !suggestedOpportunityId) {
+        suggestedOpportunityId   = opp.opportunityid;
+        suggestedOpportunityName = opp.name;
+        suggestedAccountName     = opp.accountName;
+        matchReason              = "domain";
+      } else if (inOrganizer && !suggestedOpportunityId) {
+        suggestedOpportunityId   = opp.opportunityid;
+        suggestedOpportunityName = opp.name;
+        suggestedAccountName     = opp.accountName;
+        matchReason              = "organizer";
       }
     }
 
@@ -126,12 +175,16 @@ export async function detectPostMeetingEngagements(opts: {
       meetingSubject:          event.subject,
       meetingStart:            event.start,
       meetingEnd:              event.end,
-      attendees:               event.organizer ? [event.organizer] : [],
+      organizer:               event.organizer,
+      attendees:               event.attendees ?? [],
+      attendeeNames:           (event.attendees ?? []).map(a => a.name).filter(Boolean),
       durationMinutes,
       transcriptAvailable,
       transcript,
       suggestedOpportunityId,
       suggestedOpportunityName,
+      suggestedAccountName,
+      matchReason,
       calendarEvent:           event as unknown as Record<string, unknown>,
     });
   }

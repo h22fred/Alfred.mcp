@@ -14,6 +14,8 @@ import {
   createTimelineNote,
   listTimelineNotes,
   deleteTimelineNote,
+  fetchAccountById,
+  searchAccounts,
   type EngagementType,
   type OpportunityFilter,
   type EngagementDescription,
@@ -249,6 +251,39 @@ server.tool(
     return {
       content: [{ type: "text", text: JSON.stringify(product, null, 2) }],
     };
+  }
+);
+
+// ---------------------------------------------------------------------------
+// Tool: get_account
+// ---------------------------------------------------------------------------
+server.tool(
+  "get_account",
+  `Get full account details from Dynamics 365 by account ID.
+
+Returns: industry, website, phone, employees, revenue, address, owner (AE), SC name.
+Use this to understand the customer context before creating engagements or reviewing deals.
+
+After fetching, ALSO call account_insights with the account name to get subscription/utilization data.`,
+  { account_id: z.string().describe("Dynamics account GUID") },
+  async ({ account_id }) => {
+    const progress = makeProgress(server);
+    const account = await fetchAccountById(account_id, progress);
+    return { content: [{ type: "text", text: JSON.stringify(account, null, 2) }] };
+  }
+);
+
+// ---------------------------------------------------------------------------
+// Tool: search_accounts
+// ---------------------------------------------------------------------------
+server.tool(
+  "search_accounts",
+  "Search Dynamics 365 accounts by name — useful to find an account ID or get account details when you only have the name.",
+  { name: z.string().describe("Account name or partial name to search for") },
+  async ({ name }) => {
+    const progress = makeProgress(server);
+    const accounts = await searchAccounts(name, progress);
+    return { content: [{ type: "text", text: JSON.stringify(accounts, null, 2) }] };
   }
 );
 
