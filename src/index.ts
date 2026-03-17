@@ -26,14 +26,33 @@ import { detectPostMeetingEngagements } from "./tools/postMeetingClient.js";
 
 const DYNAMICS_BASE_URL = "https://servicenow.crm.dynamics.com";
 
-function engagementSummary(e: import("./tools/dynamicsClient.js").Engagement, action: "Created" | "Updated"): string {
+type Engagement = import("./tools/dynamicsClient.js").Engagement;
+
+function engagementLink(e: Engagement): string | null {
   const id = e.sn_engagementid ?? "";
-  const link = id ? `${DYNAMICS_BASE_URL}/main.aspx?etn=sn_engagement&id=${id}&pagetype=entityrecord` : null;
+  return id ? `${DYNAMICS_BASE_URL}/main.aspx?etn=sn_engagement&id=${id}&pagetype=entityrecord` : null;
+}
+
+function engagementSummary(e: Engagement, action: "Created" | "Updated"): string {
+  const link = engagementLink(e);
   const lines = [
-    `✅ ${action}: **${e.sn_name}** (${e.sn_engagementnumber ?? id})`,
+    `✅ ${action}: **${e.sn_name}** (${e.sn_engagementnumber ?? e.sn_engagementid ?? "—"})`,
     `Type: ${e.engagementTypeName ?? "—"}`,
     `Status: ${e.statecode === 0 ? "Open" : "Complete"}`,
     ...(e.sn_completeddate ? [`Completed: ${e.sn_completeddate.slice(0, 10)}`] : []),
+    ...(e.sn_description ? [`\n${e.sn_description}`] : []),
+    ...(link ? [`\n🔗 ${link}`] : []),
+  ];
+  return lines.join("\n");
+}
+
+function engagementListItem(e: Engagement): string {
+  const link = engagementLink(e);
+  const status = e.statecode === 0 ? "Open" : "Complete";
+  const completed = e.sn_completeddate ? ` · ${e.sn_completeddate.slice(0, 10)}` : "";
+  const lines = [
+    `**${e.sn_name}** (${e.sn_engagementnumber ?? "—"}) · ${e.engagementTypeName ?? "—"} · ${status}${completed}`,
+    ...(e.sn_description ? [e.sn_description] : []),
     ...(link ? [`🔗 ${link}`] : []),
   ];
   return lines.join("\n");
@@ -181,9 +200,11 @@ This gives context on what the customer owns — useful when reviewing engagemen
   async ({ opportunity_id }) => {
     const progress = makeProgress(server);
     const engagements = await fetchEngagementsByOpportunity(opportunity_id, progress);
-    return {
-      content: [{ type: "text", text: JSON.stringify(engagements, null, 2) }],
-    };
+    if (engagements.length === 0) {
+      return { content: [{ type: "text", text: "No engagements found for this opportunity." }] };
+    }
+    const text = engagements.map(engagementListItem).join("\n\n---\n\n");
+    return { content: [{ type: "text", text }] };
   }
 );
 
@@ -226,7 +247,7 @@ server.tool(
   "create_engagement",
   `Create a new engagement record in Dynamics 365. Account is auto-derived from the opportunity.
 
-IMPORTANT: Always show the user a summary of what will be created and ask for confirmation BEFORE calling this tool.
+IMPORTANT: Always show the user a full summary of what will be created (name, type, use case, key points, next actions) and get explicit confirmation BEFORE calling this tool.
 
 Always populate the structured description fields for every engagement type:
 - use_case, key_points (label auto-adapts per type), next_actions, risks, stakeholders
@@ -279,7 +300,7 @@ server.tool(
   "update_engagement",
   `Update an existing engagement record in Dynamics 365.
 
-IMPORTANT: Always show the user a summary of what will be changed and ask for confirmation BEFORE calling this tool.
+IMPORTANT: Always show the user exactly what will change (field by field) and get explicit confirmation BEFORE calling this tool.
 
 Always use the structured description fields to keep the description current (applies to all engagement types).
 A timeline_title + timeline_text should always be provided to log what changed.`,
@@ -358,9 +379,7 @@ server.tool(
   async ({ engagement_id }) => {
     const progress = makeProgress(server);
     const engagement = await fetchEngagementById(engagement_id, progress);
-    return {
-      content: [{ type: "text", text: JSON.stringify(engagement, null, 2) }],
-    };
+    return { content: [{ type: "text", text: engagementListItem(engagement) }] };
   }
 );
 
