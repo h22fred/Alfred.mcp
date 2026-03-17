@@ -57,25 +57,44 @@ async function acquireGraphToken(progress: ProgressFn): Promise<string> {
     });
 
     if (isNewPage) {
-      // No existing tab — load Outlook fresh (slow path, only happens once per session)
+      // No existing tab — load Outlook fresh
       progress("📧 Loading Outlook to capture auth token...");
       await page.goto(`${OUTLOOK_ORIGIN}/mail/`, { waitUntil: "domcontentloaded", timeout: 30_000 });
     } else {
-      // Existing tab — trigger a lightweight API call to fire auth headers immediately
+      // Existing tab — trigger a lightweight call to fire auth headers immediately
       progress("📧 Capturing auth token from existing Outlook tab...");
       await page.evaluate(() =>
         fetch("/owa/service.svc?action=GetAccessTokenforResource", { method: "POST", body: "{}", credentials: "include" }).catch(() => {})
       );
     }
 
-    // Wait up to 5 s for token (existing tab fires immediately; new tab may take longer)
-    const deadline = Date.now() + (isNewPage ? 10_000 : 5_000);
-    while (!capturedToken && Date.now() < deadline) {
+    // Wait up to 5 s for token on existing tab
+    const quickDeadline = Date.now() + 5_000;
+    while (!capturedToken && Date.now() < quickDeadline) {
       await page.waitForTimeout(200);
     }
 
-    await page.unroute("**/outlook.office.com/**");
-    if (isNewPage) await page.close();
+    // Fallback: existing tab was on a login page — open fresh and do a full load
+    if (!capturedToken && !isNewPage) {
+      progress("📧 Outlook session expired — reloading to capture fresh token...");
+      await page.unroute("**/outlook.office.com/**");
+      const freshPage = await ctx.newPage();
+      await freshPage.route("**/outlook.office.com/**", async (route) => {
+        const auth = route.request().headers()["authorization"] ?? "";
+        if (!capturedToken && auth.startsWith("Bearer ")) capturedToken = auth.slice(7);
+        await route.continue();
+      });
+      await freshPage.goto(`${OUTLOOK_ORIGIN}/mail/`, { waitUntil: "domcontentloaded", timeout: 30_000 });
+      const slowDeadline = Date.now() + 10_000;
+      while (!capturedToken && Date.now() < slowDeadline) {
+        await freshPage.waitForTimeout(200);
+      }
+      await freshPage.unroute("**/outlook.office.com/**");
+      await freshPage.close();
+    } else {
+      await page.unroute("**/outlook.office.com/**");
+      if (isNewPage) await page.close();
+    }
 
     if (!capturedToken) {
       throw new Error(
