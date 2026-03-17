@@ -29,15 +29,9 @@ Connects Claude Desktop directly to your CRM, calendar, email and Teams using yo
 
 ## Setup
 
-```bash
-# 1. Clone the repo
-git clone https://github.com/h22fred/sc-engagement-mcp.git
-cd sc-engagement-mcp
+Download [Setup.command](https://github.com/h22fred/sc-engagement-mcp/raw/main/Setup.command) and double-click it. That's it.
 
-# 2. Run the installer
-# Double-click Setup.command in Finder, or:
-bash setup.sh
-```
+> **First time only:** macOS may block it as an unrecognised file. Right-click → **Open** → **Open** to bypass.
 
 The installer:
 - Runs `npm install` and `tsc`
