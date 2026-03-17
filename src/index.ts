@@ -513,7 +513,41 @@ Requires ChromeLink to be running with Teams or Outlook open. The Graph token is
   async ({ search, start_date, end_date, meeting_id }) => {
     const progress = makeProgress(server);
     const transcripts = await getTeamsTranscript({ search, startDate: start_date, endDate: end_date, meetingId: meeting_id }, progress);
-    return { content: [{ type: "text", text: JSON.stringify(transcripts, null, 2) }] };
+
+    if (transcripts.length === 0) {
+      return { content: [{ type: "text", text: "No meetings with transcripts found." }] };
+    }
+
+    const formatted = transcripts.map(t => {
+      const date = t.start ? new Date(t.start).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }) : "—";
+      const time = t.start ? new Date(t.start).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" }) : "";
+      const duration = t.start && t.end
+        ? `${Math.round((new Date(t.end).getTime() - new Date(t.start).getTime()) / 60000)} min`
+        : "";
+      const attendeeList = t.attendees.length ? t.attendees.join(", ") : "—";
+
+      const lines = [
+        `## ${t.subject ?? "Untitled Meeting"}`,
+        `📅 ${date}${time ? ` at ${time}` : ""}${duration ? ` · ${duration}` : ""}`,
+        `👥 ${attendeeList}`,
+      ];
+
+      if (t.transcript) {
+        // Clean up raw VTT/transcript format — strip timestamps, deduplicate lines
+        const cleaned = t.transcript
+          .split("\n")
+          .filter(l => l.trim() && !/^\d+$/.test(l.trim()) && !/^\d{2}:\d{2}/.test(l.trim()) && l.trim() !== "WEBVTT")
+          .filter((l, i, arr) => l !== arr[i - 1]) // deduplicate consecutive identical lines
+          .join("\n");
+        lines.push("", "**Transcript:**", cleaned);
+      } else {
+        lines.push("", "_No transcript available for this meeting._");
+      }
+
+      return lines.join("\n");
+    }).join("\n\n---\n\n");
+
+    return { content: [{ type: "text", text: formatted }] };
   }
 );
 
