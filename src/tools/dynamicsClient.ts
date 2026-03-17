@@ -289,6 +289,9 @@ export async function createEngagement(input: CreateEngagementInput, progress: P
   const typeGuid = ENGAGEMENT_TYPE_GUIDS[input.type];
   if (!typeGuid) throw new Error(`Unknown engagement type: ${input.type}`);
 
+  // Auto-complete if a completed date is provided and it's today or in the past
+  const isCompleted = !!input.completedDate && new Date(input.completedDate) <= new Date();
+
   const payload: Record<string, unknown> = {
     sn_name: input.name,
     sn_description: input.notes,
@@ -297,6 +300,7 @@ export async function createEngagement(input: CreateEngagementInput, progress: P
     "sn_opportunityid@odata.bind": `/opportunities(${input.opportunityId})`,
     "sn_accountid@odata.bind": `/accounts(${input.accountId})`,
     "sn_primaryproductid@odata.bind": `/sn_productfamilies(${input.primaryProductId})`,
+    ...(isCompleted ? { statecode: 1, statuscode: 2 } : {}),
   };
 
   progress(`📝 Creating "${input.name}" (${input.type}) engagement in Dynamics...`);
