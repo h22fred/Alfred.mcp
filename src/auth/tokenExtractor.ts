@@ -36,13 +36,19 @@ function isChromeLinkgable(): boolean {
   }
 }
 
-function launchChromeLink(): void {
-  // Guard: if a Chrome process with the debug port already exists, don't spawn another
-  if (isChromeProcessRunning()) {
+function killChromeLink(): void {
+  try {
+    execFileSync("pkill", ["-f", `remote-debugging-port=${CDP_PORT}`], { timeout: 3_000 });
+    console.error("[auth] Killed stale ChromeLink process");
+  } catch { /* no process to kill — fine */ }
+}
+
+function launchChromeLink(force = false): void {
+  if (!force && isChromeProcessRunning()) {
     console.error("[auth] ChromeLink process already running — waiting for port to become ready...");
     return;
   }
-  console.error("[auth] ChromeLink not running — launching automatically...");
+  console.error("[auth] Launching ChromeLink...");
   execFile("/bin/sh", ["-c",
     `mkdir -p /tmp/chrome-debug-profile && \
     "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
@@ -96,10 +102,19 @@ export async function connectWithRetry(retries = 3) {
   for (let i = 0; i < retries; i++) {
     try {
       const wsUrl = await freshCdpEndpoint();
-      return await chromium.connectOverCDP(wsUrl);
+      // Short timeout — if Chrome is zombie it hangs, not fails; 10s is enough for healthy Chrome
+      return await chromium.connectOverCDP(wsUrl, { timeout: 10_000 });
     } catch (e) {
       lastError = e as Error;
-      if (i < retries - 1) await new Promise(r => setTimeout(r, 1_000));
+      if (i < retries - 1) {
+        // Chrome is in a bad state — kill it and relaunch fresh
+        console.error(`[auth] connectOverCDP failed (attempt ${i + 1}) — killing and relaunching ChromeLink...`);
+        killChromeLink();
+        clearAuthCache();
+        await new Promise(r => setTimeout(r, 1_500)); // let it die
+        launchChromeLink(true); // force launch even if pgrep finds a dying process
+        await waitForChrome();
+      }
     }
   }
   throw lastError;
