@@ -63,8 +63,15 @@ async function waitForChrome(timeoutMs = 15_000): Promise<void> {
   throw new Error("ChromeLink did not start in time. Try opening ChromeLink.app manually.");
 }
 
+export function clearAuthCache(): void {
+  cachedAuth = null;
+  cachedOutlookAuth = null;
+}
+
 export async function ensureChromeLink(progress: ProgressFn = () => {}): Promise<void> {
   if (isChromeLinkgable()) return;
+  // Chrome is not running — clear stale caches before launching fresh session
+  clearAuthCache();
   progress("🚀 Launching ChromeLink automatically...");
   launchChromeLink();
   await waitForChrome();

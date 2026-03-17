@@ -12,6 +12,10 @@ interface TokenCache {
 }
 let tokenCache: TokenCache | null = null;
 
+export function clearGraphTokenCache(): void {
+  tokenCache = null;
+}
+
 // ---------------------------------------------------------------------------
 // Acquire a Graph Bearer token by loading a lightweight Outlook page
 // and intercepting its outgoing Graph API requests.
@@ -85,17 +89,28 @@ const OUTLOOK_API = "https://outlook.office.com/api/v2.0/me";
 // Outlook REST v2 fetch using the captured Bearer token
 // ---------------------------------------------------------------------------
 
-async function outlookApiFetch(path: string, token: string): Promise<Record<string, unknown>> {
+async function outlookApiFetch(path: string, token: string, progress?: ProgressFn): Promise<Record<string, unknown>> {
   const res = await fetch(`${OUTLOOK_API}${path}`, {
-    headers: {
-      Authorization: `Bearer ${token}`,
-      Accept: "application/json",
-    },
+    headers: { Authorization: `Bearer ${token}`, Accept: "application/json" },
   });
+
+  if (res.status === 401) {
+    // Token expired — clear cache and retry once with a fresh token
+    tokenCache = null;
+    progress?.("🔄 Graph token expired — re-acquiring...");
+    const freshToken = await acquireGraphToken(progress ?? (() => {}));
+    const retry = await fetch(`${OUTLOOK_API}${path}`, {
+      headers: { Authorization: `Bearer ${freshToken}`, Accept: "application/json" },
+    });
+    if (!retry.ok) {
+      const body = await retry.text().catch(() => "");
+      throw new Error(`Outlook API ${retry.status} ${retry.statusText}${body ? `: ${body.slice(0, 200)}` : ""}`);
+    }
+    return retry.json() as Promise<Record<string, unknown>>;
+  }
 
   if (!res.ok) {
     const body = await res.text().catch(() => "");
-    if (res.status === 401) tokenCache = null;
     throw new Error(`Outlook API ${res.status} ${res.statusText}${body ? `: ${body.slice(0, 200)}` : ""}`);
   }
 
@@ -135,7 +150,7 @@ export async function getCalendarEvents(
   });
   if (search) params.set("$search", `"${search}"`);
 
-  const data = await outlookApiFetch(`/calendarview?${params}`, token);
+  const data = await outlookApiFetch(`/calendarview?${params}`, token, progress);
 
   const events = (data.value as Record<string, unknown>[] ?? []).map(e => ({
     id:              e.Id as string,
@@ -198,7 +213,7 @@ export async function getEmails(opts: {
     path = `/mailfolders/${folder}/messages?${p}`;
   }
 
-  const data = await outlookApiFetch(path, token);
+  const data = await outlookApiFetch(path, token, progress);
   const messages = (data.value as Record<string, unknown>[] ?? []).map(m => {
     const fromEA = (m.From as { EmailAddress: { Name: string; Address: string } })?.EmailAddress;
     return {
