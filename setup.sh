@@ -108,9 +108,9 @@ echo ""
 echo "▶ Creating ChromeLink.app on Desktop..."
 
 cat > /tmp/chromedebug_setup.applescript << 'APPLESCRIPT'
--- Launch Chrome with debug port, opening all three tabs directly in that process
--- Do NOT use "tell application Google Chrome" — that hijacks the regular Chrome
-do shell script "mkdir -p /tmp/chrome-debug-profile && \"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome\" --remote-debugging-port=9222 --user-data-dir=/tmp/chrome-debug-profile --no-first-run --no-default-browser-check \"https://servicenow.crm.dynamics.com\" \"https://outlook.office.com\" \"https://teams.microsoft.com\" > /dev/null 2>&1 &"
+-- Launch Chrome with debug port only if it's not already running
+-- Checking via pgrep prevents duplicate Chrome instances in the dock
+do shell script "pgrep -f 'remote-debugging-port=9222' > /dev/null 2>&1 || (mkdir -p /tmp/chrome-debug-profile && \"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome\" --remote-debugging-port=9222 --user-data-dir=/tmp/chrome-debug-profile --no-first-run --no-default-browser-check \"https://servicenow.crm.dynamics.com\" \"https://outlook.office.com\" \"https://teams.microsoft.com\" > /dev/null 2>&1 &)"
 APPLESCRIPT
 
 osacompile -o "$CHROMELINK_APP" /tmp/chromedebug_setup.applescript
