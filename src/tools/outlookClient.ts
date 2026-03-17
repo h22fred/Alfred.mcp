@@ -199,6 +199,28 @@ export async function getCalendarEvents(
 // Email / messages
 // ---------------------------------------------------------------------------
 
+// Strip HTML to readable plain text
+function stripHtml(html: string): string {
+  return html
+    .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, "")
+    .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, "")
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<\/p>/gi, "\n\n")
+    .replace(/<\/div>/gi, "\n")
+    .replace(/<\/tr>/gi, "\n")
+    .replace(/<\/th>/gi, " | ")
+    .replace(/<\/td>/gi, " | ")
+    .replace(/<[^>]+>/g, "")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&nbsp;/g, " ")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
 export interface EmailMessage {
   id: string;
   subject: string;
@@ -206,6 +228,7 @@ export interface EmailMessage {
   fromAddress: string;
   receivedDateTime: string;
   bodyPreview: string;
+  body?: string;       // full body (plain text, stripped from HTML) — only when full_body requested
   isRead: boolean;
   hasAttachments: boolean;
 }
@@ -215,17 +238,21 @@ export async function getEmails(opts: {
   folder?: string;
   top?: number;
   unreadOnly?: boolean;
+  fullBody?: boolean;
 }, progress: ProgressFn = () => {}): Promise<EmailMessage[]> {
-  const { search, folder = "inbox", top = 25, unreadOnly } = opts;
+  const { search, folder = "inbox", top = 25, unreadOnly, fullBody } = opts;
   progress("📧 Fetching emails...");
   const token = await acquireGraphToken(progress);
 
-  let url: string;
+  const selectFields = fullBody
+    ? "Id,Subject,From,ReceivedDateTime,BodyPreview,IsRead,HasAttachments,Body"
+    : "Id,Subject,From,ReceivedDateTime,BodyPreview,IsRead,HasAttachments";
+
   let path: string;
   if (search) {
     const p = new URLSearchParams({
       $search: `"${search}"`,
-      $select: "Id,Subject,From,ReceivedDateTime,BodyPreview,IsRead,HasAttachments",
+      $select: selectFields,
       $top: String(top),
     });
     path = `/messages?${p}`;
@@ -233,7 +260,7 @@ export async function getEmails(opts: {
     const filters: string[] = [];
     if (unreadOnly) filters.push("IsRead eq false");
     const p = new URLSearchParams({
-      $select: "Id,Subject,From,ReceivedDateTime,BodyPreview,IsRead,HasAttachments",
+      $select: selectFields,
       $top: String(top),
       $orderby: "ReceivedDateTime desc",
       ...(filters.length ? { $filter: filters.join(" and ") } : {}),
@@ -244,6 +271,12 @@ export async function getEmails(opts: {
   const data = await outlookApiFetch(path, token, progress);
   const messages = (data.value as Record<string, unknown>[] ?? []).map(m => {
     const fromEA = (m.From as { EmailAddress: { Name: string; Address: string } })?.EmailAddress;
+    const bodyContent = (m.Body as { Content?: string; ContentType?: string } | undefined);
+    const bodyText = bodyContent?.Content
+      ? (bodyContent.ContentType === "html" || bodyContent.ContentType === "HTML"
+          ? stripHtml(bodyContent.Content)
+          : bodyContent.Content)
+      : undefined;
     return {
       id:               m.Id as string,
       subject:          m.Subject as string,
@@ -251,6 +284,7 @@ export async function getEmails(opts: {
       fromAddress:      fromEA?.Address || "",
       receivedDateTime: m.ReceivedDateTime as string,
       bodyPreview:      m.BodyPreview as string,
+      ...(bodyText !== undefined ? { body: bodyText } : {}),
       isRead:           m.IsRead as boolean,
       hasAttachments:   m.HasAttachments as boolean,
     };

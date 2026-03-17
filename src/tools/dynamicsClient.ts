@@ -35,8 +35,12 @@ export interface Opportunity {
   accountName: string;
   accountid: string;
   statuscode: number;
+  statusName?: string;
   estimatedclosedate?: string;
   msdyn_forecastcategory?: number;
+  forecastCategoryName?: string;
+  ownerName?: string;
+  scName?: string;
   totalamount?: number;
 }
 
@@ -55,13 +59,20 @@ export interface Engagement {
   sn_description?: string;           // notes/description
   sn_completeddate?: string;
   sn_categorycode?: number;
+  categoryName?: string;
   sn_salesstagecode?: number;
+  salesStageName?: string;
   statecode?: number;
   statuscode?: number;
+  statusName?: string;
   _sn_opportunityid_value?: string;
+  opportunityName?: string;
   _sn_accountid_value?: string;
+  accountName?: string;
   _sn_primaryproductid_value?: string;
+  primaryProductName?: string;
   _ownerid_value?: string;
+  ownerName?: string;
   createdon?: string;
   modifiedon?: string;
 }
@@ -115,17 +126,32 @@ async function dynamicsFetch(path: string, options: RequestInit = {}, progress: 
 // Opportunities
 // ---------------------------------------------------------------------------
 
+const FORECAST_NAMES: Record<number, string> = {
+  100000001: "Pipeline",
+  100000002: "Best Case",
+  100000003: "Committed",
+  100000004: "Omitted",
+};
+
 function mapOpportunity(r: Record<string, unknown>): Opportunity {
   const account = r.parentaccountid as { accountid?: string; name?: string } | null;
+  const owner = r.ownerid as { fullname?: string } | null;
+  const sc = r.sn_solutionconsultant as { fullname?: string } | null;
+  const forecastCode = r.msdyn_forecastcategory as number | undefined;
   return {
-    opportunityid:    r.opportunityid as string,
-    sn_number: r.sn_number as string | undefined,
-    name:             r.name as string,
-    accountName:      account?.name ?? "—",
-    accountid:        (account?.accountid ?? r._accountid_value) as string,
-    statuscode:       r.statuscode as number,
-    estimatedclosedate: r.estimatedclosedate as string | undefined,
-    totalamount:      r.totalamount as number | undefined,
+    opportunityid:       r.opportunityid as string,
+    sn_number:           r.sn_number as string | undefined,
+    name:                r.name as string,
+    accountName:         account?.name ?? "—",
+    accountid:           (account?.accountid ?? r._accountid_value) as string,
+    statuscode:          r.statuscode as number,
+    statusName:          r["statuscode@OData.Community.Display.V1.FormattedValue"] as string | undefined,
+    estimatedclosedate:  r.estimatedclosedate as string | undefined,
+    msdyn_forecastcategory: forecastCode,
+    forecastCategoryName: forecastCode ? (FORECAST_NAMES[forecastCode] ?? String(forecastCode)) : undefined,
+    ownerName:           owner?.fullname ?? undefined,
+    scName:              sc?.fullname ?? undefined,
+    totalamount:         r.totalamount as number | undefined,
   };
 }
 
@@ -191,8 +217,8 @@ export async function fetchOpportunities(filter: OpportunityFilter = {}, progres
 
   const path =
     "/opportunities" +
-    `?$select=opportunityid,sn_number,name,_accountid_value,statuscode,estimatedclosedate,totalamount` +
-    `&$expand=parentaccountid($select=accountid,name)` +
+    `?$select=opportunityid,sn_number,name,_accountid_value,statuscode,estimatedclosedate,totalamount,msdyn_forecastcategory` +
+    `&$expand=parentaccountid($select=accountid,name),ownerid($select=fullname),sn_solutionconsultant($select=fullname)` +
     `&$filter=${encodeURIComponent(filterClause)}` +
     `&$orderby=estimatedclosedate asc` +
     `&$top=${top}`;
@@ -208,8 +234,8 @@ export async function fetchOpportunityById(id: string, progress: ProgressFn = ()
   progress(`📡 Fetching opportunity ${id}...`);
   const path =
     `/opportunities(${id})` +
-    "?$select=opportunityid,sn_number,name,_accountid_value,statuscode,estimatedclosedate" +
-    "&$expand=parentaccountid($select=accountid,name)";
+    "?$select=opportunityid,sn_number,name,_accountid_value,statuscode,estimatedclosedate,totalamount,msdyn_forecastcategory" +
+    "&$expand=parentaccountid($select=accountid,name),ownerid($select=fullname),sn_solutionconsultant($select=fullname)";
 
   const res = await dynamicsFetch(path, {}, progress);
   return mapOpportunity(await res.json() as Record<string, unknown>);
@@ -246,8 +272,8 @@ export async function fetchEngagementsByOpportunity(opportunityId: string, progr
   const path =
     `/sn_engagements` +
     `?$filter=_sn_opportunityid_value eq ${opportunityId}` +
-    `&$select=sn_engagementid,sn_engagementnumber,sn_name,sn_description,sn_completeddate,sn_categorycode,sn_salesstagecode,statecode,statuscode,_sn_engagementtypeid_value,_sn_opportunityid_value,_sn_accountid_value,_ownerid_value,createdon,modifiedon` +
-    `&$expand=sn_engagementtypeid($select=sn_name)` +
+    `&$select=sn_engagementid,sn_engagementnumber,sn_name,sn_description,sn_completeddate,sn_categorycode,sn_salesstagecode,statecode,statuscode,_sn_engagementtypeid_value,_sn_opportunityid_value,_sn_accountid_value,_sn_primaryproductid_value,_ownerid_value,createdon,modifiedon` +
+    `&$expand=sn_engagementtypeid($select=sn_name),ownerid($select=fullname),sn_primaryproductid($select=sn_name)` +
     `&$orderby=modifiedon desc`;
 
   const res = await dynamicsFetch(path, {}, progress);
@@ -258,18 +284,29 @@ export async function fetchEngagementsByOpportunity(opportunityId: string, progr
 }
 
 function mapEngagement(r: Record<string, unknown>): Engagement {
-  const typeEntity = r["sn_engagementtypeid"] as { sn_name?: string } | null;
+  const typeEntity    = r["sn_engagementtypeid"]    as { sn_name?: string } | null;
+  const ownerEntity   = r["ownerid"]                as { fullname?: string } | null;
+  const accountEntity = r["sn_accountid"]           as { name?: string } | null;
+  const oppEntity     = r["sn_opportunityid"]       as { name?: string } | null;
+  const productEntity = r["sn_primaryproductid"]    as { sn_name?: string } | null;
   return {
     ...r,
-    engagementTypeName: typeEntity?.sn_name ?? undefined,
+    engagementTypeName:  typeEntity?.sn_name ?? undefined,
+    ownerName:           ownerEntity?.fullname ?? undefined,
+    accountName:         accountEntity?.name ?? undefined,
+    opportunityName:     oppEntity?.name ?? undefined,
+    primaryProductName:  productEntity?.sn_name ?? undefined,
+    salesStageName:      r["sn_salesstagecode@OData.Community.Display.V1.FormattedValue"] as string | undefined,
+    categoryName:        r["sn_categorycode@OData.Community.Display.V1.FormattedValue"] as string | undefined,
+    statusName:          r["statuscode@OData.Community.Display.V1.FormattedValue"] as string | undefined,
   } as Engagement;
 }
 
 export async function fetchEngagementById(id: string, progress: ProgressFn = () => {}): Promise<Engagement> {
   const path =
     `/sn_engagements(${id})` +
-    `?$select=sn_engagementid,sn_engagementnumber,sn_name,sn_description,sn_completeddate,sn_categorycode,sn_salesstagecode,statecode,statuscode,_sn_engagementtypeid_value,_sn_opportunityid_value,_sn_accountid_value,_ownerid_value,createdon,modifiedon` +
-    `&$expand=sn_engagementtypeid($select=sn_name)`;
+    `?$select=sn_engagementid,sn_engagementnumber,sn_name,sn_description,sn_completeddate,sn_categorycode,sn_salesstagecode,statecode,statuscode,_sn_engagementtypeid_value,_sn_opportunityid_value,_sn_accountid_value,_sn_primaryproductid_value,_ownerid_value,createdon,modifiedon` +
+    `&$expand=sn_engagementtypeid($select=sn_name),ownerid($select=fullname),sn_accountid($select=name),sn_opportunityid($select=name),sn_primaryproductid($select=sn_name)`;
 
   const res = await dynamicsFetch(path, {}, progress);
   return mapEngagement(await res.json() as Record<string, unknown>);
