@@ -117,6 +117,7 @@ export interface OpportunityFilter {
   search?: string;     // filter by account/opportunity name (contains)
   minNnacv?: number;   // minimum totalamount (NNACV) in USD
   myOpportunitiesOnly?: boolean; // filter to current user's owned opportunities
+  includeClosed?: boolean; // include won/lost/closed opps — default false (open only)
 }
 
 interface CurrentUser {
@@ -155,7 +156,7 @@ export async function fetchOpportunities(filter: OpportunityFilter = {}, progres
   const top = filter.top ?? 50;
   progress(`📡 Querying Dynamics for open opportunities (max ${top})...`);
 
-  let filterClause = "statecode eq 0";
+  let filterClause = filter.includeClosed ? "statecode ge 0" : "statecode eq 0";
   if (filter.search) {
     filterClause += ` and contains(name,'${filter.search.replace(/'/g, "''")}')`;
   }
