@@ -21,12 +21,10 @@ export interface HygieneResult {
 
 export async function runHygieneSweep(opts: {
   postToTeams?: boolean;
-  myOpportunitiesOnly?: boolean;
   minNnacv?: number;
 }, progress: ProgressFn = () => {}): Promise<HygieneResult[]> {
   progress("🔍 Starting CRM hygiene sweep...");
 
-  // Always filter to current user's opportunities — hygiene is personal
   const opps = await fetchOpportunities({
     myOpportunitiesOnly: true,
     minNnacv: opts.minNnacv ?? 100_000,
@@ -227,22 +225,39 @@ async function postHygieneToTeams(results: HygieneResult[], progress: ProgressFn
 
 export function formatHygieneReport(results: HygieneResult[]): string {
   const today = new Date().toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
-  const lines = [`**CRM Hygiene Report — ${today}**\n`];
-
-  for (const r of results) {
-    const icon = r.status === "green" ? "✅" : r.status === "yellow" ? "🟡" : "🔴";
-    const nnacv = r.opportunity.totalamount
-      ? ` ($${Math.round(r.opportunity.totalamount / 1000)}K)`
-      : "";
-    lines.push(`${icon} ${r.opportunity.name}${nnacv}`);
-    if (r.missingRequired.length) lines.push(`   Missing: ${r.missingRequired.join(", ")}`);
-    if (r.status === "green") lines.push(`   All milestones present`);
-  }
-
   const red    = results.filter(r => r.status === "red").length;
   const yellow = results.filter(r => r.status === "yellow").length;
   const green  = results.filter(r => r.status === "green").length;
-  lines.push(`\n${red} need attention · ${yellow} incomplete · ${green} complete`);
+  const totalPipeline = results.reduce((s, r) => s + (r.opportunity.totalamount ?? 0), 0);
+
+  const lines = [
+    `**CRM Hygiene — ${today}**`,
+    `🔴 ${red} critical · 🟡 ${yellow} on track · ✅ ${green} complete · Pipeline: ${fmt(totalPipeline)}`,
+    "",
+  ];
+
+  const grouped = groupByAccount(results);
+
+  for (const [account, opps] of grouped) {
+    const accountTotal = opps.reduce((s, r) => s + (r.opportunity.totalamount ?? 0), 0);
+    const worstIcon = opps.some(r => r.status === "red") ? "🔴"
+      : opps.some(r => r.status === "yellow") ? "🟡" : "✅";
+
+    lines.push(`${worstIcon} **${account}** — ${fmt(accountTotal)}`);
+
+    opps
+      .sort((a, b) => (b.opportunity.totalamount ?? 0) - (a.opportunity.totalamount ?? 0))
+      .forEach(r => {
+        const icon = r.status === "red" ? "🔴" : r.status === "yellow" ? "🟡" : "✅";
+        const nnacv = fmt(r.opportunity.totalamount);
+        const missing = r.missingRequired.length
+          ? `missing: ${r.missingRequired.join(", ")}`
+          : r.status === "yellow" ? "required complete ✓" : "all complete ✓";
+        lines.push(`   ${icon} ${r.opportunity.name} (${nnacv}) — ${missing}`);
+      });
+
+    lines.push("");
+  }
 
   return lines.join("\n");
 }

@@ -119,11 +119,36 @@ export interface OpportunityFilter {
   myOpportunitiesOnly?: boolean; // filter to current user's owned opportunities
 }
 
+interface CurrentUser {
+  userId: string;
+  territoryId?: string;
+}
+
 export async function fetchCurrentUserId(progress: ProgressFn = () => {}): Promise<string> {
+  const user = await fetchCurrentUser(progress);
+  return user.userId;
+}
+
+async function fetchCurrentUser(progress: ProgressFn = () => {}): Promise<CurrentUser> {
   progress("👤 Resolving current user...");
-  const res = await dynamicsFetch("/WhoAmI", {}, progress);
-  const data = await res.json();
-  return data.UserId as string;
+  const whoAmI = await dynamicsFetch("/WhoAmI", {}, progress);
+  const { UserId } = await whoAmI.json() as { UserId: string };
+
+  // Fetch user's territory GUID
+  let territoryId: string | undefined;
+  try {
+    const userRes = await dynamicsFetch(
+      `/systemusers(${UserId})?$select=_sn_fieldterritory_value`,
+      {}, progress
+    );
+    const userData = await userRes.json() as Record<string, unknown>;
+    territoryId = userData._sn_fieldterritory_value as string | undefined || undefined;
+  } catch {
+    // Territory field may not exist — non-fatal
+  }
+
+  progress(`👤 User: ${UserId}${territoryId ? ` | Territory: ${territoryId}` : ""}`);
+  return { userId: UserId, territoryId };
 }
 
 export async function fetchOpportunities(filter: OpportunityFilter = {}, progress: ProgressFn = () => {}): Promise<Opportunity[]> {
@@ -138,8 +163,11 @@ export async function fetchOpportunities(filter: OpportunityFilter = {}, progres
     filterClause += ` and totalamount ge ${filter.minNnacv}`;
   }
   if (filter.myOpportunitiesOnly) {
-    const userId = await fetchCurrentUserId(progress);
-    filterClause += ` and _ownerid_value eq '${userId}'`;
+    const { userId, territoryId } = await fetchCurrentUser(progress);
+    // Match opps where user is SC OR in the user's territory
+    const scFilter = `_sn_solutionconsultant_value eq '${userId}'`;
+    const terrFilter = territoryId ? ` or _sn_fieldterritory_value eq '${territoryId}'` : "";
+    filterClause += ` and (${scFilter}${terrFilter})`;
   }
 
   const path =
