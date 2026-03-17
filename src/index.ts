@@ -18,8 +18,8 @@ import {
   type OpportunityFilter,
   type EngagementDescription,
 } from "./tools/dynamicsClient.js";
-import { closeBrowser, setManualCookies, ensureChromeLink } from "./auth/tokenExtractor.js";
-import { getCalendarEvents, getEmails, setOutlookCookies } from "./tools/outlookClient.js";
+import { closeBrowser, setManualCookies, ensureChromeLink, clearAuthCache } from "./auth/tokenExtractor.js";
+import { getCalendarEvents, getEmails, setOutlookCookies, clearGraphTokenCache } from "./tools/outlookClient.js";
 import { setTeamsWebhook, postTeamsNotification, getTeamsTranscript, getTeamsChats } from "./tools/teamsClient.js";
 import { runHygieneSweep, formatHygieneReport } from "./tools/hygieneClient.js";
 import { detectPostMeetingEngagements } from "./tools/postMeetingClient.js";
@@ -101,6 +101,9 @@ Never ask the user to manually open ChromeLink.app. Always call this tool first,
   {},
   async () => {
     const progress = makeProgress(server);
+    // Clear all token caches — ensures fresh auth after any Chrome restart
+    clearAuthCache();
+    clearGraphTokenCache();
     await ensureChromeLink(progress);
     return {
       content: [{ type: "text", text: "✅ ChromeLink is running. Log into Dynamics, Outlook and Teams in the Chrome window, then retry your request." }],
