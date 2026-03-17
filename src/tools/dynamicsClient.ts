@@ -526,3 +526,74 @@ export async function deleteTimelineNote(
   await dynamicsFetch(`/annotations(${annotationId})`, { method: "DELETE" }, progress);
   progress("✅ Timeline note deleted");
 }
+
+// ---------------------------------------------------------------------------
+// Accounts
+// ---------------------------------------------------------------------------
+
+export interface Account {
+  accountid: string;
+  name: string;
+  industryName?: string;
+  websiteurl?: string;
+  telephone1?: string;
+  numberofemployees?: number;
+  revenue?: number;
+  address?: string;
+  ownerName?: string;
+  scName?: string;
+  description?: string;
+}
+
+function mapAccount(r: Record<string, unknown>): Account {
+  const owner = r.ownerid as { fullname?: string } | null;
+  const sc    = r.sn_solutionconsultant as { fullname?: string } | null;
+  const city    = r.address1_city as string | undefined;
+  const country = r.address1_country as string | undefined;
+  const address = [city, country].filter(Boolean).join(", ") || undefined;
+  return {
+    accountid:       r.accountid as string,
+    name:            r.name as string,
+    industryName:    r["industrycode@OData.Community.Display.V1.FormattedValue"] as string | undefined,
+    websiteurl:      r.websiteurl as string | undefined,
+    telephone1:      r.telephone1 as string | undefined,
+    numberofemployees: r.numberofemployees as number | undefined,
+    revenue:         r.revenue as number | undefined,
+    address,
+    ownerName:       owner?.fullname ?? undefined,
+    scName:          sc?.fullname ?? undefined,
+    description:     r.description as string | undefined,
+  };
+}
+
+const ACCOUNT_SELECT =
+  "accountid,name,industrycode,websiteurl,telephone1,numberofemployees,revenue,address1_city,address1_country,description";
+const ACCOUNT_EXPAND =
+  "ownerid($select=fullname),sn_solutionconsultant($select=fullname)";
+
+export async function fetchAccountById(id: string, progress: ProgressFn = () => {}): Promise<Account> {
+  progress(`🏢 Fetching account ${id}...`);
+  const res = await dynamicsFetch(
+    `/accounts(${id})?$select=${ACCOUNT_SELECT}&$expand=${ACCOUNT_EXPAND}`,
+    {}, progress
+  );
+  const account = mapAccount(await res.json() as Record<string, unknown>);
+  progress(`✅ Account: ${account.name}`);
+  return account;
+}
+
+export async function searchAccounts(name: string, progress: ProgressFn = () => {}): Promise<Account[]> {
+  progress(`🔍 Searching accounts for "${name}"...`);
+  const safe = name.replace(/'/g, "''");
+  const path =
+    `/accounts?$select=${ACCOUNT_SELECT}` +
+    `&$expand=${ACCOUNT_EXPAND}` +
+    `&$filter=contains(name,'${safe}')` +
+    `&$orderby=name asc&$top=10`;
+
+  const res = await dynamicsFetch(path, {}, progress);
+  const data = await res.json();
+  const results = (data.value ?? []).map(mapAccount);
+  progress(`✅ Found ${results.length} account(s)`);
+  return results;
+}

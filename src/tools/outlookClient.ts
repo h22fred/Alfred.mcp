@@ -156,6 +156,8 @@ export interface CalendarEvent {
   end: string;
   location?: string;
   organizer?: string;
+  organizerEmail?: string;
+  attendees?: { name: string; email: string }[];
   isOnlineMeeting?: boolean;
   bodyPreview?: string;
 }
@@ -172,7 +174,7 @@ export async function getCalendarEvents(
   const params = new URLSearchParams({
     startDateTime: `${startDate}T00:00:00Z`,
     endDateTime:   `${endDate}T23:59:59Z`,
-    $select: "Id,Subject,Start,End,Location,Organizer,IsOnlineMeeting,BodyPreview",
+    $select: "Id,Subject,Start,End,Location,Organizer,Attendees,IsOnlineMeeting,BodyPreview",
     $top: "200",
     $orderby: "Start/DateTime",
   });
@@ -180,16 +182,26 @@ export async function getCalendarEvents(
 
   const data = await outlookApiFetch(`/calendarview?${params}`, token, progress);
 
-  const events = (data.value as Record<string, unknown>[] ?? []).map(e => ({
-    id:              e.Id as string,
-    subject:         e.Subject as string,
-    start:           (e.Start as { DateTime: string })?.DateTime,
-    end:             (e.End   as { DateTime: string })?.DateTime,
-    location:        (e.Location as { DisplayName: string })?.DisplayName || undefined,
-    organizer:       (e.Organizer as { EmailAddress: { Name: string } })?.EmailAddress?.Name || undefined,
-    isOnlineMeeting: e.IsOnlineMeeting as boolean,
-    bodyPreview:     e.BodyPreview as string | undefined,
-  }));
+  const events = (data.value as Record<string, unknown>[] ?? []).map(e => {
+    const org = (e.Organizer as { EmailAddress: { Name: string; Address: string } } | undefined)?.EmailAddress;
+    const rawAttendees = e.Attendees as Array<{ EmailAddress: { Name: string; Address: string }; Type: string }> ?? [];
+    const attendees = rawAttendees.map(a => ({
+      name:  a.EmailAddress?.Name  ?? "",
+      email: a.EmailAddress?.Address ?? "",
+    }));
+    return {
+      id:              e.Id as string,
+      subject:         e.Subject as string,
+      start:           (e.Start as { DateTime: string })?.DateTime,
+      end:             (e.End   as { DateTime: string })?.DateTime,
+      location:        (e.Location as { DisplayName: string })?.DisplayName || undefined,
+      organizer:       org?.Name || undefined,
+      organizerEmail:  org?.Address || undefined,
+      attendees,
+      isOnlineMeeting: e.IsOnlineMeeting as boolean,
+      bodyPreview:     e.BodyPreview as string | undefined,
+    };
+  });
 
   progress(`✅ Found ${events.length} calendar event(s)`);
   return events;
