@@ -85,7 +85,7 @@ export async function detectPostMeetingEngagements(opts: {
   // 2. Fetch open opportunities for matching (best-effort)
   let opportunities: { opportunityid: string; name: string; accountName: string }[] = [];
   try {
-    opportunities = await fetchOpportunities({ myOpportunitiesOnly: true, top: 100 }, progress);
+    opportunities = await fetchOpportunities({ myOpportunitiesOnly: true, minNnacv: 100_000, top: 100 }, progress);
   } catch {
     // Non-fatal — matching is best-effort
   }
