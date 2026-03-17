@@ -36,7 +36,7 @@ Download [Setup.command](https://github.com/h22fred/sc-engagement-mcp/raw/main/S
 The installer:
 - Runs `npm install` and `tsc`
 - Registers the MCP server in `~/Library/Application Support/Claude/claude_desktop_config.json`
-- Creates **ChromeLink.app** on your Desktop
+- Creates **ChromeLink.command** on your Desktop
 - Prompts for your Teams incoming webhook URL
 - Installs a Monday 9:30am cron job for automated hygiene sweep
 
@@ -44,7 +44,7 @@ The installer:
 
 ## Every session
 
-1. Double-click **ChromeLink.app** on your Desktop
+1. Double-click **ChromeLink.command** on your Desktop
 2. Log into Dynamics, Outlook and Teams (ServiceNow SSO)
 3. Open Claude Desktop
 
@@ -74,7 +74,7 @@ Get the transcript from my SITA demo last week
 
 ## How it works
 
-ChromeLink.app launches Chrome with `--remote-debugging-port=9222`. The MCP server extracts session cookies and Bearer tokens from the browser via raw CDP WebSocket — no credentials stored, no Azure registration needed.
+ChromeLink.command launches Chrome with `--remote-debugging-port=9222`. The MCP server extracts session cookies and Bearer tokens from the browser via raw CDP WebSocket — no credentials stored, no Azure registration needed.
 
 Auth flow:
 1. Dynamics: reads `CrmOwinAuthC1/C2` cookies via `Network.getCookies` CDP command
@@ -107,7 +107,7 @@ Teams webhook config lives in `~/.sc-engagement-config.json`:
 | ChromeLink not running | Claude calls `open_chrome_debug` automatically |
 | Not logged into Dynamics | Log into `servicenow.crm.dynamics.com` in ChromeLink window |
 | 401 from Dynamics | Session expired — re-login in ChromeLink |
-| Multiple Chrome windows | Only use ChromeLink.app, not regular Chrome |
+| Multiple Chrome windows | Only use ChromeLink.command, not regular Chrome |
 | Teams not posting | Run `setup.sh` again to reconfigure webhook |
 
 ---

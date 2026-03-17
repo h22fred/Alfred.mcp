@@ -102,20 +102,41 @@ PYEOF
 fi
 
 # ------------------------------------------------------------
-# 4. Create ChromeLink.app
+# 4. Create ChromeLink.command on Desktop
 # ------------------------------------------------------------
 echo ""
-echo "▶ Creating ChromeLink.app on Desktop..."
+echo "▶ Creating ChromeLink on Desktop..."
 
-cat > /tmp/chromedebug_setup.applescript << 'APPLESCRIPT'
--- Launch Chrome with debug port only if it's not already running
--- Checking via pgrep prevents duplicate Chrome instances in the dock
-do shell script "pgrep -f 'chrome-debug-profile' > /dev/null 2>&1 || (mkdir -p /tmp/chrome-debug-profile && \"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome\" --remote-debugging-port=9222 --user-data-dir=/tmp/chrome-debug-profile --no-first-run --no-default-browser-check \"https://servicenow.crm.dynamics.com\" \"https://outlook.office.com\" \"https://teams.microsoft.com\" > /dev/null 2>&1 &)"
-APPLESCRIPT
+CHROMELINK_CMD="$HOME/Desktop/ChromeLink.command"
 
-osacompile -o "$CHROMELINK_APP" /tmp/chromedebug_setup.applescript
-rm /tmp/chromedebug_setup.applescript
-echo "   ✅ ChromeLink.app created on Desktop"
+cat > "$CHROMELINK_CMD" << 'CMDEOF'
+#!/bin/bash
+# ChromeLink — launch Chrome with debug port for Claude integration
+# Double-click this file to start your session before using Claude Desktop.
+
+if pgrep -f "chrome-debug-profile" > /dev/null 2>&1; then
+  echo "✅ ChromeLink is already running."
+else
+  mkdir -p /tmp/chrome-debug-profile
+  "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
+    --remote-debugging-port=9222 \
+    --user-data-dir=/tmp/chrome-debug-profile \
+    --no-first-run \
+    --no-default-browser-check \
+    "https://servicenow.crm.dynamics.com" \
+    "https://outlook.office.com" \
+    "https://teams.microsoft.com" \
+    > /dev/null 2>&1 &
+  echo "🚀 ChromeLink launched — log into Dynamics, Outlook and Teams, then open Claude Desktop."
+fi
+CMDEOF
+
+chmod +x "$CHROMELINK_CMD"
+
+# Remove old AppleScript app if it exists
+[ -d "$CHROMELINK_APP" ] && rm -rf "$CHROMELINK_APP" && echo "   🗑  Removed old ChromeLink.app"
+
+echo "   ✅ ChromeLink.command created on Desktop"
 
 # ------------------------------------------------------------
 # 5. Teams webhook config
