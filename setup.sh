@@ -197,20 +197,37 @@ else
 fi
 
 # ------------------------------------------------------------
-# 6. Install Monday 9:30am hygiene sweep cron job
+# 6. Install cron jobs
 # ------------------------------------------------------------
 echo ""
-echo "▶ Installing Monday hygiene sweep cron job..."
+echo "▶ Installing cron jobs..."
 
-SWEEP_CMD="$NODE_PATH $SCRIPT_DIR/scripts/hygiene-sweep.mjs >> $HOME/.sc-engagement-hygiene.log 2>&1"
-CRON_LINE="30 9 * * 1 $SWEEP_CMD"
+HYGIENE_CMD="$NODE_PATH $SCRIPT_DIR/scripts/hygiene-sweep.mjs >> $HOME/.sc-engagement-hygiene.log 2>&1"
+HYGIENE_CRON="30 9 * * 1 $HYGIENE_CMD"
 
-if crontab -l 2>/dev/null | grep -q "hygiene-sweep"; then
-  echo "   ✅ Cron job already installed"
+MEETING_CMD="$NODE_PATH $SCRIPT_DIR/scripts/post-meeting-sweep.mjs >> $HOME/.sc-engagement-meetings.log 2>&1"
+MEETING_CRON="0 14 * * 5 $MEETING_CMD"
+
+CURRENT_CRON=$(crontab -l 2>/dev/null)
+
+UPDATED_CRON="$CURRENT_CRON"
+if echo "$CURRENT_CRON" | grep -q "hygiene-sweep"; then
+  echo "   ✅ Hygiene cron already installed (Monday 9:30am)"
 else
-  (crontab -l 2>/dev/null; echo "$CRON_LINE") | crontab -
-  echo "   ✅ Cron job installed (runs every Monday at 9:30am)"
+  UPDATED_CRON="$UPDATED_CRON
+$HYGIENE_CRON"
+  echo "   ✅ Hygiene cron installed (Monday 9:30am)"
 fi
+
+if echo "$CURRENT_CRON" | grep -q "post-meeting-sweep"; then
+  echo "   ✅ Meeting review cron already installed (Friday 2:00pm)"
+else
+  UPDATED_CRON="$UPDATED_CRON
+$MEETING_CRON"
+  echo "   ✅ Meeting review cron installed (Friday 2:00pm)"
+fi
+
+echo "$UPDATED_CRON" | crontab -
 
 # ------------------------------------------------------------
 # Done
@@ -226,7 +243,9 @@ echo "  2. Log into Dynamics, Outlook and Teams in that window"
 echo "  3. Restart Claude Desktop"
 echo "  4. Ask Claude anything — opportunities, calendar, hygiene sweep!"
 echo ""
-echo "Hygiene sweep runs automatically every Monday at 9:30am."
+echo "Automated jobs:"
+echo "  • Monday 9:30am — CRM hygiene sweep"
+echo "  • Friday 2:00pm — Weekly meeting review"
 if [ -n "$EXISTING_WEBHOOK" ] || [ -n "$NEW_WEBHOOK" ]; then
   echo "Results will be posted to your Teams channel."
 else
