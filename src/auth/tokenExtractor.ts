@@ -38,16 +38,8 @@ function isChromeLinkgable(): boolean {
   }
 }
 
-function killChromeLink(): void {
-  try {
-    // Target ONLY the ChromeLink profile dir — never touches regular Chrome
-    execFileSync("pkill", ["-f", CHROME_PROFILE_DIR], { timeout: 3_000 });
-    console.error("[auth] Killed stale ChromeLink process");
-  } catch { /* no process to kill — fine */ }
-}
-
-function launchChromeLink(force = false): void {
-  if (!force && isChromeProcessRunning()) {
+function launchChromeLink(): void {
+  if (isChromeProcessRunning()) {
     console.error("[auth] ChromeLink process already running — waiting for port to become ready...");
     return;
   }
@@ -105,22 +97,16 @@ export async function connectWithRetry(retries = 3) {
   for (let i = 0; i < retries; i++) {
     try {
       const wsUrl = await freshCdpEndpoint();
-      // Short timeout — if Chrome is zombie it hangs, not fails; 10s is enough for healthy Chrome
       return await chromium.connectOverCDP(wsUrl, { timeout: 10_000 });
     } catch (e) {
       lastError = e as Error;
-      if (i < retries - 1) {
-        // Chrome is in a bad state — kill it and relaunch fresh
-        console.error(`[auth] connectOverCDP failed (attempt ${i + 1}) — killing and relaunching ChromeLink...`);
-        killChromeLink();
-        clearAuthCache();
-        await new Promise(r => setTimeout(r, 1_500)); // let it die
-        launchChromeLink(true); // force launch even if pgrep finds a dying process
-        await waitForChrome();
-      }
+      if (i < retries - 1) await new Promise(r => setTimeout(r, 1_000));
     }
   }
-  throw lastError;
+  throw new Error(
+    "Could not connect to ChromeLink. Please close and reopen ChromeLink from your Desktop, then retry.\n" +
+    `(${lastError.message})`
+  );
 }
 
 // ---------------------------------------------------------------------------
