@@ -94,7 +94,6 @@ try {
 try {
   const results = await runHygieneSweep({
     postToTeams: !!config.teamsWebhook,
-    myOpportunitiesOnly: true,
     minNnacv: 100_000,
   }, log);
 

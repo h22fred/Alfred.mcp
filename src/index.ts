@@ -111,12 +111,13 @@ server.tool(
   "list_opportunities",
   `List open opportunities from Dynamics 365.
 
-IMPORTANT: Before calling this tool, always ask the user these three questions if they haven't specified:
-1. "Your opportunities only, or all?" (default: your opportunities only)
-2. "100K+ NNACV only, or all sizes?" (default: 100K+ only)
-3. "All your accounts, or a specific account?" (default: all — if they name one, pass it as search)
+Defaults to the current user's pipeline only (SC or territory). Only set my_opportunities_only=false if the user explicitly asks for all opportunities, a colleague's pipeline, a region, or a manager view.
 
-Ask all three together in one message. Only call this tool once you have their answers.`,
+IMPORTANT: Before calling this tool, always ask the user these two questions if they haven't specified:
+1. "100K+ NNACV only, or all sizes?" (default: 100K+ only)
+2. "All your accounts, or a specific account?" (default: all — if they name one, pass it as search)
+
+Ask both together in one message. Only call this tool once you have their answers.`,
   {
     top: z.number().optional().describe("Max number of results (default 50)"),
     search: z.string().optional().describe("Filter by opportunity or account name (partial match)"),
@@ -517,22 +518,20 @@ Use cases:
 // ---------------------------------------------------------------------------
 server.tool(
   "run_hygiene_sweep",
-  `Scan all open opportunities and flag missing SC-owned engagement milestones.
+  `Scan your open opportunities and flag missing SC-owned engagement milestones.
 
 Required SC milestones: Discovery, Demo, Technical Win
 Optional SC milestones: RFx, Business Case, Workshop, POV, EBC
 
-Optionally posts results to Teams if configure_teams_webhook has been set up.`,
+Always runs for the current user's pipeline only. Optionally posts results to Teams.`,
   {
-    post_to_teams:          z.boolean().optional().describe("Post the report to Teams (requires configure_teams_webhook)"),
-    my_opportunities_only:  z.boolean().optional().describe("Only check your owned opportunities (default true)"),
-    min_nnacv:              z.number().optional().describe("Minimum NNACV filter in USD (default $100K)"),
+    post_to_teams: z.boolean().optional().describe("Post the report to Teams (requires configure_teams_webhook)"),
+    min_nnacv:     z.number().optional().describe("Minimum NNACV filter in USD (default $100K)"),
   },
-  async ({ post_to_teams, my_opportunities_only, min_nnacv }) => {
+  async ({ post_to_teams, min_nnacv }) => {
     const progress = makeProgress(server);
     const results = await runHygieneSweep({
       postToTeams: post_to_teams ?? false,
-      myOpportunitiesOnly: my_opportunities_only ?? true,
       minNnacv: min_nnacv ?? 100_000,
     }, progress);
     return { content: [{ type: "text", text: formatHygieneReport(results) }] };
