@@ -119,14 +119,14 @@ notify() { osascript -e "display notification \"$1\" with title \"ChromeLink\"" 
 
 # Check if ChromeLink is already running and healthy (port responds)
 if curl -s --max-time 1 http://localhost:9222/json/version > /dev/null 2>&1; then
-  notify "Already running — log into Dynamics, Outlook and Teams if needed."
+  notify "Already running — you're good to use Claude!"
   exit 0
 fi
 
-mkdir -p ~/.chromelink-profile
+# Launch Chrome with remote debugging using your existing default profile.
+# NOTE: Close any open Chrome windows first, then double-click ChromeLink.
 "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
   --remote-debugging-port=9222 \
-  --user-data-dir=~/.chromelink-profile \
   --no-first-run \
   --no-default-browser-check \
   "https://servicenow.crm.dynamics.com" \
@@ -134,7 +134,7 @@ mkdir -p ~/.chromelink-profile
   "https://teams.microsoft.com" \
   > /dev/null 2>&1 &
 
-notify "Launched — log into Dynamics, Outlook and Teams, then use Claude."
+notify "Launched with your Chrome profile — use Claude when tabs are loaded."
 SHELLEOF
 
 chmod +x "$CHROMELINK_APP/Contents/MacOS/ChromeLink"

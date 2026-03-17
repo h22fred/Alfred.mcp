@@ -22,6 +22,26 @@ export function clearGraphTokenCache(): void {
 // service call, and captures the outgoing Authorization header.
 // ---------------------------------------------------------------------------
 
+// JS snippet injected into the Outlook page to extract a Bearer token from MSAL cache
+const MSAL_EXTRACT_JS = `(function() {
+  const tryStorage = (s) => {
+    try {
+      for (const key of Object.keys(s)) {
+        try {
+          const val = JSON.parse(s.getItem(key));
+          if (val && val.credentialType === 'AccessToken' && val.secret &&
+              (val.target || '').toLowerCase().includes('mail')) {
+            const exp = Number(val.expiresOn || val.extended_expires_on || 0);
+            if (!exp || exp * 1000 > Date.now()) return val.secret;
+          }
+        } catch {}
+      }
+    } catch {}
+    return null;
+  };
+  return tryStorage(sessionStorage) || tryStorage(localStorage);
+})()`;
+
 async function acquireGraphTokenRawCDP(progress: ProgressFn): Promise<string> {
   if (tokenCache && Date.now() < tokenCache.expiresAt) {
     const mins = Math.round((tokenCache.expiresAt - Date.now()) / 60_000);
@@ -31,24 +51,59 @@ async function acquireGraphTokenRawCDP(progress: ProgressFn): Promise<string> {
 
   progress("🔑 Acquiring Graph Bearer token via CDP...");
 
-  // Find the Outlook page target (prefer it, fall back to any page)
   const listRes = await fetch(`http://localhost:${CDP_PORT}/json/list`);
   const targets = await listRes.json() as Array<{ webSocketDebuggerUrl?: string; type?: string; url?: string }>;
-  const target =
-    targets.find(t => t.type === "page" && t.url?.includes("outlook.office.com") && t.webSocketDebuggerUrl) ??
-    targets.find(t => t.type === "page" && t.webSocketDebuggerUrl);
+
+  // Prefer Outlook tab, fall back to any page
+  const outlookTarget = targets.find(t => t.type === "page" && t.url?.includes("outlook.office.com") && t.webSocketDebuggerUrl);
+  const anyTarget     = targets.find(t => t.type === "page" && t.webSocketDebuggerUrl);
+  const target        = outlookTarget ?? anyTarget;
 
   if (!target?.webSocketDebuggerUrl) {
-    throw new Error("No page targets found in ChromeLink. Make sure you are logged into Outlook.");
+    throw new Error("No page targets found in ChromeLink. Open ChromeLink.app and log into Outlook.");
   }
+
+  if (!outlookTarget) {
+    throw new Error(
+      "No Outlook tab found in ChromeLink.\n" +
+      "Please open https://outlook.office.com in the ChromeLink window and log in, then retry."
+    );
+  }
+
+  // Step 1: try reading token directly from MSAL storage — fast, no network interception
+  const msalToken = await new Promise<string | null>((resolve) => {
+    const ws = new WebSocket(target.webSocketDebuggerUrl!);
+    const timer = setTimeout(() => { try { ws.close(); } catch {} resolve(null); }, 5_000);
+
+    ws.addEventListener("open", () => {
+      ws.send(JSON.stringify({ id: 1, method: "Runtime.evaluate", params: { expression: MSAL_EXTRACT_JS, returnByValue: true } }));
+    });
+    ws.addEventListener("message", (event: MessageEvent) => {
+      clearTimeout(timer);
+      try { ws.close(); } catch {}
+      try {
+        const msg = JSON.parse(event.data as string) as { result?: { result?: { value?: string } } };
+        resolve(msg.result?.result?.value ?? null);
+      } catch { resolve(null); }
+    });
+    ws.addEventListener("error", () => { clearTimeout(timer); try { ws.close(); } catch {} resolve(null); });
+  });
+
+  if (msalToken) {
+    tokenCache = { token: msalToken, expiresAt: Date.now() + TOKEN_CACHE_MS };
+    progress("✅ Graph token acquired from MSAL cache");
+    return msalToken;
+  }
+
+  // Step 2: fallback — enable Network tracking and trigger an OWA API fetch
+  progress("🔑 MSAL cache miss — capturing token via network interception...");
 
   return new Promise((resolve, reject) => {
     const ws = new WebSocket(target.webSocketDebuggerUrl!);
     let capturedToken: string | null = null;
-    let networkEnabled = false;
 
     const timer = setTimeout(() => {
-      try { ws.close(); } catch { /* ignore */ }
+      try { ws.close(); } catch {}
       reject(new Error(
         "Could not capture Graph token from Outlook.\n" +
         "Make sure you are logged into https://outlook.office.com in ChromeLink."
@@ -57,54 +112,42 @@ async function acquireGraphTokenRawCDP(progress: ProgressFn): Promise<string> {
 
     const done = (token: string) => {
       clearTimeout(timer);
-      try { ws.close(); } catch { /* ignore */ }
+      try { ws.close(); } catch {}
       tokenCache = { token, expiresAt: Date.now() + TOKEN_CACHE_MS };
       progress("✅ Graph token acquired");
       resolve(token);
     };
 
     let msgId = 0;
-    const send = (method: string, params?: Record<string, unknown>) => {
+    const send = (method: string, params?: Record<string, unknown>) =>
       ws.send(JSON.stringify({ id: ++msgId, method, params }));
-    };
 
-    ws.addEventListener("open", () => {
-      send("Network.enable");
-    });
+    ws.addEventListener("open", () => send("Network.enable"));
 
     ws.addEventListener("message", (event: MessageEvent) => {
       try {
-        const msg = JSON.parse(event.data as string) as {
-          id?: number;
-          method?: string;
-          params?: Record<string, unknown>;
-        };
-
-        // After Network.enable, trigger a lightweight OWA fetch to emit auth headers
-        if (msg.id === 1 && !networkEnabled) {
-          networkEnabled = true;
+        const msg = JSON.parse(event.data as string) as { id?: number; method?: string; params?: Record<string, unknown> };
+        if (msg.id === 1) {
+          // Network enabled — trigger an OWA mail fetch which adds Authorization via JS interceptor
           send("Runtime.evaluate", {
-            expression: `fetch("/owa/service.svc?action=GetAccessTokenforResource", { method: "POST", body: "{}", credentials: "include" }).catch(()=>{})`,
+            expression: `fetch('/api/v2.0/me/messages?$top=1&$select=Id', { credentials: 'include' }).catch(()=>{})`,
             awaitPromise: false,
           });
         }
-
-        // Intercept outgoing request headers
         if (msg.method === "Network.requestWillBeSent") {
-          const headers = (msg.params?.request as Record<string, unknown> | undefined)
-            ?.headers as Record<string, string> | undefined;
-          const auth = headers?.["Authorization"] ?? headers?.["authorization"] ?? "";
+          const headers = ((msg.params?.request as Record<string, unknown>)?.headers ?? {}) as Record<string, string>;
+          const auth = headers["Authorization"] ?? headers["authorization"] ?? "";
           if (!capturedToken && auth.startsWith("Bearer ")) {
             capturedToken = auth.slice(7);
             done(capturedToken);
           }
         }
-      } catch { /* ignore parse errors */ }
+      } catch { /* ignore */ }
     });
 
     ws.addEventListener("error", () => {
       clearTimeout(timer);
-      reject(new Error("CDP WebSocket error while capturing Graph token — is ChromeLink running?"));
+      reject(new Error("CDP WebSocket error — is ChromeLink running?"));
     });
   });
 }
