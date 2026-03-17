@@ -115,7 +115,14 @@ mkdir -p "$CHROMELINK_APP/Contents/MacOS"
 
 cat > "$CHROMELINK_APP/Contents/MacOS/ChromeLink" << 'SHELLEOF'
 #!/bin/bash
-pgrep -f "chrome-debug-profile" > /dev/null 2>&1 && exit 0
+notify() { osascript -e "display notification \"$1\" with title \"ChromeLink\"" 2>/dev/null; }
+
+# Check if ChromeLink is already running and healthy (port responds)
+if curl -s --max-time 1 http://localhost:9222/json/version > /dev/null 2>&1; then
+  notify "Already running — log into Dynamics, Outlook and Teams if needed."
+  exit 0
+fi
+
 mkdir -p /tmp/chrome-debug-profile
 "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
   --remote-debugging-port=9222 \
@@ -126,6 +133,8 @@ mkdir -p /tmp/chrome-debug-profile
   "https://outlook.office.com" \
   "https://teams.microsoft.com" \
   > /dev/null 2>&1 &
+
+notify "Launched — log into Dynamics, Outlook and Teams, then use Claude."
 SHELLEOF
 
 chmod +x "$CHROMELINK_APP/Contents/MacOS/ChromeLink"
