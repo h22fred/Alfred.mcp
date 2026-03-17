@@ -18,9 +18,11 @@ let cachedOutlookAuth: CachedAuth | null = null;
 
 export type ProgressFn = (msg: string) => void;
 
+const CHROME_PROFILE_DIR = "/tmp/chrome-debug-profile";
+
 function isChromeProcessRunning(): boolean {
   try {
-    execFileSync("pgrep", ["-f", `remote-debugging-port=${CDP_PORT}`], { timeout: 2_000 });
+    execFileSync("pgrep", ["-f", CHROME_PROFILE_DIR], { timeout: 2_000 });
     return true;
   } catch {
     return false;
@@ -38,7 +40,8 @@ function isChromeLinkgable(): boolean {
 
 function killChromeLink(): void {
   try {
-    execFileSync("pkill", ["-f", `remote-debugging-port=${CDP_PORT}`], { timeout: 3_000 });
+    // Target ONLY the ChromeLink profile dir — never touches regular Chrome
+    execFileSync("pkill", ["-f", CHROME_PROFILE_DIR], { timeout: 3_000 });
     console.error("[auth] Killed stale ChromeLink process");
   } catch { /* no process to kill — fine */ }
 }
