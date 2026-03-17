@@ -158,7 +158,8 @@ export async function fetchOpportunities(filter: OpportunityFilter = {}, progres
 
   let filterClause = filter.includeClosed ? "statecode ge 0" : "statecode eq 0";
   if (filter.search) {
-    filterClause += ` and contains(name,'${filter.search.replace(/'/g, "''")}')`;
+    const safe = filter.search.replace(/'/g, "''");
+    filterClause += ` and (contains(name,'${safe}') or contains(sn_number,'${safe}'))`;
   }
   if (filter.minNnacv) {
     filterClause += ` and totalamount ge ${filter.minNnacv}`;
