@@ -102,50 +102,39 @@ PYEOF
 fi
 
 # ------------------------------------------------------------
-# 4. Create ChromeLink.app on Desktop (plain shell script bundle — no AppleScript)
+# 4. Create ChromeLink.command on Desktop
 # ------------------------------------------------------------
 echo ""
-echo "▶ Creating ChromeLink.app on Desktop..."
+echo "▶ Creating ChromeLink on Desktop..."
+
+CHROMELINK_CMD="$HOME/Desktop/ChromeLink.command"
 
 # Remove old versions
 [ -d "$CHROMELINK_APP" ] && rm -rf "$CHROMELINK_APP"
-[ -f "$HOME/Desktop/ChromeLink.command" ] && rm -f "$HOME/Desktop/ChromeLink.command"
+[ -f "$CHROMELINK_CMD" ] && rm -f "$CHROMELINK_CMD"
 
-mkdir -p "$CHROMELINK_APP/Contents/MacOS"
-
-cat > "$CHROMELINK_APP/Contents/MacOS/ChromeLink" << 'SHELLEOF'
+cat > "$CHROMELINK_CMD" << 'CMDEOF'
 #!/bin/bash
-pgrep -f "chrome-debug-profile" > /dev/null 2>&1 && exit 0
-mkdir -p /tmp/chrome-debug-profile
-"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
-  --remote-debugging-port=9222 \
-  --user-data-dir=/tmp/chrome-debug-profile \
-  --no-first-run \
-  --no-default-browser-check \
-  "https://servicenow.crm.dynamics.com" \
-  "https://outlook.office.com" \
-  "https://teams.microsoft.com" \
-  > /dev/null 2>&1 &
-SHELLEOF
+if pgrep -f "chrome-debug-profile" > /dev/null 2>&1; then
+  echo "✅ ChromeLink is already running — log into Dynamics, Outlook and Teams if needed."
+else
+  mkdir -p /tmp/chrome-debug-profile
+  "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
+    --remote-debugging-port=9222 \
+    --user-data-dir=/tmp/chrome-debug-profile \
+    --no-first-run \
+    --no-default-browser-check \
+    "https://servicenow.crm.dynamics.com" \
+    "https://outlook.office.com" \
+    "https://teams.microsoft.com" \
+    > /dev/null 2>&1 &
+  echo "🚀 ChromeLink launched — log into Dynamics, Outlook and Teams, then open Claude Desktop."
+fi
+CMDEOF
 
-chmod +x "$CHROMELINK_APP/Contents/MacOS/ChromeLink"
-
-cat > "$CHROMELINK_APP/Contents/Info.plist" << 'PLISTEOF'
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-  <key>CFBundleExecutable</key><string>ChromeLink</string>
-  <key>CFBundleIdentifier</key><string>com.servicenow.chromelink</string>
-  <key>CFBundleName</key><string>ChromeLink</string>
-  <key>CFBundlePackageType</key><string>APPL</string>
-  <key>CFBundleVersion</key><string>1.0</string>
-  <key>LSUIElement</key><true/>
-</dict>
-</plist>
-PLISTEOF
-
-echo "   ✅ ChromeLink.app created on Desktop"
+chmod +x "$CHROMELINK_CMD"
+echo "   ✅ ChromeLink.command created on Desktop (double-click to launch)"
+echo "   ℹ️  First time: right-click → Open to bypass macOS security warning"
 
 # ------------------------------------------------------------
 # 5. Teams webhook config
