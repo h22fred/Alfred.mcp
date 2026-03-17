@@ -138,9 +138,18 @@ function accountBlock(account: string, opps: HygieneResult[]): Record<string, un
     ],
   });
 
-  // One row per opportunity — sorted by NNACV desc
+  // One row per opportunity — red sorted by close date asc (urgency), others by NNACV desc
   opps
-    .sort((a, b) => (b.opportunity.totalamount ?? 0) - (a.opportunity.totalamount ?? 0))
+    .sort((a, b) => {
+      const statusOrder = { red: 0, yellow: 1, green: 2 };
+      if (a.status !== b.status) return statusOrder[a.status] - statusOrder[b.status];
+      if (a.status === "red") {
+        const da = a.opportunity.estimatedclosedate ?? "9999";
+        const db = b.opportunity.estimatedclosedate ?? "9999";
+        return da < db ? -1 : da > db ? 1 : 0;
+      }
+      return (b.opportunity.totalamount ?? 0) - (a.opportunity.totalamount ?? 0);
+    })
     .forEach(r => {
       const oppIcon = r.status === "red" ? "🔴" : r.status === "yellow" ? "🟡" : "✅";
       const missing = r.missingRequired.length
@@ -148,6 +157,9 @@ function accountBlock(account: string, opps: HygieneResult[]): Record<string, un
         : r.missingOptional.length
           ? `optional: ${r.missingOptional.slice(0, 3).join(", ")}${r.missingOptional.length > 3 ? "…" : ""}`
           : "complete ✓";
+      const closeLabel = r.opportunity.estimatedclosedate
+        ? r.opportunity.estimatedclosedate.slice(0, 10)
+        : "—";
       blocks.push({
         type: "ColumnSet", spacing: "Small",
         columns: [
@@ -160,7 +172,12 @@ function accountBlock(account: string, opps: HygieneResult[]): Record<string, un
             items: [{ type: "TextBlock", text: fmt(r.opportunity.totalamount), size: "Small", isSubtle: true, horizontalAlignment: "Right" }],
           },
           {
-            type: "Column", width: "180px",
+            type: "Column", width: "auto",
+            items: [{ type: "TextBlock", text: closeLabel, size: "Small", isSubtle: true,
+              color: r.status === "red" ? "Attention" : "Default", horizontalAlignment: "Right" }],
+          },
+          {
+            type: "Column", width: "160px",
             items: [{
               type: "TextBlock", text: missing, size: "Small", wrap: false,
               color: r.status === "red" ? "Attention" : r.status === "yellow" ? "Warning" : "Good",
@@ -206,7 +223,8 @@ async function postHygieneToTeams(results: HygieneResult[], progress: ProgressFn
       columns: [
         { type: "Column", width: "stretch", items: [{ type: "TextBlock", text: "ACCOUNT / OPPORTUNITY", size: "Small", weight: "Bolder", isSubtle: true }] },
         { type: "Column", width: "auto",    items: [{ type: "TextBlock", text: "NNACV", size: "Small", weight: "Bolder", isSubtle: true, horizontalAlignment: "Right" }] },
-        { type: "Column", width: "180px",   items: [{ type: "TextBlock", text: "MISSING", size: "Small", weight: "Bolder", isSubtle: true, horizontalAlignment: "Right" }] },
+        { type: "Column", width: "auto",    items: [{ type: "TextBlock", text: "CLOSE", size: "Small", weight: "Bolder", isSubtle: true, horizontalAlignment: "Right" }] },
+        { type: "Column", width: "160px",   items: [{ type: "TextBlock", text: "MISSING", size: "Small", weight: "Bolder", isSubtle: true, horizontalAlignment: "Right" }] },
       ],
     },
   ];
@@ -246,14 +264,24 @@ export function formatHygieneReport(results: HygieneResult[]): string {
     lines.push(`${worstIcon} **${account}** — ${fmt(accountTotal)}`);
 
     opps
-      .sort((a, b) => (b.opportunity.totalamount ?? 0) - (a.opportunity.totalamount ?? 0))
+      .sort((a, b) => {
+        const statusOrder = { red: 0, yellow: 1, green: 2 };
+        if (a.status !== b.status) return statusOrder[a.status] - statusOrder[b.status];
+        if (a.status === "red") {
+          const da = a.opportunity.estimatedclosedate ?? "9999";
+          const db = b.opportunity.estimatedclosedate ?? "9999";
+          return da < db ? -1 : da > db ? 1 : 0;
+        }
+        return (b.opportunity.totalamount ?? 0) - (a.opportunity.totalamount ?? 0);
+      })
       .forEach(r => {
         const icon = r.status === "red" ? "🔴" : r.status === "yellow" ? "🟡" : "✅";
         const nnacv = fmt(r.opportunity.totalamount);
+        const closeDate = r.opportunity.estimatedclosedate ? ` · close ${r.opportunity.estimatedclosedate.slice(0, 10)}` : "";
         const missing = r.missingRequired.length
           ? `missing: ${r.missingRequired.join(", ")}`
           : r.status === "yellow" ? "required complete ✓" : "all complete ✓";
-        lines.push(`   ${icon} ${r.opportunity.name} (${nnacv}) — ${missing}`);
+        lines.push(`   ${icon} ${r.opportunity.name} (${nnacv}${closeDate}) — ${missing}`);
       });
 
     lines.push("");

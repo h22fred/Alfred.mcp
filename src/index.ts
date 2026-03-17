@@ -453,11 +453,12 @@ Can search across all mail by keyword, or list a folder (inbox, sentitems, draft
     folder:      z.string().optional().describe("Mail folder to list: 'inbox' (default), 'sentitems', 'drafts'"),
     top:         z.number().optional().describe("Max number of messages to return (default 25)"),
     unread_only: z.boolean().optional().describe("If true, return only unread messages (only applies when not searching)"),
+    full_body:   z.boolean().optional().describe("If true, fetch the full email body (HTML stripped to clean plain text). Default false — returns preview only."),
   },
-  async ({ search, folder, top, unread_only }) => {
+  async ({ search, folder, top, unread_only, full_body }) => {
     const progress = makeProgress(server);
     const messages = await getEmails(
-      { search, folder: folder ?? "inbox", top: top ?? 25, unreadOnly: unread_only },
+      { search, folder: folder ?? "inbox", top: top ?? 25, unreadOnly: unread_only, fullBody: full_body },
       progress
     );
     return {
