@@ -28,7 +28,7 @@ async function acquireGraphToken(progress: ProgressFn): Promise<string> {
   try {
     execFileSync("curl", ["-s", "--max-time", "1", `http://localhost:${CDP_PORT}/json/version`], { timeout: 2_000 });
   } catch {
-    throw new Error("ChromeDebug is not running. Open ChromeDebug.app first.");
+    throw new Error("ChromeLink is not running. Open ChromeLink.app first.");
   }
 
   const browser = await connectWithRetry();
@@ -67,7 +67,7 @@ async function acquireGraphToken(progress: ProgressFn): Promise<string> {
     if (!capturedToken) {
       throw new Error(
         "Could not capture Graph token from Outlook.\n" +
-        "Make sure you are logged into https://outlook.office.com in ChromeDebug and the page is fully loaded."
+        "Make sure you are logged into https://outlook.office.com in ChromeLink and the page is fully loaded."
       );
     }
 

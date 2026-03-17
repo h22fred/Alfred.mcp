@@ -18,7 +18,7 @@ let cachedOutlookAuth: CachedAuth | null = null;
 
 export type ProgressFn = (msg: string) => void;
 
-function isChromeDebuggable(): boolean {
+function isChromeLinkgable(): boolean {
   try {
     execFileSync("curl", ["-s", "--max-time", "1", `http://localhost:${CDP_PORT}/json/version`], { timeout: 2_000 });
     return true;
@@ -27,8 +27,8 @@ function isChromeDebuggable(): boolean {
   }
 }
 
-function launchChromeDebug(): void {
-  console.error("[auth] ChromeDebug not running — launching automatically...");
+function launchChromeLink(): void {
+  console.error("[auth] ChromeLink not running — launching automatically...");
   execFile("/bin/sh", ["-c",
     `mkdir -p /tmp/chrome-debug-profile && \
     "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
@@ -43,22 +43,22 @@ function launchChromeDebug(): void {
 async function waitForChrome(timeoutMs = 15_000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    if (isChromeDebuggable()) return;
+    if (isChromeLinkgable()) return;
     await new Promise(r => setTimeout(r, 500));
   }
-  throw new Error("ChromeDebug did not start in time. Try opening ChromeDebug.app manually.");
+  throw new Error("ChromeLink did not start in time. Try opening ChromeLink.app manually.");
 }
 
-export async function ensureChromeDebug(progress: ProgressFn = () => {}): Promise<void> {
-  if (isChromeDebuggable()) return;
-  progress("🚀 Launching ChromeDebug automatically...");
-  launchChromeDebug();
+export async function ensureChromeLink(progress: ProgressFn = () => {}): Promise<void> {
+  if (isChromeLinkgable()) return;
+  progress("🚀 Launching ChromeLink automatically...");
+  launchChromeLink();
   await waitForChrome();
   // Open Dynamics, Outlook and Teams tabs via CDP
   for (const url of [DYNAMICS_URL, OUTLOOK_URL, "https://teams.microsoft.com"]) {
     await fetch(`http://localhost:${CDP_PORT}/json/new?${url}`).catch(() => {});
   }
-  progress("✅ ChromeDebug ready — please log into Dynamics, Outlook and Teams in the new window");
+  progress("✅ ChromeLink ready — please log into Dynamics, Outlook and Teams in the new window");
 }
 
 export async function freshCdpEndpoint(): Promise<string> {
@@ -66,7 +66,7 @@ export async function freshCdpEndpoint(): Promise<string> {
   const res = await fetch(`http://localhost:${CDP_PORT}/json/version`);
   const info = await res.json() as { webSocketDebuggerUrl?: string };
   if (info.webSocketDebuggerUrl) return info.webSocketDebuggerUrl;
-  throw new Error("Could not resolve CDP WebSocket URL from ChromeDebug.");
+  throw new Error("Could not resolve CDP WebSocket URL from ChromeLink.");
 }
 
 export async function connectWithRetry(retries = 3) {
@@ -96,7 +96,7 @@ async function getCookiesViaRawCDP(urls: string[]): Promise<RawCookie[]> {
   const targets = await listRes.json() as Array<{ webSocketDebuggerUrl?: string; type?: string }>;
   const target = targets.find(t => t.type === "page" && t.webSocketDebuggerUrl);
   if (!target?.webSocketDebuggerUrl) {
-    throw new Error("No page targets in ChromeDebug. Make sure ChromeDebug.app is running.");
+    throw new Error("No page targets in ChromeLink. Make sure ChromeLink.app is running.");
   }
 
   return new Promise((resolve, reject) => {
@@ -122,7 +122,7 @@ async function getCookiesViaRawCDP(urls: string[]): Promise<RawCookie[]> {
 
     ws.addEventListener("error", () => {
       clearTimeout(timer);
-      reject(new Error("CDP WebSocket error — is ChromeDebug running?"));
+      reject(new Error("CDP WebSocket error — is ChromeLink running?"));
     });
   });
 }
@@ -134,8 +134,8 @@ async function getAuthCookiesViaCDP(progress: ProgressFn): Promise<CachedAuth> {
   const authCookies = allCookies.filter(c => AUTH_COOKIE_NAMES.includes(c.name));
   if (authCookies.length === 0) {
     throw new Error(
-      "ChromeDebug is open but you are not logged into Dynamics yet.\n" +
-      "Please log into servicenow.crm.dynamics.com in the ChromeDebug window, then retry."
+      "ChromeLink is open but you are not logged into Dynamics yet.\n" +
+      "Please log into servicenow.crm.dynamics.com in the ChromeLink window, then retry."
     );
   }
 
@@ -156,7 +156,7 @@ export async function getAuthCookies(progress: ProgressFn = () => {}): Promise<s
   }
 
   progress("🔐 Acquiring Dynamics session cookies...");
-  await ensureChromeDebug(progress);
+  await ensureChromeLink(progress);
 
   const auth = await getAuthCookiesViaCDP(progress);
   cachedAuth = auth;
@@ -175,15 +175,15 @@ export async function getOutlookCookies(progress: ProgressFn = () => {}): Promis
 
   progress("🔐 Extracting Outlook cookies via CDP...");
 
-  if (!isChromeDebuggable()) {
-    throw new Error("Chrome debug port not available. Open ChromeDebug.app first.");
+  if (!isChromeLinkgable()) {
+    throw new Error("Chrome debug port not available. Open ChromeLink.app first.");
   }
 
   const allCookies = await getCookiesViaRawCDP([OUTLOOK_URL]);
   if (allCookies.length === 0) {
     throw new Error(
-      "Not logged into Outlook in the ChromeDebug window.\n" +
-      "Log into https://outlook.office.com in the ChromeDebug Chrome window, then retry."
+      "Not logged into Outlook in the ChromeLink window.\n" +
+      "Log into https://outlook.office.com in the ChromeLink Chrome window, then retry."
     );
   }
 

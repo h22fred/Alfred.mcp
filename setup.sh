@@ -9,7 +9,7 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 CLAUDE_CONFIG="$HOME/Library/Application Support/Claude/claude_desktop_config.json"
-CHROMEDEBUG_APP="$HOME/Desktop/ChromeDebug.app"
+CHROMELINK_APP="$HOME/Desktop/ChromeLink.app"
 
 echo ""
 echo "=================================================="
@@ -102,10 +102,10 @@ PYEOF
 fi
 
 # ------------------------------------------------------------
-# 4. Create ChromeDebug.app
+# 4. Create ChromeLink.app
 # ------------------------------------------------------------
 echo ""
-echo "▶ Creating ChromeDebug.app on Desktop..."
+echo "▶ Creating ChromeLink.app on Desktop..."
 
 cat > /tmp/chromedebug_setup.applescript << 'APPLESCRIPT'
 -- Launch Chrome with debug port, opening all three tabs directly in that process
@@ -113,9 +113,9 @@ cat > /tmp/chromedebug_setup.applescript << 'APPLESCRIPT'
 do shell script "mkdir -p /tmp/chrome-debug-profile && \"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome\" --remote-debugging-port=9222 --user-data-dir=/tmp/chrome-debug-profile --no-first-run --no-default-browser-check \"https://servicenow.crm.dynamics.com\" \"https://outlook.office.com\" \"https://teams.microsoft.com\" > /dev/null 2>&1 &"
 APPLESCRIPT
 
-osacompile -o "$CHROMEDEBUG_APP" /tmp/chromedebug_setup.applescript
+osacompile -o "$CHROMELINK_APP" /tmp/chromedebug_setup.applescript
 rm /tmp/chromedebug_setup.applescript
-echo "   ✅ ChromeDebug.app created on Desktop"
+echo "   ✅ ChromeLink.app created on Desktop"
 
 # ------------------------------------------------------------
 # 5. Teams webhook config
@@ -181,7 +181,7 @@ echo "  ✅ Setup complete!"
 echo "=================================================="
 echo ""
 echo "Next steps:"
-echo "  1. Double-click ChromeDebug.app on your Desktop"
+echo "  1. Double-click ChromeLink.app on your Desktop"
 echo "  2. Log into Dynamics, Outlook and Teams in that window"
 echo "  3. Restart Claude Desktop"
 echo "  4. Ask Claude anything — opportunities, calendar, hygiene sweep!"
