@@ -102,7 +102,11 @@ IMPORTANT: Call this tool AUTOMATICALLY — without asking the user — whenever
 - "not logged in" or "not logged into"
 
 This tool also clears all cached auth tokens, so call it proactively if you suspect a stale session.
-Never ask the user to manually open ChromeLink.app. Always call this tool first, then retry the original tool.`,
+
+IMPORTANT AFTER CALLING THIS TOOL:
+- Tell the user: "ChromeLink is open — please log into Dynamics, Outlook and Teams, then let me know when you're ready."
+- STOP and wait for the user to confirm they are logged in before retrying any other tool.
+- Do NOT automatically retry the original tool — the user must log in first.`,
   {},
   async () => {
     const progress = makeProgress(server);
@@ -111,7 +115,7 @@ Never ask the user to manually open ChromeLink.app. Always call this tool first,
     clearGraphTokenCache();
     await ensureChromeLink(progress);
     return {
-      content: [{ type: "text", text: "✅ ChromeLink is running. Log into Dynamics, Outlook and Teams in the Chrome window, then retry your request." }],
+      content: [{ type: "text", text: "✅ ChromeLink is open. Please log into Dynamics, Outlook and Teams in the Chrome window using ServiceNow SSO, then tell me when you're ready and I'll continue." }],
     };
   }
 );
