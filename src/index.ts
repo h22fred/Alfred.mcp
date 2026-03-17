@@ -372,7 +372,7 @@ server.tool(
 // ---------------------------------------------------------------------------
 server.tool(
   "delete_timeline_note",
-  "Delete a specific timeline note by its annotation ID (use list_timeline_notes to find IDs). IMPORTANT: Always confirm with the user before deleting.",
+  "Delete a specific timeline note by its annotation ID (use list_timeline_notes to find IDs). IMPORTANT: Always show the user the note subject and text, ask for confirmation, then ask AGAIN 'Are you sure? This cannot be undone.' Only call this tool after two explicit confirmations.",
   { annotation_id: z.string().describe("Dynamics annotation GUID") },
   async ({ annotation_id }) => {
     const progress = makeProgress(server);
