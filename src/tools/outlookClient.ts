@@ -4,7 +4,7 @@ import { execFileSync } from "child_process";
 
 const CDP_PORT = 9222;
 const OUTLOOK_ORIGIN = "https://outlook.office.com";
-const TOKEN_CACHE_MS  = 45 * 60 * 1000; // 45 min — kept for Teams Graph token
+const TOKEN_CACHE_MS  = 45 * 60 * 1000; // 45 min
 
 interface TokenCache {
   token: string;
@@ -17,98 +17,102 @@ export function clearGraphTokenCache(): void {
 }
 
 // ---------------------------------------------------------------------------
-// Acquire a Graph Bearer token by loading a lightweight Outlook page
-// and intercepting its outgoing Graph API requests.
+// Acquire a Graph Bearer token via raw CDP WebSocket — no Playwright needed.
+// Enables Network tracking on the Outlook tab, triggers a lightweight OWA
+// service call, and captures the outgoing Authorization header.
 // ---------------------------------------------------------------------------
 
-async function acquireGraphToken(progress: ProgressFn): Promise<string> {
+async function acquireGraphTokenRawCDP(progress: ProgressFn): Promise<string> {
   if (tokenCache && Date.now() < tokenCache.expiresAt) {
     const mins = Math.round((tokenCache.expiresAt - Date.now()) / 60_000);
     progress(`🔑 Using cached Graph token (~${mins} min remaining)`);
     return tokenCache.token;
   }
 
-  // Check Chrome is reachable
-  try {
-    execFileSync("curl", ["-s", "--max-time", "1", `http://localhost:${CDP_PORT}/json/version`], { timeout: 2_000 });
-  } catch {
-    throw new Error("ChromeLink is not running. Open ChromeLink.app first.");
+  progress("🔑 Acquiring Graph Bearer token via CDP...");
+
+  // Find the Outlook page target (prefer it, fall back to any page)
+  const listRes = await fetch(`http://localhost:${CDP_PORT}/json/list`);
+  const targets = await listRes.json() as Array<{ webSocketDebuggerUrl?: string; type?: string; url?: string }>;
+  const target =
+    targets.find(t => t.type === "page" && t.url?.includes("outlook.office.com") && t.webSocketDebuggerUrl) ??
+    targets.find(t => t.type === "page" && t.webSocketDebuggerUrl);
+
+  if (!target?.webSocketDebuggerUrl) {
+    throw new Error("No page targets found in ChromeLink. Make sure you are logged into Outlook.");
   }
 
-  const browser = await connectWithRetry();
-
-  try {
-    const ctx = browser.contexts()[0];
-    if (!ctx) throw new Error("No browser context found");
-
+  return new Promise((resolve, reject) => {
+    const ws = new WebSocket(target.webSocketDebuggerUrl!);
     let capturedToken: string | null = null;
+    let networkEnabled = false;
 
-    // Prefer the existing Outlook tab — avoids a full page load
-    const existingPage = ctx.pages().find(p => p.url().includes("outlook.office.com"));
-    const page = existingPage ?? await ctx.newPage();
-    const isNewPage = !existingPage;
+    const timer = setTimeout(() => {
+      try { ws.close(); } catch { /* ignore */ }
+      reject(new Error(
+        "Could not capture Graph token from Outlook.\n" +
+        "Make sure you are logged into https://outlook.office.com in ChromeLink."
+      ));
+    }, 10_000);
 
-    await page.route("**/outlook.office.com/**", async (route) => {
-      const auth = route.request().headers()["authorization"] ?? "";
-      if (!capturedToken && auth.startsWith("Bearer ")) {
-        capturedToken = auth.slice(7);
-      }
-      await route.continue();
+    const done = (token: string) => {
+      clearTimeout(timer);
+      try { ws.close(); } catch { /* ignore */ }
+      tokenCache = { token, expiresAt: Date.now() + TOKEN_CACHE_MS };
+      progress("✅ Graph token acquired");
+      resolve(token);
+    };
+
+    let msgId = 0;
+    const send = (method: string, params?: Record<string, unknown>) => {
+      ws.send(JSON.stringify({ id: ++msgId, method, params }));
+    };
+
+    ws.addEventListener("open", () => {
+      send("Network.enable");
     });
 
-    if (isNewPage) {
-      // No existing tab — load Outlook fresh
-      progress("📧 Loading Outlook to capture auth token...");
-      await page.goto(`${OUTLOOK_ORIGIN}/mail/`, { waitUntil: "domcontentloaded", timeout: 30_000 });
-    } else {
-      // Existing tab — trigger a lightweight call to fire auth headers immediately
-      progress("📧 Capturing auth token from existing Outlook tab...");
-      await page.evaluate(() =>
-        fetch("/owa/service.svc?action=GetAccessTokenforResource", { method: "POST", body: "{}", credentials: "include" }).catch(() => {})
-      );
-    }
+    ws.addEventListener("message", (event: MessageEvent) => {
+      try {
+        const msg = JSON.parse(event.data as string) as {
+          id?: number;
+          method?: string;
+          params?: Record<string, unknown>;
+        };
 
-    // Wait up to 5 s for token on existing tab
-    const quickDeadline = Date.now() + 5_000;
-    while (!capturedToken && Date.now() < quickDeadline) {
-      await page.waitForTimeout(200);
-    }
+        // After Network.enable, trigger a lightweight OWA fetch to emit auth headers
+        if (msg.id === 1 && !networkEnabled) {
+          networkEnabled = true;
+          send("Runtime.evaluate", {
+            expression: `fetch("/owa/service.svc?action=GetAccessTokenforResource", { method: "POST", body: "{}", credentials: "include" }).catch(()=>{})`,
+            awaitPromise: false,
+          });
+        }
 
-    // Fallback: existing tab was on a login page — open fresh and do a full load
-    if (!capturedToken && !isNewPage) {
-      progress("📧 Outlook session expired — reloading to capture fresh token...");
-      await page.unroute("**/outlook.office.com/**");
-      const freshPage = await ctx.newPage();
-      await freshPage.route("**/outlook.office.com/**", async (route) => {
-        const auth = route.request().headers()["authorization"] ?? "";
-        if (!capturedToken && auth.startsWith("Bearer ")) capturedToken = auth.slice(7);
-        await route.continue();
-      });
-      await freshPage.goto(`${OUTLOOK_ORIGIN}/mail/`, { waitUntil: "domcontentloaded", timeout: 30_000 });
-      const slowDeadline = Date.now() + 10_000;
-      while (!capturedToken && Date.now() < slowDeadline) {
-        await freshPage.waitForTimeout(200);
-      }
-      await freshPage.unroute("**/outlook.office.com/**");
-      await freshPage.close();
-    } else {
-      await page.unroute("**/outlook.office.com/**");
-      if (isNewPage) await page.close();
-    }
+        // Intercept outgoing request headers
+        if (msg.method === "Network.requestWillBeSent") {
+          const headers = (msg.params?.request as Record<string, unknown> | undefined)
+            ?.headers as Record<string, string> | undefined;
+          const auth = headers?.["Authorization"] ?? headers?.["authorization"] ?? "";
+          if (!capturedToken && auth.startsWith("Bearer ")) {
+            capturedToken = auth.slice(7);
+            done(capturedToken);
+          }
+        }
+      } catch { /* ignore parse errors */ }
+    });
 
-    if (!capturedToken) {
-      throw new Error(
-        "Could not capture Graph token from Outlook.\n" +
-        "Make sure you are logged into https://outlook.office.com in ChromeLink and the page is fully loaded."
-      );
-    }
+    ws.addEventListener("error", () => {
+      clearTimeout(timer);
+      reject(new Error("CDP WebSocket error while capturing Graph token — is ChromeLink running?"));
+    });
+  });
+}
 
-    tokenCache = { token: capturedToken, expiresAt: Date.now() + TOKEN_CACHE_MS };
-    progress("✅ Graph token acquired");
-    return capturedToken;
-  } finally {
-    await browser.close();
-  }
+// acquireGraphToken — uses raw CDP (no Playwright) for calendar/email.
+// Playwright-based token capture is kept in teamsClient.ts for Graph API calls.
+async function acquireGraphToken(progress: ProgressFn): Promise<string> {
+  return acquireGraphTokenRawCDP(progress);
 }
 
 const OUTLOOK_API = "https://outlook.office.com/api/v2.0/me";
@@ -144,38 +148,6 @@ async function outlookApiFetch(path: string, token: string, progress?: ProgressF
   return res.json() as Promise<Record<string, unknown>>;
 }
 
-// ---------------------------------------------------------------------------
-// Outlook REST v2 fetch using session cookies (raw CDP — no Playwright needed)
-// This is the primary path for calendar + email — more reliable than Bearer token.
-// ---------------------------------------------------------------------------
-
-async function outlookCookieFetch(path: string, progress: ProgressFn): Promise<Record<string, unknown>> {
-  const cookieHeader = await getOutlookCookies(progress);
-  const res = await fetch(`${OUTLOOK_API}${path}`, {
-    headers: { Cookie: cookieHeader, Accept: "application/json" },
-  });
-
-  if (res.status === 401) {
-    clearAuthCache();
-    progress("🔄 Outlook session expired — re-acquiring cookies...");
-    const freshCookie = await getOutlookCookies(progress);
-    const retry = await fetch(`${OUTLOOK_API}${path}`, {
-      headers: { Cookie: freshCookie, Accept: "application/json" },
-    });
-    if (!retry.ok) {
-      const body = await retry.text().catch(() => "");
-      throw new Error(`Outlook API ${retry.status} ${retry.statusText}${body ? `: ${body.slice(0, 200)}` : ""}`);
-    }
-    return retry.json() as Promise<Record<string, unknown>>;
-  }
-
-  if (!res.ok) {
-    const body = await res.text().catch(() => "");
-    throw new Error(`Outlook API ${res.status} ${res.statusText}${body ? `: ${body.slice(0, 200)}` : ""}`);
-  }
-
-  return res.json() as Promise<Record<string, unknown>>;
-}
 
 // ---------------------------------------------------------------------------
 // Calendar events
@@ -211,7 +183,8 @@ export async function getCalendarEvents(
   });
   if (search) params.set("$search", `"${search}"`);
 
-  const data = await outlookCookieFetch(`/calendarview?${params}`, progress);
+  const token = await acquireGraphToken(progress);
+  const data = await outlookApiFetch(`/calendarview?${params}`, token, progress);
 
   const events = (data.value as Record<string, unknown>[] ?? []).map(e => {
     const org = (e.Organizer as { EmailAddress: { Name: string; Address: string } } | undefined)?.EmailAddress;
@@ -310,7 +283,8 @@ export async function getEmails(opts: {
     path = `/mailfolders/${folder}/messages?${p}`;
   }
 
-  const data = await outlookCookieFetch(path, progress);
+  const token = await acquireGraphToken(progress);
+  const data = await outlookApiFetch(path, token, progress);
   const messages = (data.value as Record<string, unknown>[] ?? []).map(m => {
     const fromEA = (m.From as { EmailAddress: { Name: string; Address: string } })?.EmailAddress;
     const bodyContent = (m.Body as { Content?: string; ContentType?: string } | undefined);
