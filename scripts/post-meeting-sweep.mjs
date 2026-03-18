@@ -261,7 +261,7 @@ for (const c of displayCandidates) {
       {
         type: "Column", width: "stretch",
         items: [
-          { type: "TextBlock", text: `${txIcon} ${truncate(c.meetingSubject, 40)}`, size: "Small", wrap: false },
+          { type: "TextBlock", text: `${txIcon} ${truncate(c.meetingSubject, 40)}`, wrap: false },
           { type: "TextBlock", text: subtitle, size: "Small", isSubtle: true, spacing: "None" },
         ],
       },
