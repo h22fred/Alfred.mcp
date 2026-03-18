@@ -123,7 +123,7 @@ export async function acquireTeamsGraphToken(progress: ProgressFn): Promise<stri
 
     for (const existing of [teamsPage, outlookPage].filter(Boolean) as typeof existingPages) {
       let capturedToken: string | null = null;
-      await existing.route("**/*", async (route) => {
+      await existing.route("**/graph.microsoft.com/**", async (route) => {
         const auth = route.request().headers()["authorization"] ?? "";
         if (!capturedToken && auth.startsWith("Bearer ")) capturedToken = auth.slice(7);
         await route.continue();
@@ -133,7 +133,7 @@ export async function acquireTeamsGraphToken(progress: ProgressFn): Promise<stri
       }).catch(() => {});
       const deadline = Date.now() + 4_000;
       while (!capturedToken && Date.now() < deadline) await existing.waitForTimeout(300);
-      await existing.unroute("**/*");
+      await existing.unroute("**/graph.microsoft.com/**");
       if (capturedToken) {
         teamsTokenCache = { token: capturedToken, expiresAt: Date.now() + TOKEN_CACHE_MS };
         progress("✅ Graph token acquired from existing tab");
@@ -141,26 +141,20 @@ export async function acquireTeamsGraphToken(progress: ProgressFn): Promise<stri
       }
     }
 
-    // Step 2: no existing tab yielded a token — open a new page and navigate
+    // Step 2: no existing tab yielded a token — open a new page on Outlook
+    // (Outlook makes Graph API calls on load, giving us a graph.microsoft.com-scoped token)
     const page = await ctx.newPage();
     let capturedToken: string | null = null;
-    await page.route("**/*", async (route) => {
+    await page.route("**/graph.microsoft.com/**", async (route) => {
       const auth = route.request().headers()["authorization"] ?? "";
       if (!capturedToken && auth.startsWith("Bearer ")) capturedToken = auth.slice(7);
       await route.continue();
     });
 
-    progress("📡 Loading Teams to capture Graph token...");
-    await page.goto("https://teams.microsoft.com/v2/", { waitUntil: "domcontentloaded", timeout: 20_000 }).catch(() => {});
-    const deadline = Date.now() + 8_000;
+    progress("📡 Loading Outlook to capture Graph token...");
+    await page.goto("https://outlook.office.com/mail/", { waitUntil: "domcontentloaded", timeout: 20_000 }).catch(() => {});
+    const deadline = Date.now() + 10_000;
     while (!capturedToken && Date.now() < deadline) await page.waitForTimeout(500);
-
-    if (!capturedToken) {
-      progress("📡 Trying Outlook as fallback...");
-      await page.goto("https://outlook.office.com/mail/", { waitUntil: "domcontentloaded", timeout: 20_000 }).catch(() => {});
-      const deadline2 = Date.now() + 8_000;
-      while (!capturedToken && Date.now() < deadline2) await page.waitForTimeout(500);
-    }
 
     await page.close();
 
