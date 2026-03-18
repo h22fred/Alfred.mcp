@@ -334,8 +334,24 @@ A timeline note is created automatically on creation.`,
       completedDate: completed_date,
     }, progress);
 
+    // Check which SC required milestones are still missing after this creation
+    const SC_REQUIRED = ["Discovery", "Demo", "Technical Win"];
+    const allEngagements = await fetchEngagementsByOpportunity(opportunity_id, progress);
+    const activeTypeNames = allEngagements
+      .filter(e => !e.statusName?.toLowerCase().includes("cancel"))
+      .map(e => e.engagementTypeName ?? "")
+      .filter(Boolean);
+    const stillMissing = SC_REQUIRED.filter(t => !activeTypeNames.includes(t));
+
+    let text = engagementSummary(engagement, "Created");
+    if (stillMissing.length > 0) {
+      text += `\n\n⚠️ **Missing SC milestones on this opp:** ${stillMissing.join(", ")}. Want me to create ${stillMissing.length === 1 ? "one" : "them"} now?`;
+    } else {
+      text += `\n\n✅ All 3 SC milestones (Discovery, Demo, Technical Win) are now logged on this opp.`;
+    }
+
     return {
-      content: [{ type: "text", text: engagementSummary(engagement, "Created") }],
+      content: [{ type: "text", text }],
     };
   }
 );

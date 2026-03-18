@@ -48,8 +48,7 @@ The installer:
 
 1. Double-click **Alfred.app** on your Desktop
 2. **First time only:** log into Dynamics, Outlook and Teams (ServiceNow SSO) — Alfred remembers you after that
-3. Leave Alfred running in the Dock
-4. Open Claude Desktop and ask anything
+3. Alfred automatically opens Claude Desktop — you're ready to go
 
 ---
 

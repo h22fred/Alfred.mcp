@@ -42,18 +42,26 @@ if (config.teamsWebhook) setTeamsWebhook(config.teamsWebhook);
 
 async function postAdaptiveCardRaw(webhookUrl, card) {
   try {
-    await fetch(webhookUrl, {
+    const body = JSON.stringify({
+      type: "message",
+      attachments: [{ contentType: "application/vnd.microsoft.card.adaptive", content: card }],
+    });
+    log(`📦 Card payload: ${(body.length / 1024).toFixed(1)}KB`);
+    const res = await fetch(webhookUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        type: "message",
-        attachments: [{
-          contentType: "application/vnd.microsoft.card.adaptive",
-          content: card,
-        }],
-      }),
+      body,
     });
-  } catch { /* webhook failure is non-fatal */ }
+    if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      err(`Teams webhook error: ${res.status} ${res.statusText}${text ? ` — ${text}` : ""}`);
+      return false;
+    }
+    return true;
+  } catch (e) {
+    err(`Teams webhook request failed: ${e.message}`);
+    return false;
+  }
 }
 
 async function postTeamsSimple(webhookUrl, title, body) {
@@ -180,7 +188,17 @@ for (const c of candidates) {
   }
 }
 
-log("Building Teams card...");
+// Cap at 15 most relevant — matched opps first, then by duration desc
+const displayCandidates = [...candidates]
+  .sort((a, b) => {
+    if (a.suggestedOpportunityId && !b.suggestedOpportunityId) return -1;
+    if (!a.suggestedOpportunityId && b.suggestedOpportunityId) return 1;
+    return (b.durationMinutes ?? 0) - (a.durationMinutes ?? 0);
+  })
+  .slice(0, 15);
+
+const trimmed = candidates.length > 15;
+log(`Building Teams card (${displayCandidates.length}/${candidates.length} meetings)...`);
 
 // Step 4 — build Adaptive Card
 const today = new Date().toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
@@ -207,15 +225,14 @@ const cardBody = [
     type: "ColumnSet", spacing: "Small",
     columns: [
       { type: "Column", width: "stretch", items: [{ type: "TextBlock", text: "MEETING", size: "Small", weight: "Bolder", isSubtle: true }] },
-      { type: "Column", width: "auto",    items: [{ type: "TextBlock", text: "DAY / TIME", size: "Small", weight: "Bolder", isSubtle: true, horizontalAlignment: "Right" }] },
-      { type: "Column", width: "auto",    items: [{ type: "TextBlock", text: "MIN", size: "Small", weight: "Bolder", isSubtle: true, horizontalAlignment: "Right" }] },
+      { type: "Column", width: "auto",    items: [{ type: "TextBlock", text: "WHEN · MIN", size: "Small", weight: "Bolder", isSubtle: true, horizontalAlignment: "Right" }] },
       { type: "Column", width: "140px",   items: [{ type: "TextBlock", text: "OPPORTUNITY", size: "Small", weight: "Bolder", isSubtle: true, horizontalAlignment: "Right" }] },
       { type: "Column", width: "120px",   items: [{ type: "TextBlock", text: "MISSING", size: "Small", weight: "Bolder", isSubtle: true, horizontalAlignment: "Right" }] },
     ],
   },
 ];
 
-for (const c of candidates) {
+for (const c of displayCandidates) {
   const txIcon  = c.transcriptAvailable ? "📝" : "🎙";
   const dayTime = `${fmtDate(c.meetingStart)} ${fmtTime(c.meetingStart)}`;
   const duration = c.durationMinutes ? String(c.durationMinutes) : "—";
@@ -227,6 +244,7 @@ for (const c of candidates) {
     : "—";
   const missingColor = hygiene?.status === "red" ? "Attention" : hygiene ? "Good" : "Default";
 
+  const whenMin = duration !== "—" ? `${dayTime} · ${duration}m` : dayTime;
   cardBody.push({
     type: "ColumnSet", spacing: "Small",
     columns: [
@@ -236,11 +254,7 @@ for (const c of candidates) {
       },
       {
         type: "Column", width: "auto",
-        items: [{ type: "TextBlock", text: dayTime, size: "Small", isSubtle: true, horizontalAlignment: "Right" }],
-      },
-      {
-        type: "Column", width: "auto",
-        items: [{ type: "TextBlock", text: duration, size: "Small", isSubtle: true, horizontalAlignment: "Right" }],
+        items: [{ type: "TextBlock", text: whenMin, size: "Small", isSubtle: true, horizontalAlignment: "Right" }],
       },
       {
         type: "Column", width: "140px",
@@ -257,13 +271,13 @@ for (const c of candidates) {
   });
 }
 
+const footerText = trimmed
+  ? `Showing ${displayCandidates.length} of ${candidates.length} meetings (top by opp match + duration). Open Claude Desktop and ask: **"Detect post-meeting engagements from this week"** to review all of them.`
+  : `Open Claude Desktop and ask: **"Detect post-meeting engagements from this week"** to review and log these.`;
+
 cardBody.push(
   { type: "Separator", spacing: "Medium" },
-  {
-    type: "TextBlock",
-    text: "Open Claude Desktop and ask: **\"Detect post-meeting engagements from this week\"** to review and log these.",
-    wrap: true, size: "Small", isSubtle: true,
-  }
+  { type: "TextBlock", text: footerText, wrap: true, size: "Small", isSubtle: true }
 );
 
 const card = {
@@ -274,8 +288,9 @@ const card = {
 };
 
 if (config.teamsWebhook) {
-  await postAdaptiveCardRaw(config.teamsWebhook, card);
-  log("✅ Posted to Teams");
+  const ok = await postAdaptiveCardRaw(config.teamsWebhook, card);
+  if (ok) log("✅ Posted to Teams");
+  else err("❌ Teams card failed to post — check payload size or webhook URL");
 } else {
   log("No Teams webhook configured — skipping post");
 }

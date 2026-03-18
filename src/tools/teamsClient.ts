@@ -129,7 +129,7 @@ async function acquireTeamsGraphToken(progress: ProgressFn): Promise<string> {
 
     // Try Teams first (richer scopes), fall back to Outlook
     progress("📡 Loading Teams to capture Graph token...");
-    await page.goto("https://teams.microsoft.com/_#/conversations/", {
+    await page.goto("https://teams.microsoft.com/v2/", {
       waitUntil: "domcontentloaded",
       timeout: 20_000,
     }).catch(() => {});
@@ -175,7 +175,8 @@ async function graphFetch(path: string, token: string): Promise<Record<string, u
   });
   if (!res.ok) {
     const body = await res.text().catch(() => "");
-    if (res.status === 401) teamsTokenCache = null;
+    // Only clear cache for auth failures on non-transcript endpoints (transcript 401 = scope issue, not bad token)
+    if (res.status === 401 && !path.includes("transcript")) teamsTokenCache = null;
     throw new Error(`Graph ${res.status} ${res.statusText}${body ? `: ${body.slice(0, 300)}` : ""}`);
   }
   return res.json() as Promise<Record<string, unknown>>;

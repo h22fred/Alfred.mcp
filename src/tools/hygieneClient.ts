@@ -36,7 +36,8 @@ export async function runHygieneSweep(opts: {
 
   for (const opp of opps) {
     const engagements = await fetchEngagementsByOpportunity(opp.opportunityid, progress);
-    const typeNames = engagements.map(e => e.engagementTypeName ?? "").filter(Boolean);
+    const activeEngagements = engagements.filter(e => !e.statusName?.toLowerCase().includes("cancel"));
+    const typeNames = activeEngagements.map(e => e.engagementTypeName ?? "").filter(Boolean);
 
     const missingRequired = SC_REQUIRED.filter(t => !typeNames.includes(t));
     const missingOptional = SC_OPTIONAL.filter(t => !typeNames.includes(t));
