@@ -1,4 +1,4 @@
-# AlFred.mcp
+# AIfred.mcp
 
 > *Every superhero needs an Alfred. Yours logs the Engagements.*
 
