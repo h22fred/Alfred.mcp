@@ -16,7 +16,7 @@ import { detectPostMeetingEngagements } from "../dist/tools/postMeetingClient.js
 import { fetchEngagementsByOpportunity } from "../dist/tools/dynamicsClient.js";
 import { setTeamsWebhook } from "../dist/tools/teamsClient.js";
 import { ensureAlfred } from "../dist/auth/tokenExtractor.js";
-import { readFileSync, existsSync } from "fs";
+import { readFileSync, existsSync, writeFileSync } from "fs";
 import { homedir } from "os";
 import { join } from "path";
 import { execFileSync } from "child_process";
@@ -64,6 +64,10 @@ async function postAdaptiveCardRaw(webhookUrl, card) {
     // Teams sometimes returns an error message with status 200 (e.g. "1" = success, anything else = warning)
     if (responseText && responseText !== "1") {
       log(`Teams webhook response body: ${responseText}`);
+      if (responseText.toLowerCase().includes("failed") || responseText.toLowerCase().includes("error")) {
+        err(`Teams rejected the card: ${responseText}`);
+        return false;
+      }
     }
     return true;
   } catch (e) {
@@ -284,7 +288,7 @@ const footerText = trimmed
   : `Open Claude Desktop and ask: **"Detect post-meeting engagements from this week"** to review and log these.`;
 
 cardBody.push(
-  { type: "Separator", spacing: "Medium" },
+  { type: "Separator" },
   { type: "TextBlock", text: footerText, wrap: true, size: "Small", isSubtle: true }
 );
 
@@ -294,6 +298,11 @@ const card = {
   version: "1.4",
   body: cardBody,
 };
+
+// Dump card to file for debugging
+const debugPath = "/tmp/meeting-card-debug.json";
+writeFileSync(debugPath, JSON.stringify({ type: "message", attachments: [{ contentType: "application/vnd.microsoft.card.adaptive", content: card }] }, null, 2));
+log(`Card JSON saved to ${debugPath} for inspection`);
 
 if (config.teamsWebhook) {
   const ok = await postAdaptiveCardRaw(config.teamsWebhook, card);
