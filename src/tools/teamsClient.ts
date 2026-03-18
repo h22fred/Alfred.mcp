@@ -151,8 +151,8 @@ export async function acquireTeamsGraphToken(progress: ProgressFn): Promise<stri
       await route.continue();
     });
 
-    progress("📡 Loading Outlook to capture Graph token...");
-    await page.goto("https://outlook.office.com/mail/", { waitUntil: "domcontentloaded", timeout: 20_000 }).catch(() => {});
+    progress("📡 Loading Teams to capture Graph token (broad scopes)...");
+    await page.goto("https://teams.microsoft.com/v2/", { waitUntil: "domcontentloaded", timeout: 20_000 }).catch(() => {});
     const deadline = Date.now() + 10_000;
     while (!capturedToken && Date.now() < deadline) await page.waitForTimeout(500);
 
