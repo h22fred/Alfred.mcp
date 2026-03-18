@@ -46,16 +46,24 @@ async function postAdaptiveCardRaw(webhookUrl, card) {
       type: "message",
       attachments: [{ contentType: "application/vnd.microsoft.card.adaptive", content: card }],
     });
-    log(`📦 Card payload: ${(body.length / 1024).toFixed(1)}KB`);
+    const sizeKb = body.length / 1024;
+    log(`📦 Card payload: ${sizeKb.toFixed(1)}KB`);
+    if (sizeKb > 27) {
+      err(`Card payload too large (${sizeKb.toFixed(1)}KB > 27KB limit) — Teams will likely reject it`);
+    }
     const res = await fetch(webhookUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body,
     });
+    const responseText = await res.text().catch(() => "");
     if (!res.ok) {
-      const text = await res.text().catch(() => "");
-      err(`Teams webhook error: ${res.status} ${res.statusText}${text ? ` — ${text}` : ""}`);
+      err(`Teams webhook error: ${res.status} ${res.statusText}${responseText ? ` — ${responseText}` : ""}`);
       return false;
+    }
+    // Teams sometimes returns an error message with status 200 (e.g. "1" = success, anything else = warning)
+    if (responseText && responseText !== "1") {
+      log(`Teams webhook response body: ${responseText}`);
     }
     return true;
   } catch (e) {
