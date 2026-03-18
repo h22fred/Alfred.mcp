@@ -65,18 +65,12 @@ EOF
 )
 
 if [ ! -f "$CLAUDE_CONFIG" ]; then
-  # Create fresh config
   mkdir -p "$(dirname "$CLAUDE_CONFIG")"
-  echo "{\"mcpServers\":{\"sc-engagement\":$MCP_ENTRY}}" > "$CLAUDE_CONFIG"
+  echo "{\"mcpServers\":{\"alfred\":$MCP_ENTRY}}" > "$CLAUDE_CONFIG"
   echo "   ✅ Created Claude Desktop config"
 else
-  # Check if already configured
-  if grep -q "sc-engagement" "$CLAUDE_CONFIG" 2>/dev/null; then
-    echo "   ✅ Already configured in Claude Desktop"
-  else
-    # Merge into existing config using Python (available on all Macs)
-    python3 - <<PYEOF
-import json, sys
+  python3 - <<PYEOF
+import json
 
 config_path = """$CLAUDE_CONFIG"""
 dist_path = """$DIST_PATH"""
@@ -88,7 +82,10 @@ with open(config_path, "r") as f:
 if "mcpServers" not in config:
     config["mcpServers"] = {}
 
-config["mcpServers"]["sc-engagement"] = {
+# Remove old entry if present
+config["mcpServers"].pop("sc-engagement", None)
+
+config["mcpServers"]["alfred"] = {
     "command": node_path,
     "args": [dist_path]
 }
@@ -96,9 +93,8 @@ config["mcpServers"]["sc-engagement"] = {
 with open(config_path, "w") as f:
     json.dump(config, f, indent=2)
 
-print("   ✅ Added sc-engagement to Claude Desktop config")
+print("   ✅ Claude Desktop config updated")
 PYEOF
-  fi
 fi
 
 # ------------------------------------------------------------
@@ -112,38 +108,50 @@ echo "▶ Creating Alfred.app on Desktop..."
 [ -f "$HOME/Desktop/Alfred.command" ] && rm -f "$HOME/Desktop/Alfred.command"
 
 mkdir -p "$CHROMELINK_APP/Contents/MacOS"
+mkdir -p "$CHROMELINK_APP/Contents/Resources"
 
 cat > "$CHROMELINK_APP/Contents/MacOS/Alfred" << 'SHELLEOF'
 #!/bin/bash
 notify() { osascript -e "display notification \"$1\" with title \"Alfred\"" 2>/dev/null; }
 
 # Already running?
-if curl -s --max-time 1 http://localhost:9222/json/version > /dev/null 2>&1; then
+if pgrep -f "alfred-profile" > /dev/null 2>&1; then
   notify "Already running — you're good to use Claude!"
+  open -a "Claude" 2>/dev/null || true
   exit 0
 fi
 
-mkdir -p ~/.alfred-profile
-"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
+mkdir -p "$HOME/.alfred-profile"
+open -na "Google Chrome" --args \
   --remote-debugging-port=9222 \
-  --user-data-dir=~/.alfred-profile \
+  --user-data-dir="$HOME/.alfred-profile" \
   --no-first-run \
   --no-default-browser-check \
+  --disable-extensions \
+  --disable-sync \
+  --disable-default-apps \
+  --disable-translate \
+  --disable-component-update \
+  --disable-domain-reliability \
+  --disable-client-side-phishing-detection \
   "https://servicenow.crm.dynamics.com" \
   "https://outlook.office.com" \
-  "https://teams.microsoft.com" \
-  > /dev/null 2>&1 &
+  "https://teams.microsoft.com/v2/"
 
 # First run detection — profile dir will be nearly empty on first launch
-PROFILE_SIZE=$(du -sk ~/.alfred-profile 2>/dev/null | cut -f1)
+PROFILE_SIZE=$(du -sk "$HOME/.alfred-profile" 2>/dev/null | cut -f1)
 if [ -z "$PROFILE_SIZE" ] || [ "$PROFILE_SIZE" -lt 500 ]; then
   notify "First time setup: log into Dynamics, Outlook and Teams in this window. You only do this once!"
 else
   notify "Launched — ready for Claude!"
 fi
+open -a "Claude" 2>/dev/null || true
 SHELLEOF
 
 chmod +x "$CHROMELINK_APP/Contents/MacOS/Alfred"
+
+# Copy icon
+cp "$SCRIPT_DIR/assets/alfred.icns" "$CHROMELINK_APP/Contents/Resources/alfred.icns"
 
 cat > "$CHROMELINK_APP/Contents/Info.plist" << 'PLISTEOF'
 <?xml version="1.0" encoding="UTF-8"?>
@@ -153,6 +161,7 @@ cat > "$CHROMELINK_APP/Contents/Info.plist" << 'PLISTEOF'
   <key>CFBundleExecutable</key><string>Alfred</string>
   <key>CFBundleIdentifier</key><string>com.servicenow.alfred</string>
   <key>CFBundleName</key><string>Alfred</string>
+  <key>CFBundleIconFile</key><string>alfred</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleVersion</key><string>1.0</string>
   <key>LSUIElement</key><true/>

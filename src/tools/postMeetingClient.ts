@@ -90,7 +90,15 @@ export async function detectPostMeetingEngagements(opts: {
     // Non-fatal — matching is best-effort
   }
 
-  // 3. For each ended meeting, try to get transcript + match opportunity
+  // 3. Fetch all transcripts for the week in one call, then match per meeting
+  progress("📋 Fetching this week's transcripts...");
+  let allTranscripts: Awaited<ReturnType<typeof getTeamsTranscript>> = [];
+  try {
+    allTranscripts = await getTeamsTranscript({ startDate, endDate }, progress);
+  } catch {
+    // Non-fatal — continue without transcripts
+  }
+
   const candidates: PostMeetingCandidate[] = [];
 
   for (const event of ended) {
@@ -99,24 +107,14 @@ export async function detectPostMeetingEngagements(opts: {
     let transcript: string | undefined;
     let transcriptAvailable = false;
 
-    try {
-      const txResults = await getTeamsTranscript({
-        search: event.subject,
-        startDate,
-        endDate,
-      }, progress);
+    const match = allTranscripts.find(t =>
+      t.subject?.toLowerCase().includes(event.subject?.toLowerCase().slice(0, 20) ?? "")
+      || Math.abs(new Date(t.start).getTime() - new Date(event.start).getTime()) < 30 * 60_000
+    );
 
-      const match = txResults.find(t =>
-        t.subject?.toLowerCase().includes(event.subject?.toLowerCase().slice(0, 20) ?? "")
-        || Math.abs(new Date(t.start).getTime() - new Date(event.start).getTime()) < 30 * 60_000
-      ) ?? txResults[0];
-
-      if (match?.transcript && match.transcript !== "(No transcript available)") {
-        transcript = match.transcript;
-        transcriptAvailable = true;
-      }
-    } catch {
-      // Transcript unavailable — continue without it
+    if (match?.transcript && match.transcript !== "(No transcript available)") {
+      transcript = match.transcript;
+      transcriptAvailable = true;
     }
 
     // Best-effort opportunity matching: subject words, organizer name, attendee email domains
