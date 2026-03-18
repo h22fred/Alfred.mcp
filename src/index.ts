@@ -40,7 +40,7 @@ function engagementSummary(e: Engagement, action: "Created" | "Updated"): string
   const lines = [
     `✅ ${action}: **${e.sn_name}** (${e.sn_engagementnumber ?? e.sn_engagementid ?? "—"})`,
     `Type: ${e.engagementTypeName ?? "—"}`,
-    `Status: ${e.statecode === 0 ? "Open" : "Complete"}`,
+    `Status: ${e.statuscode === 876130000 ? "Cancelled" : e.statecode === 0 ? "Open" : "Complete"}`,
     ...(e.sn_completeddate ? [`Completed: ${e.sn_completeddate.slice(0, 10)}`] : []),
     ...(e.sn_description ? [`\n${e.sn_description}`] : []),
     ...(link ? [`\n🔗 ${link}`] : []),
@@ -50,7 +50,7 @@ function engagementSummary(e: Engagement, action: "Created" | "Updated"): string
 
 function engagementListItem(e: Engagement): string {
   const link = engagementLink(e);
-  const status = e.statecode === 0 ? "Open" : "Complete";
+  const status = e.statuscode === 876130000 ? "Cancelled" : e.statecode === 0 ? "Open" : "Complete";
   const completed = e.sn_completeddate ? ` · ${e.sn_completeddate.slice(0, 10)}` : "";
   const lines = [
     `**${e.sn_name}** (${e.sn_engagementnumber ?? "—"}) · ${e.engagementTypeName ?? "—"} · ${status}${completed}`,

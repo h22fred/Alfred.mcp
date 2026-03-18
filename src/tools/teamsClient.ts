@@ -96,7 +96,7 @@ export async function postTeamsNotification(
 interface TokenCache { token: string; expiresAt: number; }
 let teamsTokenCache: TokenCache | null = null;
 
-async function acquireTeamsGraphToken(progress: ProgressFn): Promise<string> {
+export async function acquireTeamsGraphToken(progress: ProgressFn): Promise<string> {
   if (teamsTokenCache && Date.now() < teamsTokenCache.expiresAt) {
     const mins = Math.round((teamsTokenCache.expiresAt - Date.now()) / 60_000);
     progress(`🔑 Using cached Teams Graph token (~${mins} min remaining)`);
