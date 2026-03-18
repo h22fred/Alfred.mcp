@@ -192,9 +192,10 @@ for (const c of candidates) {
   try {
     const engagements = await fetchEngagementsByOpportunity(c.suggestedOpportunityId, log);
     const typeNames = engagements.map(e => e.engagementTypeName ?? "").filter(Boolean);
-    const missing = SC_REQUIRED.filter(t => !typeNames.includes(t));
+    const missing  = SC_REQUIRED.filter(t => !typeNames.includes(t));
+    const existing = SC_REQUIRED.filter(t =>  typeNames.includes(t));
     const status = missing.length > 0 ? "red" : "green";
-    hygieneByOpp.set(c.suggestedOpportunityId, { missing, status });
+    hygieneByOpp.set(c.suggestedOpportunityId, { missing, existing, status });
   } catch {
     // non-fatal — hygiene check fails gracefully
   }
@@ -250,16 +251,20 @@ for (const c of displayCandidates) {
   const oppText  = c.suggestedAccountName ? truncate(c.suggestedAccountName, 20) : "—";
 
   const hygiene = c.suggestedOpportunityId ? hygieneByOpp.get(c.suggestedOpportunityId) : null;
-  let actionText, actionColor;
+
+  // ACTION column: up to two lines — what to log (missing) + what to update (existing)
+  const actionItems = [];
   if (!c.suggestedOpportunityId) {
-    actionText  = "🔍 Find opp";
-    actionColor = "Warning";
-  } else if (hygiene?.missing.length) {
-    actionText  = "📝 Log: " + hygiene.missing.join(" · ");
-    actionColor = "Attention";
+    actionItems.push({ text: "🔍 Find opp", color: "Warning" });
   } else {
-    actionText  = "✅ All done";
-    actionColor = "Good";
+    if (hygiene?.missing.length) {
+      actionItems.push({ text: "📝 Log: " + hygiene.missing.join(" · "), color: "Attention" });
+    } else {
+      actionItems.push({ text: "✅ All logged", color: "Good" });
+    }
+    if (hygiene?.existing.length) {
+      actionItems.push({ text: "✏️ Update: " + hygiene.existing.join(" · "), color: "Accent" });
+    }
   }
 
   cardBody.push({
@@ -268,7 +273,7 @@ for (const c of displayCandidates) {
       {
         type: "Column", width: "stretch",
         items: [
-          { type: "TextBlock", text: `${txIcon} ${truncate(c.meetingSubject, 40)}`, wrap: false },
+          { type: "TextBlock", text: `${txIcon} ${c.meetingSubject}`, wrap: true },
           { type: "TextBlock", text: subtitle, size: "Small", isSubtle: true, spacing: "None" },
         ],
       },
@@ -280,8 +285,10 @@ for (const c of displayCandidates) {
       },
       {
         type: "Column", width: "150px",
-        items: [{ type: "TextBlock", text: actionText, size: "Small",
-          color: actionColor, wrap: false, horizontalAlignment: "Right" }],
+        items: actionItems.map((a, i) => ({
+          type: "TextBlock", text: a.text, size: "Small", color: a.color,
+          wrap: false, horizontalAlignment: "Right", ...(i > 0 ? { spacing: "None" } : {}),
+        })),
       },
     ],
   });
