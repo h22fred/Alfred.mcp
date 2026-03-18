@@ -232,15 +232,6 @@ const cardBody = [
       { type: "Column", width: "auto", items: [{ type: "TextBlock", text: `**${withMatch}** opp matched`, size: "Small" }] },
     ],
   },
-  // Column headers (separator:true replaces { type:"Separator" } which Teams rejects)
-  {
-    type: "ColumnSet", separator: true, spacing: "Small",
-    columns: [
-      { type: "Column", width: "stretch", items: [{ type: "TextBlock", text: "MEETING", size: "Small", weight: "Bolder", isSubtle: true }] },
-      { type: "Column", width: "140px",   items: [{ type: "TextBlock", text: "ACCOUNT", size: "Small", weight: "Bolder", isSubtle: true, horizontalAlignment: "Right" }] },
-      { type: "Column", width: "150px",   items: [{ type: "TextBlock", text: "ACTION", size: "Small", weight: "Bolder", isSubtle: true, horizontalAlignment: "Right" }] },
-    ],
-  },
 ];
 
 for (const c of displayCandidates) {
@@ -268,27 +259,32 @@ for (const c of displayCandidates) {
   }
 
   cardBody.push({
-    type: "ColumnSet", spacing: "Small",
-    columns: [
+    type: "Container", spacing: "Small", separator: cardBody.length > 2,
+    items: [
+      // Line 1: full-width meeting name
+      { type: "TextBlock", text: `${txIcon} ${c.meetingSubject}`, wrap: false },
+      // Line 2: date · account · action
       {
-        type: "Column", width: "stretch",
-        items: [
-          { type: "TextBlock", text: `${txIcon} ${c.meetingSubject}`, wrap: true },
-          { type: "TextBlock", text: subtitle, size: "Small", isSubtle: true, spacing: "None" },
+        type: "ColumnSet", spacing: "None",
+        columns: [
+          {
+            type: "Column", width: "stretch",
+            items: [{ type: "TextBlock", text: subtitle, size: "Small", isSubtle: true }],
+          },
+          {
+            type: "Column", width: "auto",
+            items: [{ type: "TextBlock", text: oppText, size: "Small",
+              color: c.suggestedAccountName ? "Accent" : "Attention",
+              horizontalAlignment: "Right" }],
+          },
+          {
+            type: "Column", width: "160px",
+            items: actionItems.map((a, i) => ({
+              type: "TextBlock", text: a.text, size: "Small", color: a.color,
+              wrap: false, horizontalAlignment: "Right", ...(i > 0 ? { spacing: "None" } : {}),
+            })),
+          },
         ],
-      },
-      {
-        type: "Column", width: "140px",
-        items: [{ type: "TextBlock", text: oppText, size: "Small",
-          color: c.suggestedAccountName ? "Accent" : "Attention",
-          wrap: false, horizontalAlignment: "Right" }],
-      },
-      {
-        type: "Column", width: "150px",
-        items: actionItems.map((a, i) => ({
-          type: "TextBlock", text: a.text, size: "Small", color: a.color,
-          wrap: false, horizontalAlignment: "Right", ...(i > 0 ? { spacing: "None" } : {}),
-        })),
       },
     ],
   });
