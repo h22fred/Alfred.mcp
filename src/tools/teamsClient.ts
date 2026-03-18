@@ -152,18 +152,22 @@ export async function acquireTeamsGraphToken(progress: ProgressFn): Promise<stri
   progress("🔐 Acquiring Graph token via Teams/Outlook in Alfred...");
 
   // Step 1: try to read Graph token directly from MSAL cache in open tabs (fast, no new page)
+  // Retry a few times — on fresh Chrome launch, Teams/Outlook need a moment to populate MSAL cache
   const listRes = await fetch(`http://localhost:${CDP_PORT}/json/list`).catch(() => null);
   if (listRes?.ok) {
     const targets = await listRes.json() as Array<{ webSocketDebuggerUrl?: string; type?: string; url?: string }>;
     const candidates = targets.filter(t => t.type === "page" && t.webSocketDebuggerUrl &&
       (t.url?.includes("teams.microsoft.com") || t.url?.includes("outlook.office.com")));
-    for (const t of candidates) {
-      const token = await extractGraphTokenFromTab(t.webSocketDebuggerUrl!);
-      if (token) {
-        teamsTokenCache = { token, expiresAt: Date.now() + TOKEN_CACHE_MS };
-        progress("✅ Graph token acquired from MSAL cache");
-        return token;
+    for (let attempt = 0; attempt < 4; attempt++) {
+      for (const t of candidates) {
+        const token = await extractGraphTokenFromTab(t.webSocketDebuggerUrl!);
+        if (token) {
+          teamsTokenCache = { token, expiresAt: Date.now() + TOKEN_CACHE_MS };
+          progress("✅ Graph token acquired from MSAL cache");
+          return token;
+        }
       }
+      if (attempt < 3) await new Promise(r => setTimeout(r, 3_000));
     }
   }
 
