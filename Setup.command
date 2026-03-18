@@ -4,8 +4,8 @@
 
 set -e
 
-REPO_URL="https://github.com/h22fred/alfred-mcp.git"
-INSTALL_DIR="$HOME/Documents/alfred-mcp"
+REPO_URL="https://github.com/h22fred/alfred.mcp.git"
+INSTALL_DIR="$HOME/Documents/alfred.mcp"
 
 echo ""
 echo "=================================================="
@@ -33,7 +33,7 @@ if [ -d "$INSTALL_DIR/.git" ]; then
   git -C "$INSTALL_DIR" pull --ff-only
   echo "   ✅ Updated to latest"
 else
-  echo "▶ Cloning alfred-mcp..."
+  echo "▶ Cloning alfred.mcp..."
   git clone "$REPO_URL" "$INSTALL_DIR"
   echo "   ✅ Cloned to $INSTALL_DIR"
 fi
