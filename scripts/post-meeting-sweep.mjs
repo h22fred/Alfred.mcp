@@ -237,7 +237,7 @@ const cardBody = [
     columns: [
       { type: "Column", width: "stretch", items: [{ type: "TextBlock", text: "MEETING", size: "Small", weight: "Bolder", isSubtle: true }] },
       { type: "Column", width: "140px",   items: [{ type: "TextBlock", text: "ACCOUNT", size: "Small", weight: "Bolder", isSubtle: true, horizontalAlignment: "Right" }] },
-      { type: "Column", width: "130px",   items: [{ type: "TextBlock", text: "MISSING", size: "Small", weight: "Bolder", isSubtle: true, horizontalAlignment: "Right" }] },
+      { type: "Column", width: "150px",   items: [{ type: "TextBlock", text: "ACTION", size: "Small", weight: "Bolder", isSubtle: true, horizontalAlignment: "Right" }] },
     ],
   },
 ];
@@ -250,10 +250,17 @@ for (const c of displayCandidates) {
   const oppText  = c.suggestedAccountName ? truncate(c.suggestedAccountName, 20) : "—";
 
   const hygiene = c.suggestedOpportunityId ? hygieneByOpp.get(c.suggestedOpportunityId) : null;
-  const missingText = hygiene
-    ? (hygiene.missing.length ? hygiene.missing.join(" · ") : "✓ complete")
-    : "—";
-  const missingColor = hygiene?.status === "red" ? "Attention" : hygiene ? "Good" : "Default";
+  let actionText, actionColor;
+  if (!c.suggestedOpportunityId) {
+    actionText  = "🔍 Find opp";
+    actionColor = "Warning";
+  } else if (hygiene?.missing.length) {
+    actionText  = "📝 Log: " + hygiene.missing.join(" · ");
+    actionColor = "Attention";
+  } else {
+    actionText  = "✅ All done";
+    actionColor = "Good";
+  }
 
   cardBody.push({
     type: "ColumnSet", spacing: "Small",
@@ -272,9 +279,9 @@ for (const c of displayCandidates) {
           wrap: false, horizontalAlignment: "Right" }],
       },
       {
-        type: "Column", width: "130px",
-        items: [{ type: "TextBlock", text: missingText, size: "Small",
-          color: missingColor, wrap: false, horizontalAlignment: "Right" }],
+        type: "Column", width: "150px",
+        items: [{ type: "TextBlock", text: actionText, size: "Small",
+          color: actionColor, wrap: false, horizontalAlignment: "Right" }],
       },
     ],
   });
