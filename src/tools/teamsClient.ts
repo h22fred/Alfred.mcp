@@ -90,8 +90,48 @@ export async function postTeamsNotification(
 }
 
 // ---------------------------------------------------------------------------
-// Graph Bearer token via Teams web page (CDP route interception)
+// Graph Bearer token acquisition
 // ---------------------------------------------------------------------------
+
+// Reads a graph.microsoft.com-scoped token from MSAL localStorage/sessionStorage
+const GRAPH_MSAL_EXTRACT_JS = `(function() {
+  const tryStorage = (s) => {
+    try {
+      for (const key of Object.keys(s)) {
+        try {
+          const val = JSON.parse(s.getItem(key));
+          if (val && val.credentialType === 'AccessToken' && val.secret &&
+              (val.target || '').toLowerCase().includes('graph.microsoft.com')) {
+            const exp = Number(val.expiresOn || val.extended_expires_on || 0);
+            if (!exp || exp * 1000 > Date.now()) return val.secret;
+          }
+        } catch {}
+      }
+    } catch {}
+    return null;
+  };
+  return tryStorage(sessionStorage) || tryStorage(localStorage);
+})()`;
+
+// Try to extract Graph token from an existing CDP tab via raw WebSocket
+async function extractGraphTokenFromTab(wsUrl: string): Promise<string | null> {
+  return new Promise((resolve) => {
+    const ws = new WebSocket(wsUrl);
+    const timer = setTimeout(() => { try { ws.close(); } catch {} resolve(null); }, 5_000);
+    ws.addEventListener("open", () => {
+      ws.send(JSON.stringify({ id: 1, method: "Runtime.evaluate", params: { expression: GRAPH_MSAL_EXTRACT_JS, returnByValue: true } }));
+    });
+    ws.addEventListener("message", (event: MessageEvent) => {
+      clearTimeout(timer);
+      try { ws.close(); } catch {}
+      try {
+        const msg = JSON.parse(event.data as string) as { result?: { result?: { value?: string } } };
+        resolve(msg.result?.result?.value ?? null);
+      } catch { resolve(null); }
+    });
+    ws.addEventListener("error", () => { clearTimeout(timer); try { ws.close(); } catch {} resolve(null); });
+  });
+}
 
 interface TokenCache { token: string; expiresAt: number; }
 let teamsTokenCache: TokenCache | null = null;
@@ -110,36 +150,29 @@ export async function acquireTeamsGraphToken(progress: ProgressFn): Promise<stri
   }
 
   progress("🔐 Acquiring Graph token via Teams/Outlook in Alfred...");
+
+  // Step 1: try to read Graph token directly from MSAL cache in open tabs (fast, no new page)
+  const listRes = await fetch(`http://localhost:${CDP_PORT}/json/list`).catch(() => null);
+  if (listRes?.ok) {
+    const targets = await listRes.json() as Array<{ webSocketDebuggerUrl?: string; type?: string; url?: string }>;
+    const candidates = targets.filter(t => t.type === "page" && t.webSocketDebuggerUrl &&
+      (t.url?.includes("teams.microsoft.com") || t.url?.includes("outlook.office.com")));
+    for (const t of candidates) {
+      const token = await extractGraphTokenFromTab(t.webSocketDebuggerUrl!);
+      if (token) {
+        teamsTokenCache = { token, expiresAt: Date.now() + TOKEN_CACHE_MS };
+        progress("✅ Graph token acquired from MSAL cache");
+        return token;
+      }
+    }
+  }
+
+  // Step 2: MSAL miss — use Playwright to open a new Teams page and intercept Graph requests
   const browser = await connectWithRetry();
 
   try {
     const ctx = browser.contexts()[0];
     if (!ctx) throw new Error("No browser context found");
-
-    // Step 1: try to capture token from already-open Teams/Outlook tabs
-    const existingPages = ctx.pages();
-    const teamsPage   = existingPages.find(p => p.url().includes("teams.microsoft.com"));
-    const outlookPage = existingPages.find(p => p.url().includes("outlook.office.com"));
-
-    for (const existing of [teamsPage, outlookPage].filter(Boolean) as typeof existingPages) {
-      let capturedToken: string | null = null;
-      await existing.route("**/graph.microsoft.com/**", async (route) => {
-        const auth = route.request().headers()["authorization"] ?? "";
-        if (!capturedToken && auth.startsWith("Bearer ")) capturedToken = auth.slice(7);
-        await route.continue();
-      });
-      await existing.evaluate(() => {
-        fetch("https://graph.microsoft.com/v1.0/me?$select=id", { credentials: "include" }).catch(() => {});
-      }).catch(() => {});
-      const deadline = Date.now() + 4_000;
-      while (!capturedToken && Date.now() < deadline) await existing.waitForTimeout(300);
-      await existing.unroute("**/graph.microsoft.com/**");
-      if (capturedToken) {
-        teamsTokenCache = { token: capturedToken, expiresAt: Date.now() + TOKEN_CACHE_MS };
-        progress("✅ Graph token acquired from existing tab");
-        return capturedToken;
-      }
-    }
 
     // Step 2: no existing tab yielded a token — open a new page on Outlook
     // (Outlook makes Graph API calls on load, giving us a graph.microsoft.com-scoped token)
