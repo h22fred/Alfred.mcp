@@ -1,4 +1,5 @@
 import { connectWithRetry, getOutlookCookies, clearAuthCache } from "../auth/tokenExtractor.js";
+import { acquireTeamsGraphToken } from "./teamsClient.js";
 import type { ProgressFn } from "../auth/tokenExtractor.js";
 import { execFileSync } from "child_process";
 
@@ -130,7 +131,7 @@ async function acquireGraphTokenRawCDP(progress: ProgressFn): Promise<string> {
         if (msg.id === 1) {
           // Network enabled — trigger an OWA mail fetch which adds Authorization via JS interceptor
           send("Runtime.evaluate", {
-            expression: `fetch('/api/v2.0/me/messages?$top=1&$select=Id', { credentials: 'include' }).catch(()=>{})`,
+            expression: `fetch('/api/v2.0/me/calendarview?$top=1&$select=Id&startDateTime=${new Date().toISOString()}&endDateTime=${new Date(Date.now()+86400000).toISOString()}', { credentials: 'include' }).catch(()=>{})`,
             awaitPromise: false,
           });
         }
@@ -246,33 +247,40 @@ export async function getCalendarEvents(
   const params = new URLSearchParams({
     startDateTime: `${startDate}T00:00:00Z`,
     endDateTime:   `${endDate}T23:59:59Z`,
-    $select: "Id,Subject,Start,End,Location,Organizer,Attendees,IsOnlineMeeting,BodyPreview",
+    $select: "id,subject,start,end,location,organizer,attendees,isOnlineMeeting,bodyPreview",
     $top: "200",
-    $orderby: "Start/DateTime",
+    $orderby: "start/dateTime",
   });
   if (search) params.set("$search", `"${search}"`);
 
-  const token = await acquireGraphToken(progress);
-  const data = await outlookApiFetch(`/calendarview?${params}`, token, progress);
+  const token = await acquireTeamsGraphToken(progress);
+  const res = await fetch(`https://graph.microsoft.com/v1.0/me/calendarview?${params}`, {
+    headers: { Authorization: `Bearer ${token}`, Accept: "application/json" },
+  });
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    throw new Error(`Calendar API ${res.status} ${res.statusText}${body ? `: ${body.slice(0, 200)}` : ""}`);
+  }
+  const data = await res.json() as { value?: Record<string, unknown>[] };
 
-  const events = (data.value as Record<string, unknown>[] ?? []).map(e => {
-    const org = (e.Organizer as { EmailAddress: { Name: string; Address: string } } | undefined)?.EmailAddress;
-    const rawAttendees = e.Attendees as Array<{ EmailAddress: { Name: string; Address: string }; Type: string }> ?? [];
+  const events = (data.value ?? []).map(e => {
+    const org = (e.organizer as { emailAddress: { name: string; address: string } } | undefined)?.emailAddress;
+    const rawAttendees = e.attendees as Array<{ emailAddress: { name: string; address: string } }> ?? [];
     const attendees = rawAttendees.map(a => ({
-      name:  a.EmailAddress?.Name  ?? "",
-      email: a.EmailAddress?.Address ?? "",
+      name:  a.emailAddress?.name  ?? "",
+      email: a.emailAddress?.address ?? "",
     }));
     return {
-      id:              e.Id as string,
-      subject:         e.Subject as string,
-      start:           (e.Start as { DateTime: string })?.DateTime,
-      end:             (e.End   as { DateTime: string })?.DateTime,
-      location:        (e.Location as { DisplayName: string })?.DisplayName || undefined,
-      organizer:       org?.Name || undefined,
-      organizerEmail:  org?.Address || undefined,
+      id:              e.id as string,
+      subject:         e.subject as string,
+      start:           (e.start as { dateTime: string })?.dateTime,
+      end:             (e.end   as { dateTime: string })?.dateTime,
+      location:        (e.location as { displayName: string })?.displayName || undefined,
+      organizer:       org?.name || undefined,
+      organizerEmail:  org?.address || undefined,
       attendees,
-      isOnlineMeeting: e.IsOnlineMeeting as boolean,
-      bodyPreview:     e.BodyPreview as string | undefined,
+      isOnlineMeeting: e.isOnlineMeeting as boolean,
+      bodyPreview:     e.bodyPreview as string | undefined,
     };
   });
 
