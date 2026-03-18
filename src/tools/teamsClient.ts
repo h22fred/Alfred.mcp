@@ -116,50 +116,55 @@ export async function acquireTeamsGraphToken(progress: ProgressFn): Promise<stri
     const ctx = browser.contexts()[0];
     if (!ctx) throw new Error("No browser context found");
 
+    // Step 1: try to capture token from already-open Teams/Outlook tabs
+    const existingPages = ctx.pages();
+    const teamsPage   = existingPages.find(p => p.url().includes("teams.microsoft.com"));
+    const outlookPage = existingPages.find(p => p.url().includes("outlook.office.com"));
+
+    for (const existing of [teamsPage, outlookPage].filter(Boolean) as typeof existingPages) {
+      let capturedToken: string | null = null;
+      await existing.route("**/*", async (route) => {
+        const auth = route.request().headers()["authorization"] ?? "";
+        if (!capturedToken && auth.startsWith("Bearer ")) capturedToken = auth.slice(7);
+        await route.continue();
+      });
+      await existing.evaluate(() => {
+        fetch("https://graph.microsoft.com/v1.0/me?$select=id", { credentials: "include" }).catch(() => {});
+      }).catch(() => {});
+      const deadline = Date.now() + 4_000;
+      while (!capturedToken && Date.now() < deadline) await existing.waitForTimeout(300);
+      await existing.unroute("**/*");
+      if (capturedToken) {
+        teamsTokenCache = { token: capturedToken, expiresAt: Date.now() + TOKEN_CACHE_MS };
+        progress("✅ Graph token acquired from existing tab");
+        return capturedToken;
+      }
+    }
+
+    // Step 2: no existing tab yielded a token — open a new page and navigate
     const page = await ctx.newPage();
     let capturedToken: string | null = null;
-
     await page.route("**/*", async (route) => {
       const auth = route.request().headers()["authorization"] ?? "";
-      if (!capturedToken && auth.startsWith("Bearer ")) {
-        capturedToken = auth.slice(7);
-      }
+      if (!capturedToken && auth.startsWith("Bearer ")) capturedToken = auth.slice(7);
       await route.continue();
     });
 
-    // Try Teams first (richer scopes), fall back to Outlook
     progress("📡 Loading Teams to capture Graph token...");
-    await page.goto("https://teams.microsoft.com/v2/", {
-      waitUntil: "domcontentloaded",
-      timeout: 20_000,
-    }).catch(() => {});
-
+    await page.goto("https://teams.microsoft.com/v2/", { waitUntil: "domcontentloaded", timeout: 20_000 }).catch(() => {});
     const deadline = Date.now() + 8_000;
-    while (!capturedToken && Date.now() < deadline) {
-      await page.waitForTimeout(500);
-    }
+    while (!capturedToken && Date.now() < deadline) await page.waitForTimeout(500);
 
-    // Fall back to Outlook if Teams didn't yield a token
     if (!capturedToken) {
       progress("📡 Trying Outlook as fallback...");
-      await page.goto("https://outlook.office.com/mail/", {
-        waitUntil: "domcontentloaded",
-        timeout: 20_000,
-      }).catch(() => {});
-
+      await page.goto("https://outlook.office.com/mail/", { waitUntil: "domcontentloaded", timeout: 20_000 }).catch(() => {});
       const deadline2 = Date.now() + 8_000;
-      while (!capturedToken && Date.now() < deadline2) {
-        await page.waitForTimeout(500);
-      }
+      while (!capturedToken && Date.now() < deadline2) await page.waitForTimeout(500);
     }
 
     await page.close();
 
-    if (!capturedToken) {
-      throw new Error(
-        "Could not capture Graph token. Make sure Teams or Outlook is loaded in Alfred."
-      );
-    }
+    if (!capturedToken) throw new Error("Could not capture Graph token. Make sure Teams or Outlook is loaded in Alfred.");
 
     teamsTokenCache = { token: capturedToken, expiresAt: Date.now() + TOKEN_CACHE_MS };
     progress("✅ Graph token acquired");
