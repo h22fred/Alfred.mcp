@@ -1,7 +1,7 @@
 {
-  "name": "sc-engagement-mcp",
+  "name": "alfred-mcp",
   "version": "1.0.0",
-  "description": "MCP server for SC Engagement Tracker — Dynamics 365 via browser session auth",
+  "description": "AlFred.mcp — Every superhero needs an Alfred. Yours logs the Engagements.",
   "type": "module",
   "main": "dist/index.js",
   "scripts": {

@@ -1,8 +1,10 @@
-# SC Engagement MCP
+# AlFred.mcp
 
-> Built by **Fredrik Holmström**, Solution Consultant @ ServiceNow
+> *Every superhero needs an Alfred. Yours logs the Engagements.*
 
-Connects Claude Desktop directly to your CRM, calendar, email and Teams using your existing browser session. No Azure app registration. No stored credentials.
+Built by **Fredrik Holmström**, Solution Consultant @ ServiceNow
+
+Connects Claude Desktop directly to your CRM, calendar, email and Teams — using your existing browser session. No Azure app registration. No stored credentials. No CRM admin work ever again.
 
 ---
 
@@ -10,11 +12,11 @@ Connects Claude Desktop directly to your CRM, calendar, email and Teams using yo
 
 | Source | Capabilities |
 |--------|-------------|
-| **Dynamics 365** | List opportunities (with OPTY numbers), create/update/complete engagements, CRM hygiene sweep |
-| **Outlook Calendar** | Show calendar by date range, search meetings by keyword |
-| **Outlook Email** | Search emails, list inbox/sent, filter unread |
+| **Dynamics 365** | List opportunities, create/update/complete engagements, CRM hygiene sweep |
+| **Outlook Calendar** | Show calendar by date range, search meetings |
+| **Outlook Email** | Search emails, list inbox/sent, full body, filter unread |
 | **Teams** | Get meeting transcripts, post to channels, read chats |
-| **Account Insights** | License utilization, renewal dates, upsell/cross-sell/new logo detection |
+| **Account Insights** | License utilization, renewal dates, upsell/cross-sell detection |
 
 ---
 
@@ -29,24 +31,25 @@ Connects Claude Desktop directly to your CRM, calendar, email and Teams using yo
 
 ## Setup
 
-Download [Setup.command](https://github.com/h22fred/sc-engagement-mcp/raw/main/Setup.command) and double-click it. That's it.
+Download [Setup.command](https://github.com/h22fred/alfred.mcp/raw/main/Setup.command) and double-click it. That's it.
 
-> **First time only:** macOS may block it as an unrecognised file. Right-click → **Open** → **Open** to bypass.
+> **First time only:** macOS may block it. Right-click → **Open** → **Open** to bypass.
 
 The installer:
 - Runs `npm install` and `tsc`
-- Registers the MCP server in `~/Library/Application Support/Claude/claude_desktop_config.json`
-- Creates **ChromeLink.app** on your Desktop
+- Registers AlFred in `~/Library/Application Support/Claude/claude_desktop_config.json`
+- Creates **Alfred.app** on your Desktop
 - Prompts for your Teams incoming webhook URL
-- Installs a Monday 9:30am cron job for automated hygiene sweep
+- Installs Monday 9:30am hygiene sweep + Friday 2pm meeting review cron jobs
 
 ---
 
 ## Every session
 
-1. Double-click **ChromeLink.app** on your Desktop
-2. Log into Dynamics, Outlook and Teams (ServiceNow SSO)
-3. Open Claude Desktop
+1. Double-click **Alfred.app** on your Desktop
+2. **First time only:** log into Dynamics, Outlook and Teams (ServiceNow SSO) — Alfred remembers you after that
+3. Leave Alfred running in the Dock
+4. Open Claude Desktop and ask anything
 
 ---
 
@@ -55,7 +58,7 @@ The installer:
 ```
 List my open opportunities over $100K
 Show SITA opportunities with OPTY numbers
-Get full context on this opportunity — what does the customer already own?
+Get full context on this account
 
 Run hygiene sweep and post to Teams
 Which accounts are missing a Technical Win?
@@ -64,36 +67,40 @@ Create a Discovery engagement for SITA Brown Field
 Mark the Givaudan Tech Win as complete
 
 Show my calendar this week
-Find all meetings with "PMI" in the subject next 2 weeks
+Find all meetings with "PMI" in the subject
 Search emails for "budget approval"
-
 Get the transcript from my SITA demo last week
+
+Detect post-meeting engagements from this week
 ```
 
 ---
 
 ## How it works
 
-ChromeLink.app launches Chrome with `--remote-debugging-port=9222`. The MCP server extracts session cookies and Bearer tokens from the browser via raw CDP WebSocket — no credentials stored, no Azure registration needed.
+Alfred.app launches Chrome with `--remote-debugging-port=9222` using a dedicated profile (`~/.alfred-profile`). The MCP server extracts session cookies and Bearer tokens via raw CDP WebSocket — no credentials stored, no Azure registration needed.
 
 Auth flow:
-1. Dynamics: reads `CrmOwinAuthC1/C2` cookies via `Network.getCookies` CDP command
-2. Outlook/Graph: intercepts Bearer token from outgoing requests via Playwright `page.route()`
+1. **Dynamics:** reads `CrmOwinAuthC1/C2` cookies via `Network.getCookies`
+2. **Outlook/Graph:** reads Bearer token from MSAL cache in the page's storage
 3. All tokens cached in-memory for the session duration
 
 ---
 
-## Monday hygiene sweep
+## Automated jobs
 
-Cron fires at 9:30am every Monday. Requires ChromeLink to be running and logged in. If auth fails, posts a Teams reminder instead. To run manually:
+| When | What |
+|------|------|
+| Monday 9:30am | CRM hygiene sweep — flags missing engagements, posts to Teams |
+| Friday 2:00pm | Meeting review — lists this week's customer meetings + missing engagements per matched opp |
 
+To run manually:
 ```bash
 node scripts/hygiene-sweep.mjs
+node scripts/post-meeting-sweep.mjs
 ```
 
-Or in Claude Desktop: *"Run hygiene sweep and post to Teams"*
-
-Teams webhook config lives in `~/.sc-engagement-config.json`:
+Config lives in `~/.alfred-config.json`:
 ```json
 { "teamsWebhook": "https://your-webhook-url" }
 ```
@@ -104,10 +111,9 @@ Teams webhook config lives in `~/.sc-engagement-config.json`:
 
 | Error | Fix |
 |-------|-----|
-| ChromeLink not running | Claude calls `open_chrome_debug` automatically |
-| Not logged into Dynamics | Log into `servicenow.crm.dynamics.com` in ChromeLink window |
-| 401 from Dynamics | Session expired — re-login in ChromeLink |
-| Multiple Chrome windows | Only use ChromeLink.app, not regular Chrome |
+| Alfred not running | Claude calls `open_chrome_debug` automatically |
+| Not logged into Dynamics | Log into `servicenow.crm.dynamics.com` in Alfred window |
+| 401 from Dynamics | Session expired — re-login in Alfred |
 | Teams not posting | Run `setup.sh` again to reconfigure webhook |
 
 ---

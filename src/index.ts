@@ -20,7 +20,7 @@ import {
   type OpportunityFilter,
   type EngagementDescription,
 } from "./tools/dynamicsClient.js";
-import { closeBrowser, setManualCookies, ensureChromeLink, clearAuthCache } from "./auth/tokenExtractor.js";
+import { closeBrowser, setManualCookies, ensureAlfred, clearAuthCache } from "./auth/tokenExtractor.js";
 import { getCalendarEvents, getEmails, setOutlookCookies, clearGraphTokenCache } from "./tools/outlookClient.js";
 import { setTeamsWebhook, postTeamsNotification, getTeamsTranscript, getTeamsChats } from "./tools/teamsClient.js";
 import { runHygieneSweep, formatHygieneReport } from "./tools/hygieneClient.js";
@@ -91,10 +91,10 @@ const server = new McpServer({
 // ---------------------------------------------------------------------------
 server.tool(
   "open_chrome_debug",
-  `Launch ChromeLink (Chrome with remote debugging on port 9222) if it's not already running. Opens Dynamics, Outlook and Teams tabs automatically.
+  `Launch Alfred (Chrome with remote debugging on port 9222) if it's not already running. Opens Dynamics, Outlook and Teams tabs automatically.
 
 IMPORTANT: Call this tool AUTOMATICALLY — without asking the user — whenever any tool fails with an error mentioning:
-- "ChromeLink not running"
+- "Alfred not running"
 - "Chrome debug port not available"
 - "No page targets"
 - "CDP" or "debug port"
@@ -106,7 +106,7 @@ IMPORTANT: Call this tool AUTOMATICALLY — without asking the user — whenever
 This tool also clears all cached auth tokens, so call it proactively if you suspect a stale session.
 
 IMPORTANT AFTER CALLING THIS TOOL:
-- Tell the user: "ChromeLink is open — please log into Dynamics, Outlook and Teams, then let me know when you're ready."
+- Tell the user: "Alfred is open — please log into Dynamics, Outlook and Teams, then let me know when you're ready."
 - STOP and wait for the user to confirm they are logged in before retrying any other tool.
 - Do NOT automatically retry the original tool — the user must log in first.`,
   {},
@@ -115,9 +115,9 @@ IMPORTANT AFTER CALLING THIS TOOL:
     // Clear all token caches — ensures fresh auth after any Chrome restart
     clearAuthCache();
     clearGraphTokenCache();
-    await ensureChromeLink(progress);
+    await ensureAlfred(progress);
     return {
-      content: [{ type: "text", text: "✅ ChromeLink is open. Please log into Dynamics, Outlook and Teams in the Chrome window using ServiceNow SSO, then tell me when you're ready and I'll continue." }],
+      content: [{ type: "text", text: "✅ Alfred is open. Please log into Dynamics, Outlook and Teams in the Chrome window using ServiceNow SSO, then tell me when you're ready and I'll continue." }],
     };
   }
 );
@@ -452,7 +452,7 @@ server.tool(
   "get_calendar_events",
   `Fetch calendar events from Outlook via the debug Chrome window.
 
-Requires the user to be logged into https://outlook.office.com in the ChromeLink Chrome window.
+Requires the user to be logged into https://outlook.office.com in the Alfred Chrome window.
 No Azure registration needed — the request runs inside the already-authenticated browser tab.
 
 IMPORTANT: Before calling this tool, ask the user:
@@ -479,7 +479,7 @@ server.tool(
   "search_emails",
   `Search or list emails from Outlook via the debug Chrome window.
 
-Requires the user to be logged into https://outlook.office.com in the ChromeLink Chrome window.
+Requires the user to be logged into https://outlook.office.com in the Alfred Chrome window.
 No Azure registration needed — the request runs inside the already-authenticated browser tab.
 
 Can search across all mail by keyword, or list a folder (inbox, sentitems, drafts).`,
@@ -539,7 +539,7 @@ server.tool(
   "get_teams_transcript",
   `Fetch Teams meeting transcripts via Microsoft Graph. Use this to auto-generate engagement descriptions from recorded meetings.
 
-Requires ChromeLink to be running with Teams or Outlook open. The Graph token is captured automatically.`,
+Requires Alfred to be running with Teams or Outlook open. The Graph token is captured automatically.`,
   {
     search:     z.string().optional().describe("Keyword to match meeting subject (e.g. 'PMI ICW')"),
     start_date: z.string().optional().describe("Search from this date (ISO, e.g. 2026-01-01) — defaults to 30 days ago"),
@@ -594,7 +594,7 @@ server.tool(
   "get_teams_chats",
   `Fetch Teams chat conversations via Microsoft Graph. Can list recent chats, search by person/topic, or fetch messages from a specific chat.
 
-Requires ChromeLink to be running with Teams or Outlook open. The Graph token is captured automatically.
+Requires Alfred to be running with Teams or Outlook open. The Graph token is captured automatically.
 
 Use cases:
 - "Show my recent Teams chats with PMI"
@@ -679,7 +679,7 @@ const transport = new StdioServerTransport();
 await server.connect(transport);
 console.error("[sc-engagement-mcp] Server running on stdio");
 
-// ChromeLink is launched on-demand when tools need it (via ensureChromeLink inside getAuthCookies)
+// Alfred is launched on-demand when tools need it (via ensureAlfred inside getAuthCookies)
 // Do NOT auto-launch at startup — avoids spawning extra Chrome windows
 
 process.on("SIGINT", async () => {

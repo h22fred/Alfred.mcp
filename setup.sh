@@ -9,7 +9,7 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 CLAUDE_CONFIG="$HOME/Library/Application Support/Claude/claude_desktop_config.json"
-CHROMELINK_APP="$HOME/Desktop/ChromeLink.app"
+CHROMELINK_APP="$HOME/Desktop/Alfred.app"
 
 echo ""
 echo "=================================================="
@@ -102,20 +102,20 @@ PYEOF
 fi
 
 # ------------------------------------------------------------
-# 4. Create ChromeLink.app on Desktop (plain shell bundle — no AppleScript)
+# 4. Create Alfred.app on Desktop (plain shell bundle — no AppleScript)
 # ------------------------------------------------------------
 echo ""
-echo "▶ Creating ChromeLink.app on Desktop..."
+echo "▶ Creating Alfred.app on Desktop..."
 
 # Remove old versions
 [ -d "$CHROMELINK_APP" ] && rm -rf "$CHROMELINK_APP"
-[ -f "$HOME/Desktop/ChromeLink.command" ] && rm -f "$HOME/Desktop/ChromeLink.command"
+[ -f "$HOME/Desktop/Alfred.command" ] && rm -f "$HOME/Desktop/Alfred.command"
 
 mkdir -p "$CHROMELINK_APP/Contents/MacOS"
 
-cat > "$CHROMELINK_APP/Contents/MacOS/ChromeLink" << 'SHELLEOF'
+cat > "$CHROMELINK_APP/Contents/MacOS/Alfred" << 'SHELLEOF'
 #!/bin/bash
-notify() { osascript -e "display notification \"$1\" with title \"ChromeLink\"" 2>/dev/null; }
+notify() { osascript -e "display notification \"$1\" with title \"Alfred\"" 2>/dev/null; }
 
 # Already running?
 if curl -s --max-time 1 http://localhost:9222/json/version > /dev/null 2>&1; then
@@ -123,10 +123,10 @@ if curl -s --max-time 1 http://localhost:9222/json/version > /dev/null 2>&1; the
   exit 0
 fi
 
-mkdir -p ~/.chromelink-profile
+mkdir -p ~/.alfred-profile
 "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
   --remote-debugging-port=9222 \
-  --user-data-dir=~/.chromelink-profile \
+  --user-data-dir=~/.alfred-profile \
   --no-first-run \
   --no-default-browser-check \
   "https://servicenow.crm.dynamics.com" \
@@ -135,7 +135,7 @@ mkdir -p ~/.chromelink-profile
   > /dev/null 2>&1 &
 
 # First run detection — profile dir will be nearly empty on first launch
-PROFILE_SIZE=$(du -sk ~/.chromelink-profile 2>/dev/null | cut -f1)
+PROFILE_SIZE=$(du -sk ~/.alfred-profile 2>/dev/null | cut -f1)
 if [ -z "$PROFILE_SIZE" ] || [ "$PROFILE_SIZE" -lt 500 ]; then
   notify "First time setup: log into Dynamics, Outlook and Teams in this window. You only do this once!"
 else
@@ -143,16 +143,16 @@ else
 fi
 SHELLEOF
 
-chmod +x "$CHROMELINK_APP/Contents/MacOS/ChromeLink"
+chmod +x "$CHROMELINK_APP/Contents/MacOS/Alfred"
 
 cat > "$CHROMELINK_APP/Contents/Info.plist" << 'PLISTEOF'
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-  <key>CFBundleExecutable</key><string>ChromeLink</string>
-  <key>CFBundleIdentifier</key><string>com.servicenow.chromelink</string>
-  <key>CFBundleName</key><string>ChromeLink</string>
+  <key>CFBundleExecutable</key><string>Alfred</string>
+  <key>CFBundleIdentifier</key><string>com.servicenow.alfred</string>
+  <key>CFBundleName</key><string>Alfred</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleVersion</key><string>1.0</string>
   <key>LSUIElement</key><true/>
@@ -160,7 +160,7 @@ cat > "$CHROMELINK_APP/Contents/Info.plist" << 'PLISTEOF'
 </plist>
 PLISTEOF
 
-echo "   ✅ ChromeLink.app created on Desktop"
+echo "   ✅ Alfred.app created on Desktop"
 echo "   ℹ️  First launch: right-click → Open (one-time macOS approval)"
 
 # ------------------------------------------------------------
@@ -169,7 +169,7 @@ echo "   ℹ️  First launch: right-click → Open (one-time macOS approval)"
 echo ""
 echo "▶ Setting up Teams webhook for hygiene sweep notifications..."
 
-CONFIG_FILE="$HOME/.sc-engagement-config.json"
+CONFIG_FILE="$HOME/.alfred-config.json"
 EXISTING_WEBHOOK=""
 if [ -f "$CONFIG_FILE" ]; then
   EXISTING_WEBHOOK=$(python3 -c "import json; d=json.load(open('$CONFIG_FILE')); print(d.get('teamsWebhook',''))" 2>/dev/null)
@@ -208,10 +208,10 @@ fi
 echo ""
 echo "▶ Installing cron jobs..."
 
-HYGIENE_CMD="$NODE_PATH $SCRIPT_DIR/scripts/hygiene-sweep.mjs >> $HOME/.sc-engagement-hygiene.log 2>&1"
+HYGIENE_CMD="$NODE_PATH $SCRIPT_DIR/scripts/hygiene-sweep.mjs >> $HOME/.alfred-hygiene.log 2>&1"
 HYGIENE_CRON="30 9 * * 1 $HYGIENE_CMD"
 
-MEETING_CMD="$NODE_PATH $SCRIPT_DIR/scripts/post-meeting-sweep.mjs >> $HOME/.sc-engagement-meetings.log 2>&1"
+MEETING_CMD="$NODE_PATH $SCRIPT_DIR/scripts/post-meeting-sweep.mjs >> $HOME/.alfred-meetings.log 2>&1"
 MEETING_CRON="0 14 * * 5 $MEETING_CMD"
 
 CURRENT_CRON=$(crontab -l 2>/dev/null)
@@ -244,7 +244,7 @@ echo "  ✅ Setup complete!"
 echo "=================================================="
 echo ""
 echo "Next steps:"
-echo "  1. Double-click ChromeLink.app on your Desktop"
+echo "  1. Double-click Alfred.app on your Desktop"
 echo "  2. Log into Dynamics, Outlook and Teams in that window"
 echo "  3. Restart Claude Desktop"
 echo "  4. Ask Claude anything — opportunities, calendar, hygiene sweep!"
