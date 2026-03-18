@@ -3,7 +3,7 @@
  * Standalone post-meeting sweep runner — called by the Friday 2pm cron job.
  *
  * Behaviour:
- *  1. Auto-launches ChromeLink if not already running
+ *  1. Auto-launches Alfred if not already running
  *  2. Scans this week's ended online meetings (Mon → now)
  *  3. If auth fails → posts a Teams reminder + macOS notification
  *  4. Posts a summary Adaptive Card to Teams listing meetings that may need engagements
@@ -15,7 +15,7 @@
 import { detectPostMeetingEngagements } from "../dist/tools/postMeetingClient.js";
 import { fetchEngagementsByOpportunity } from "../dist/tools/dynamicsClient.js";
 import { setTeamsWebhook } from "../dist/tools/teamsClient.js";
-import { ensureChromeLink } from "../dist/auth/tokenExtractor.js";
+import { ensureAlfred } from "../dist/auth/tokenExtractor.js";
 import { readFileSync, existsSync } from "fs";
 import { homedir } from "os";
 import { join } from "path";
@@ -27,9 +27,9 @@ const err = (msg) => console.error(`[post-meeting] ${msg}`);
 // ---------------------------------------------------------------------------
 // Load config
 // ---------------------------------------------------------------------------
-const configPath = join(homedir(), ".sc-engagement-config.json");
+const configPath = join(homedir(), ".alfred-config.json");
 if (!existsSync(configPath)) {
-  err("No config at ~/.sc-engagement-config.json — run Setup.command first.");
+  err("No config at ~/.alfred-config.json — run Setup.command first.");
   process.exit(1);
 }
 const config = JSON.parse(readFileSync(configPath, "utf8"));
@@ -112,16 +112,16 @@ function truncate(s, max) {
 
 log("Starting post-meeting sweep...");
 
-// Step 1 — ensure ChromeLink is running
+// Step 1 — ensure Alfred is running
 try {
-  log("Checking ChromeLink...");
-  await ensureChromeLink(log);
-  log("ChromeLink is running");
+  log("Checking Alfred...");
+  await ensureAlfred(log);
+  log("Alfred is running");
 } catch (e) {
-  err(`Could not launch ChromeLink: ${e.message}`);
-  const msg = "ChromeLink could not start. Open ChromeLink.app, log in, then ask Claude: **\"Detect post-meeting engagements from this week\"**";
+  err(`Could not launch Alfred: ${e.message}`);
+  const msg = "Alfred could not start. Open Alfred.app, log in, then ask Claude: **\"Detect post-meeting engagements from this week\"**";
   if (config.teamsWebhook) await postTeamsSimple(config.teamsWebhook, "⚠️ Friday Meeting Review — Action Required", msg);
-  macosNotify("Meeting Review", "ChromeLink failed to start — run manually");
+  macosNotify("Meeting Review", "Alfred failed to start — run manually");
   process.exit(1);
 }
 
@@ -140,18 +140,18 @@ try {
   err(`Sweep failed: ${e.message}`);
 
   const isCdpError = e.message.includes("connectOverCDP") || e.message.includes("Timeout") ||
-                     e.message.includes("ChromeLink") || e.message.includes("stale");
+                     e.message.includes("Alfred") || e.message.includes("stale");
   const isAuthError = e.message.includes("cookie") || e.message.includes("auth") ||
                       e.message.includes("401") || e.message.includes("logged in") ||
                       e.message.includes("Graph token");
 
   const title = "⚠️ Friday Meeting Review — Action Required";
   const body = (isCdpError || isAuthError)
-    ? "ChromeLink session needs a refresh. **Close and reopen ChromeLink.app**, log into Outlook and Dynamics, then ask Claude: **\"Detect post-meeting engagements from this week\"**"
+    ? "Alfred session needs a refresh. **Close and reopen Alfred.app**, log into Outlook and Dynamics, then ask Claude: **\"Detect post-meeting engagements from this week\"**"
     : `Meeting sweep failed: ${e.message}. Run manually via Claude Desktop.`;
 
   if (config.teamsWebhook) await postTeamsSimple(config.teamsWebhook, title, body);
-  macosNotify("Meeting Review", isAuthError ? "Login required — open ChromeLink" : "Sweep failed — check Teams");
+  macosNotify("Meeting Review", isAuthError ? "Login required — open Alfred" : "Sweep failed — check Teams");
   process.exit(1);
 }
 

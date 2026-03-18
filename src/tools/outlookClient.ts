@@ -60,13 +60,13 @@ async function acquireGraphTokenRawCDP(progress: ProgressFn): Promise<string> {
   const target        = outlookTarget ?? anyTarget;
 
   if (!target?.webSocketDebuggerUrl) {
-    throw new Error("No page targets found in ChromeLink. Open ChromeLink.app and log into Outlook.");
+    throw new Error("No page targets found in Alfred. Open Alfred.app and log into Outlook.");
   }
 
   if (!outlookTarget) {
     throw new Error(
-      "No Outlook tab found in ChromeLink.\n" +
-      "Please open https://outlook.office.com in the ChromeLink window and log in, then retry."
+      "No Outlook tab found in Alfred.\n" +
+      "Please open https://outlook.office.com in the Alfred window and log in, then retry."
     );
   }
 
@@ -106,7 +106,7 @@ async function acquireGraphTokenRawCDP(progress: ProgressFn): Promise<string> {
       try { ws.close(); } catch {}
       reject(new Error(
         "Could not capture Graph token from Outlook.\n" +
-        "Make sure you are logged into https://outlook.office.com in ChromeLink."
+        "Make sure you are logged into https://outlook.office.com in Alfred."
       ));
     }, 10_000);
 
@@ -147,7 +147,7 @@ async function acquireGraphTokenRawCDP(progress: ProgressFn): Promise<string> {
 
     ws.addEventListener("error", () => {
       clearTimeout(timer);
-      reject(new Error("CDP WebSocket error — is ChromeLink running?"));
+      reject(new Error("CDP WebSocket error — is Alfred running?"));
     });
   });
 }

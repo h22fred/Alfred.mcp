@@ -18,7 +18,7 @@ let cachedOutlookAuth: CachedAuth | null = null;
 
 export type ProgressFn = (msg: string) => void;
 
-const CHROME_PROFILE_DIR = `${process.env.HOME}/.chromelink-profile`;
+const CHROME_PROFILE_DIR = `${process.env.HOME}/.alfred-profile`;
 
 function isChromeProcessRunning(): boolean {
   try {
@@ -29,7 +29,7 @@ function isChromeProcessRunning(): boolean {
   }
 }
 
-function isChromeLinkgable(): boolean {
+function isAlfredgable(): boolean {
   try {
     execFileSync("curl", ["-s", "--max-time", "1", `http://localhost:${CDP_PORT}/json/version`], { timeout: 2_000 });
     return true;
@@ -38,12 +38,12 @@ function isChromeLinkgable(): boolean {
   }
 }
 
-function launchChromeLink(): void {
+function launchAlfred(): void {
   if (isChromeProcessRunning()) {
-    console.error("[auth] ChromeLink process already running — waiting for port to become ready...");
+    console.error("[auth] Alfred process already running — waiting for port to become ready...");
     return;
   }
-  console.error("[auth] Launching ChromeLink...");
+  console.error("[auth] Launching Alfred...");
   execFile("/bin/sh", ["-c",
     `mkdir -p "${CHROME_PROFILE_DIR}" && \
     "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
@@ -58,10 +58,10 @@ function launchChromeLink(): void {
 async function waitForChrome(timeoutMs = 15_000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    if (isChromeLinkgable()) return;
+    if (isAlfredgable()) return;
     await new Promise(r => setTimeout(r, 500));
   }
-  throw new Error("ChromeLink did not start in time. Try opening ChromeLink.app manually.");
+  throw new Error("Alfred did not start in time. Try opening Alfred.app manually.");
 }
 
 export function clearAuthCache(): void {
@@ -69,18 +69,18 @@ export function clearAuthCache(): void {
   cachedOutlookAuth = null;
 }
 
-export async function ensureChromeLink(progress: ProgressFn = () => {}): Promise<void> {
-  if (isChromeLinkgable()) return;
+export async function ensureAlfred(progress: ProgressFn = () => {}): Promise<void> {
+  if (isAlfredgable()) return;
   // Chrome is not running — clear stale caches before launching fresh session
   clearAuthCache();
-  progress("🚀 Launching ChromeLink automatically...");
-  launchChromeLink();
+  progress("🚀 Launching Alfred automatically...");
+  launchAlfred();
   await waitForChrome();
   // Open Dynamics, Outlook and Teams tabs via CDP
   for (const url of [DYNAMICS_URL, OUTLOOK_URL, "https://teams.microsoft.com"]) {
     await fetch(`http://localhost:${CDP_PORT}/json/new?${url}`).catch(() => {});
   }
-  progress("✅ ChromeLink ready — please log into Dynamics, Outlook and Teams in the new window");
+  progress("✅ Alfred ready — please log into Dynamics, Outlook and Teams in the new window");
 }
 
 export async function freshCdpEndpoint(): Promise<string> {
@@ -88,7 +88,7 @@ export async function freshCdpEndpoint(): Promise<string> {
   const res = await fetch(`http://localhost:${CDP_PORT}/json/version`);
   const info = await res.json() as { webSocketDebuggerUrl?: string };
   if (info.webSocketDebuggerUrl) return info.webSocketDebuggerUrl;
-  throw new Error("Could not resolve CDP WebSocket URL from ChromeLink.");
+  throw new Error("Could not resolve CDP WebSocket URL from Alfred.");
 }
 
 export async function connectWithRetry(retries = 3) {
@@ -104,7 +104,7 @@ export async function connectWithRetry(retries = 3) {
     }
   }
   throw new Error(
-    "Could not connect to ChromeLink. Please close and reopen ChromeLink from your Desktop, then retry.\n" +
+    "Could not connect to Alfred. Please close and reopen Alfred from your Desktop, then retry.\n" +
     `(${lastError.message})`
   );
 }
@@ -121,7 +121,7 @@ async function getCookiesViaRawCDP(urls: string[]): Promise<RawCookie[]> {
   const targets = await listRes.json() as Array<{ webSocketDebuggerUrl?: string; type?: string }>;
   const target = targets.find(t => t.type === "page" && t.webSocketDebuggerUrl);
   if (!target?.webSocketDebuggerUrl) {
-    throw new Error("No page targets in ChromeLink. Make sure ChromeLink.app is running.");
+    throw new Error("No page targets in Alfred. Make sure Alfred.app is running.");
   }
 
   return new Promise((resolve, reject) => {
@@ -147,7 +147,7 @@ async function getCookiesViaRawCDP(urls: string[]): Promise<RawCookie[]> {
 
     ws.addEventListener("error", () => {
       clearTimeout(timer);
-      reject(new Error("CDP WebSocket error — is ChromeLink running?"));
+      reject(new Error("CDP WebSocket error — is Alfred running?"));
     });
   });
 }
@@ -159,8 +159,8 @@ async function getAuthCookiesViaCDP(progress: ProgressFn): Promise<CachedAuth> {
   const authCookies = allCookies.filter(c => AUTH_COOKIE_NAMES.includes(c.name));
   if (authCookies.length === 0) {
     throw new Error(
-      "ChromeLink is open but you are not logged into Dynamics yet.\n" +
-      "Please log into servicenow.crm.dynamics.com in the ChromeLink window, then retry."
+      "Alfred is open but you are not logged into Dynamics yet.\n" +
+      "Please log into servicenow.crm.dynamics.com in the Alfred window, then retry."
     );
   }
 
@@ -181,7 +181,7 @@ export async function getAuthCookies(progress: ProgressFn = () => {}): Promise<s
   }
 
   progress("🔐 Acquiring Dynamics session cookies...");
-  await ensureChromeLink(progress);
+  await ensureAlfred(progress);
 
   const auth = await getAuthCookiesViaCDP(progress);
   cachedAuth = auth;
@@ -200,15 +200,15 @@ export async function getOutlookCookies(progress: ProgressFn = () => {}): Promis
 
   progress("🔐 Extracting Outlook cookies via CDP...");
 
-  if (!isChromeLinkgable()) {
-    throw new Error("Chrome debug port not available. Open ChromeLink.app first.");
+  if (!isAlfredgable()) {
+    throw new Error("Chrome debug port not available. Open Alfred.app first.");
   }
 
   const allCookies = await getCookiesViaRawCDP([OUTLOOK_URL]);
   if (allCookies.length === 0) {
     throw new Error(
-      "Not logged into Outlook in the ChromeLink window.\n" +
-      "Log into https://outlook.office.com in the ChromeLink Chrome window, then retry."
+      "Not logged into Outlook in the Alfred window.\n" +
+      "Log into https://outlook.office.com in the Alfred Chrome window, then retry."
     );
   }
 
