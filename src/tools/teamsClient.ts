@@ -94,14 +94,20 @@ export async function postTeamsNotification(
 // ---------------------------------------------------------------------------
 
 // Reads a graph.microsoft.com-scoped token from MSAL localStorage/sessionStorage
+// Decodes the JWT aud claim directly — more reliable than checking the target field
 const GRAPH_MSAL_EXTRACT_JS = `(function() {
+  const isGraphToken = (secret) => {
+    try {
+      const payload = JSON.parse(atob(secret.split('.')[1].replace(/-/g,'+').replace(/_/g,'/')));
+      return String(payload.aud || '').includes('graph.microsoft.com');
+    } catch { return false; }
+  };
   const tryStorage = (s) => {
     try {
       for (const key of Object.keys(s)) {
         try {
           const val = JSON.parse(s.getItem(key));
-          if (val && val.credentialType === 'AccessToken' && val.secret &&
-              (val.target || '').toLowerCase().includes('graph.microsoft.com')) {
+          if (val && val.credentialType === 'AccessToken' && val.secret && isGraphToken(val.secret)) {
             const exp = Number(val.expiresOn || val.extended_expires_on || 0);
             if (!exp || exp * 1000 > Date.now()) return val.secret;
           }
