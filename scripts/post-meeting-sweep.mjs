@@ -288,8 +288,7 @@ const footerText = trimmed
   : `Open Claude Desktop and ask: **"Detect post-meeting engagements from this week"** to review and log these.`;
 
 cardBody.push(
-  { type: "Separator" },
-  { type: "TextBlock", text: footerText, wrap: true, size: "Small", isSubtle: true }
+  { type: "TextBlock", text: footerText, wrap: true, size: "Small", isSubtle: true, separator: true, spacing: "Medium" }
 );
 
 const card = {
