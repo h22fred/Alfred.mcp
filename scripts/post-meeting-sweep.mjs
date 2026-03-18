@@ -231,15 +231,13 @@ const cardBody = [
       { type: "Column", width: "auto", items: [{ type: "TextBlock", text: `**${withMatch}** opp matched`, size: "Small" }] },
     ],
   },
-  { type: "Separator" },
-  // Column headers
+  // Column headers (separator:true replaces { type:"Separator" } which Teams rejects)
   {
-    type: "ColumnSet", spacing: "Small",
+    type: "ColumnSet", separator: true, spacing: "Small",
     columns: [
       { type: "Column", width: "stretch", items: [{ type: "TextBlock", text: "MEETING", size: "Small", weight: "Bolder", isSubtle: true }] },
-      { type: "Column", width: "auto",    items: [{ type: "TextBlock", text: "WHEN · MIN", size: "Small", weight: "Bolder", isSubtle: true, horizontalAlignment: "Right" }] },
-      { type: "Column", width: "140px",   items: [{ type: "TextBlock", text: "OPPORTUNITY", size: "Small", weight: "Bolder", isSubtle: true, horizontalAlignment: "Right" }] },
-      { type: "Column", width: "120px",   items: [{ type: "TextBlock", text: "MISSING", size: "Small", weight: "Bolder", isSubtle: true, horizontalAlignment: "Right" }] },
+      { type: "Column", width: "140px",   items: [{ type: "TextBlock", text: "ACCOUNT", size: "Small", weight: "Bolder", isSubtle: true, horizontalAlignment: "Right" }] },
+      { type: "Column", width: "130px",   items: [{ type: "TextBlock", text: "MISSING", size: "Small", weight: "Bolder", isSubtle: true, horizontalAlignment: "Right" }] },
     ],
   },
 ];
@@ -247,8 +245,9 @@ const cardBody = [
 for (const c of displayCandidates) {
   const txIcon  = c.transcriptAvailable ? "📝" : "🎙";
   const dayTime = `${fmtDate(c.meetingStart)} ${fmtTime(c.meetingStart)}`;
-  const duration = c.durationMinutes ? String(c.durationMinutes) : "—";
-  const oppText  = c.suggestedAccountName ? truncate(c.suggestedAccountName, 22) : "—";
+  const duration = c.durationMinutes ? `${c.durationMinutes}m` : "";
+  const subtitle = duration ? `${dayTime} · ${duration}` : dayTime;
+  const oppText  = c.suggestedAccountName ? truncate(c.suggestedAccountName, 20) : "—";
 
   const hygiene = c.suggestedOpportunityId ? hygieneByOpp.get(c.suggestedOpportunityId) : null;
   const missingText = hygiene
@@ -256,26 +255,24 @@ for (const c of displayCandidates) {
     : "—";
   const missingColor = hygiene?.status === "red" ? "Attention" : hygiene ? "Good" : "Default";
 
-  const whenMin = duration !== "—" ? `${dayTime} · ${duration}m` : dayTime;
   cardBody.push({
     type: "ColumnSet", spacing: "Small",
     columns: [
       {
         type: "Column", width: "stretch",
-        items: [{ type: "TextBlock", text: `${txIcon}  ${truncate(c.meetingSubject, 38)}`, size: "Small", wrap: false }],
-      },
-      {
-        type: "Column", width: "auto",
-        items: [{ type: "TextBlock", text: whenMin, size: "Small", isSubtle: true, horizontalAlignment: "Right" }],
+        items: [
+          { type: "TextBlock", text: `${txIcon} ${truncate(c.meetingSubject, 40)}`, size: "Small", wrap: false },
+          { type: "TextBlock", text: subtitle, size: "Small", isSubtle: true, spacing: "None" },
+        ],
       },
       {
         type: "Column", width: "140px",
         items: [{ type: "TextBlock", text: oppText, size: "Small",
-          color: c.suggestedAccountName ? "Accent" : "Default",
+          color: c.suggestedAccountName ? "Accent" : "Attention",
           wrap: false, horizontalAlignment: "Right" }],
       },
       {
-        type: "Column", width: "120px",
+        type: "Column", width: "130px",
         items: [{ type: "TextBlock", text: missingText, size: "Small",
           color: missingColor, wrap: false, horizontalAlignment: "Right" }],
       },
