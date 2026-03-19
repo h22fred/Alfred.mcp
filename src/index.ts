@@ -1,6 +1,9 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
+import { readFileSync, existsSync } from "fs";
+import { homedir } from "os";
+import { join } from "path";
 import {
   fetchOpportunities,
   fetchOpportunityById,
@@ -74,6 +77,36 @@ class WriteRateLimiter {
 
 const engagementWriteLimiter = new WriteRateLimiter(10, 10 * 60 * 1000); // 10 per 10 min
 const deleteWriteLimiter      = new WriteRateLimiter(3,  10 * 60 * 1000); // 3 per 10 min
+
+// ---------------------------------------------------------------------------
+// User config (~/.alfred-config.json) — personalises behaviour per role
+// ---------------------------------------------------------------------------
+interface AlfredConfig {
+  teamsWebhook?: string;
+  role?: "sc" | "ssc";
+  engagementTypes?: string[];
+}
+
+const alfredConfigPath = join(homedir(), ".alfred-config.json");
+const alfredConfig: AlfredConfig = existsSync(alfredConfigPath)
+  ? JSON.parse(readFileSync(alfredConfigPath, "utf8")) as AlfredConfig
+  : {};
+
+const isSSC = alfredConfig.role === "ssc";
+
+// Which engagement types this user has enabled (defaults to all if not configured)
+const ALL_ENGAGEMENT_TYPES = [
+  "Business Case", "Customer Business Review", "Demo", "Discovery", "EBC",
+  "Post Sale Engagement", "POV", "RFx", "Technical Win", "Workshop",
+] as const;
+const activeEngagementTypes: string[] = alfredConfig.engagementTypes?.length
+  ? alfredConfig.engagementTypes
+  : [...ALL_ENGAGEMENT_TYPES];
+
+process.stderr.write(
+  `[alfred] Config loaded — role: ${alfredConfig.role ?? "sc"}, ` +
+  `engagement types: ${activeEngagementTypes.join(", ")}\n`
+);
 
 type Engagement = import("./tools/dynamicsClient.js").Engagement;
 
@@ -196,7 +229,15 @@ server.tool(
 // ---------------------------------------------------------------------------
 server.tool(
   "list_opportunities",
-  `List open opportunities from Dynamics 365.
+  isSSC
+    ? `List open opportunities from Dynamics 365.
+
+This user is an SSC (Sales Support Consultant) — they do not have an assigned pipeline in Dynamics. Always search across ALL opportunities (my_opportunities_only=false) and use the search field to filter by account or opportunity name based on what they tell you.
+
+IMPORTANT: Before calling this tool, always ask:
+1. "Which account or opportunity are you looking for?"
+2. "100K+ NNACV only, or all sizes?" (default: 100K+ only)`
+    : `List open opportunities from Dynamics 365.
 
 Defaults to the current user's pipeline only (SC or territory). Only set my_opportunities_only=false if the user explicitly asks for all opportunities, a colleague's pipeline, a region, or a manager view.
 
@@ -209,7 +250,11 @@ Ask both together in one message. Only call this tool once you have their answer
     top: z.number().optional().describe("Max number of results (default 50)"),
     search: z.string().optional().describe("Filter by opportunity or account name (partial match)"),
     min_nnacv: z.number().optional().describe("Minimum NNACV in USD — default 100000 ($100K+). Set to 0 for no filter."),
-    my_opportunities_only: z.boolean().optional().describe("Filter to current user's owned opportunities only — default true."),
+    my_opportunities_only: z.boolean().optional().describe(
+      isSSC
+        ? "SSC mode — default false (search all accounts). Set true only if explicitly asked to show a specific SC's pipeline."
+        : "Filter to current user's owned opportunities only — default true."
+    ),
     include_closed: z.boolean().optional().describe("Include won/lost/closed opportunities — default false (open only). Set true when user asks about a specific opp by OPTY number or explicitly wants closed deals."),
   },
   async ({ top, search, min_nnacv, my_opportunities_only, include_closed }) => {
@@ -218,7 +263,7 @@ Ask both together in one message. Only call this tool once you have their answer
       top,
       search,
       minNnacv: min_nnacv ?? 100000,
-      myOpportunitiesOnly: my_opportunities_only ?? true,
+      myOpportunitiesOnly: my_opportunities_only ?? (isSSC ? false : true),
       includeClosed: include_closed ?? false,
     };
     const opportunities = await fetchOpportunities(filter, progress);
@@ -347,6 +392,9 @@ server.tool(
 server.tool(
   "create_engagement",
   `Create a new engagement record in Dynamics 365. Account is auto-derived from the opportunity.
+
+**This user's engagement types:** ${activeEngagementTypes.join(", ")}
+Suggest only from this list unless the user explicitly asks for a different type.
 
 IMPORTANT: Always show the user a full summary of what will be created (name, type, use case, key points, next actions) and get explicit confirmation BEFORE calling this tool.
 

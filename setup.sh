@@ -214,10 +214,78 @@ else
 fi
 
 # ------------------------------------------------------------
-# 6. Install cron jobs
+# 6. Role
 # ------------------------------------------------------------
 echo ""
-echo "▶ Installing cron jobs..."
+echo "▶ What is your role?"
+echo ""
+echo "   1) SC  — Solution Consultant (you have assigned opportunities in Dynamics)"
+echo "   2) SSC — Sales Support Consultant (you support SCs, no assigned pipeline)"
+echo ""
+printf "   Enter 1 or 2 (default: 1): "
+read -r ROLE_CHOICE
+case "$ROLE_CHOICE" in
+  2) USER_ROLE="ssc"; echo "   ✅ Role set to SSC — Alfred will search all accounts by default" ;;
+  *) USER_ROLE="sc";  echo "   ✅ Role set to SC — Alfred will default to your own pipeline" ;;
+esac
+python3 -c "
+import json, os
+f = os.path.expanduser('~/.alfred-config.json')
+d = json.load(open(f)) if os.path.exists(f) else {}
+d['role'] = '$USER_ROLE'
+json.dump(d, open(f, 'w'), indent=2)
+"
+chmod 600 "$HOME/.alfred-config.json"
+
+# ------------------------------------------------------------
+# 7. Engagement types
+# ------------------------------------------------------------
+echo ""
+echo "▶ Which engagement types do you use?"
+echo "   (Press Enter to keep all, or enter numbers separated by spaces)"
+echo ""
+echo "    1) Business Case            6) Post Sale Engagement"
+echo "    2) Customer Business Review 7) POV"
+echo "    3) Demo                     8) RFx"
+echo "    4) Discovery                9) Technical Win"
+echo "    5) EBC                     10) Workshop"
+echo ""
+printf "   Your selection (e.g. 3 4 8 9), or Enter for all: "
+read -r TYPE_SELECTION
+
+python3 - <<PYEOF
+import json, os
+all_types = [
+  "Business Case", "Customer Business Review", "Demo", "Discovery", "EBC",
+  "Post Sale Engagement", "POV", "RFx", "Technical Win", "Workshop"
+]
+sel = "$TYPE_SELECTION".strip()
+if sel:
+    indices = [int(x)-1 for x in sel.split() if x.isdigit() and 1 <= int(x) <= len(all_types)]
+    selected = [all_types[i] for i in indices] if indices else all_types
+else:
+    selected = all_types
+f = os.path.expanduser('~/.alfred-config.json')
+d = json.load(open(f)) if os.path.exists(f) else {}
+d['engagementTypes'] = selected
+json.dump(d, open(f, 'w'), indent=2)
+print("   ✅ Engagement types: " + ", ".join(selected))
+PYEOF
+chmod 600 "$HOME/.alfred-config.json"
+
+# ------------------------------------------------------------
+# 8. Install cron jobs
+# ------------------------------------------------------------
+echo ""
+echo "▶ Automated jobs..."
+echo ""
+printf "   Install Monday 9:30am hygiene sweep (flags missing engagements on your pipeline)? [Y/n]: "
+read -r INSTALL_HYGIENE
+printf "   Install Friday 2:00pm meeting review (matches this week's meetings to open opps)? [Y/n]: "
+read -r INSTALL_MEETING
+
+CURRENT_CRON=$(crontab -l 2>/dev/null)
+UPDATED_CRON="$CURRENT_CRON"
 
 # Rotate log if > 1MB before appending (keeps last 500 lines)
 ROTATE_LOG="f=\$HOME/.alfred-hygiene.log; [ -f \"\$f\" ] && [ \$(wc -c < \"\$f\") -gt 1048576 ] && tail -500 \"\$f\" > \"\$f.tmp\" && mv \"\$f.tmp\" \"\$f\""
@@ -228,30 +296,37 @@ ROTATE_LOG2="f=\$HOME/.alfred-meetings.log; [ -f \"\$f\" ] && [ \$(wc -c < \"\$f
 MEETING_CMD="$NODE_PATH $SCRIPT_DIR/scripts/post-meeting-sweep.mjs >> $HOME/.alfred-meetings.log 2>&1"
 MEETING_CRON="0 14 * * 5 $ROTATE_LOG2; $MEETING_CMD"
 
-CURRENT_CRON=$(crontab -l 2>/dev/null)
-
-UPDATED_CRON="$CURRENT_CRON"
-if echo "$CURRENT_CRON" | grep -q "hygiene-sweep"; then
-  echo "   ✅ Hygiene cron already installed (Monday 9:30am)"
-else
-  UPDATED_CRON="$UPDATED_CRON
+case "$INSTALL_HYGIENE" in
+  [nN]*) echo "   ⏭  Hygiene sweep skipped" ;;
+  *)
+    if echo "$CURRENT_CRON" | grep -q "hygiene-sweep"; then
+      echo "   ✅ Hygiene cron already installed (Monday 9:30am)"
+    else
+      UPDATED_CRON="$UPDATED_CRON
 $HYGIENE_CRON"
-  echo "   ✅ Hygiene cron installed (Monday 9:30am)"
-fi
+      echo "   ✅ Hygiene cron installed (Monday 9:30am)"
+    fi
+    touch "$HOME/.alfred-hygiene.log"
+    chmod 600 "$HOME/.alfred-hygiene.log"
+    ;;
+esac
 
-if echo "$CURRENT_CRON" | grep -q "post-meeting-sweep"; then
-  echo "   ✅ Meeting review cron already installed (Friday 2:00pm)"
-else
-  UPDATED_CRON="$UPDATED_CRON
+case "$INSTALL_MEETING" in
+  [nN]*) echo "   ⏭  Meeting review skipped" ;;
+  *)
+    if echo "$CURRENT_CRON" | grep -q "post-meeting-sweep"; then
+      echo "   ✅ Meeting review cron already installed (Friday 2:00pm)"
+    else
+      UPDATED_CRON="$UPDATED_CRON
 $MEETING_CRON"
-  echo "   ✅ Meeting review cron installed (Friday 2:00pm)"
-fi
+      echo "   ✅ Meeting review cron installed (Friday 2:00pm)"
+    fi
+    touch "$HOME/.alfred-meetings.log"
+    chmod 600 "$HOME/.alfred-meetings.log"
+    ;;
+esac
 
 echo "$UPDATED_CRON" | crontab -
-
-# Ensure log files exist and are readable only by the owner
-touch "$HOME/.alfred-hygiene.log" "$HOME/.alfred-meetings.log"
-chmod 600 "$HOME/.alfred-hygiene.log" "$HOME/.alfred-meetings.log"
 
 # ------------------------------------------------------------
 # Done
@@ -267,12 +342,14 @@ echo "  2. Log into Dynamics, Outlook and Teams in that window"
 echo "  3. Restart Claude Desktop"
 echo "  4. Ask Claude anything — opportunities, calendar, hygiene sweep!"
 echo ""
-echo "Automated jobs:"
-echo "  • Monday 9:30am — CRM hygiene sweep"
-echo "  • Friday 2:00pm — Weekly meeting review"
-if [ -n "$EXISTING_WEBHOOK" ] || [ -n "$NEW_WEBHOOK" ]; then
-  echo "Results will be posted to your Teams channel."
-else
-  echo "Run setup again to add a Teams webhook for automated notifications."
+if [[ "$INSTALL_HYGIENE" != [nN]* ]] || [[ "$INSTALL_MEETING" != [nN]* ]]; then
+  echo "Automated jobs:"
+  [[ "$INSTALL_HYGIENE" != [nN]* ]] && echo "  • Monday 9:30am — CRM hygiene sweep"
+  [[ "$INSTALL_MEETING" != [nN]* ]] && echo "  • Friday 2:00pm — Weekly meeting review"
+  if [ -n "$EXISTING_WEBHOOK" ] || [ -n "$NEW_WEBHOOK" ]; then
+    echo "Results will be posted to your Teams channel."
+  else
+    echo "Run setup again to add a Teams webhook for automated notifications."
+  fi
+  echo ""
 fi
-echo ""
