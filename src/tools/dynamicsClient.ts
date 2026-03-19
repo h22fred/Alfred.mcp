@@ -1,6 +1,36 @@
 import { getAuthCookies, clearAuthCache, type ProgressFn } from "../auth/tokenExtractor.js";
+import { userInfo } from "os";
 
 const DYNAMICS_BASE = "https://servicenow.crm.dynamics.com/api/data/v9.2";
+
+// ---------------------------------------------------------------------------
+// Security helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Sanitize a user-supplied search string for safe use inside OData contains().
+ * Strips characters that could break out of the string context (parentheses,
+ * slashes, OData operators) and escapes single quotes.
+ */
+function sanitizeODataSearch(input: string): string {
+  // Allow only safe characters: letters, digits, spaces, hyphens, dots, @ _ #
+  const stripped = input.replace(/[^a-zA-Z0-9 \-\.@_#]/g, "");
+  // Escape remaining single quotes (belt-and-suspenders)
+  return stripped.replace(/'/g, "''").slice(0, 100);
+}
+
+/** Structured audit log — written to stderr so it appears in log files but not MCP responses. */
+function auditLog(action: string, details: Record<string, unknown> = {}): void {
+  try {
+    const entry = {
+      timestamp: new Date().toISOString(),
+      user: userInfo().username,
+      action,
+      ...details,
+    };
+    process.stderr.write(`[alfred:audit] ${JSON.stringify(entry)}\n`);
+  } catch { /* non-fatal */ }
+}
 
 export type EngagementType =
   | "Business Case"
@@ -196,11 +226,12 @@ async function fetchCurrentUser(progress: ProgressFn = () => {}): Promise<Curren
 
 export async function fetchOpportunities(filter: OpportunityFilter = {}, progress: ProgressFn = () => {}): Promise<Opportunity[]> {
   const top = filter.top ?? 50;
+  auditLog("fetch_opportunities", { myOpportunitiesOnly: filter.myOpportunitiesOnly ?? true, search: filter.search ?? null, top });
   progress(`📡 Querying Dynamics for open opportunities (max ${top})...`);
 
   let filterClause = filter.includeClosed ? "statecode ge 0" : "statecode eq 0";
   if (filter.search) {
-    const safe = filter.search.replace(/'/g, "''");
+    const safe = sanitizeODataSearch(filter.search);
     filterClause += ` and (contains(name,'${safe}') or contains(sn_number,'${safe}'))`;
   }
   if (filter.minNnacv) {
@@ -242,7 +273,7 @@ export async function fetchOpportunityById(id: string, progress: ProgressFn = ()
 
 export async function searchProducts(name: string, progress: ProgressFn = () => {}): Promise<Product[]> {
   progress(`🔍 Searching product families for "${name}"...`);
-  const safe = name.replace(/'/g, "''");
+  const safe = sanitizeODataSearch(name);
   const path = `/sn_productfamilies?$select=sn_productfamilyid,sn_name&$filter=contains(sn_name,'${safe}')&$top=20`;
 
   const res = await dynamicsFetch(path, {}, progress);
@@ -322,6 +353,7 @@ export interface CreateEngagementInput {
 }
 
 export async function createEngagement(input: CreateEngagementInput, progress: ProgressFn = () => {}): Promise<Engagement> {
+  auditLog("create_engagement", { type: input.type, opportunityId: input.opportunityId });
   const typeGuid = ENGAGEMENT_TYPE_GUIDS[input.type];
   if (!typeGuid) throw new Error(`Unknown engagement type: ${input.type}`);
 
@@ -521,6 +553,7 @@ export async function deleteTimelineNote(
   annotationId: string,
   progress: ProgressFn = () => {}
 ): Promise<void> {
+  auditLog("delete_timeline_note", { annotationId });
   progress(`🗑️ Deleting timeline note ${annotationId}...`);
   await dynamicsFetch(`/annotations(${annotationId})`, { method: "DELETE" }, progress);
   progress("✅ Timeline note deleted");
@@ -580,7 +613,7 @@ export async function fetchAccountById(id: string, progress: ProgressFn = () => 
 
 export async function searchAccounts(name: string, progress: ProgressFn = () => {}): Promise<Account[]> {
   progress(`🔍 Searching accounts for "${name}"...`);
-  const safe = name.replace(/'/g, "''");
+  const safe = sanitizeODataSearch(name);
   const path =
     `/accounts?$select=${ACCOUNT_SELECT}` +
     `&$filter=contains(name,'${safe}')` +
@@ -612,16 +645,24 @@ export async function addAttendeesToEngagement(
   progress: ProgressFn = () => {}
 ): Promise<AttendeeResult[]> {
   const results: AttendeeResult[] = [];
+  const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  auditLog("add_attendees", { engagementId, count: attendees.length });
 
   for (const attendee of attendees) {
-    const domain = attendee.email.split("@")[1]?.toLowerCase() ?? "";
+    if (!EMAIL_RE.test(attendee.email)) {
+      progress(`⚠️ Skipping invalid email: ${attendee.email}`);
+      results.push({ email: attendee.email, name: attendee.name, type: "not_found" });
+      continue;
+    }
+    const domain = attendee.email.split("@")[1]!.toLowerCase();
     const isInternal = INTERNAL_ATTENDEE_DOMAINS.has(domain);
 
     try {
       if (isInternal) {
         // Look up Dynamics systemuser by internal email
+        const safeEmail = attendee.email.replace(/'/g, "''");
         const userRes = await dynamicsFetch(
-          `/systemusers?$filter=internalemailaddress eq '${attendee.email}'&$select=systemuserid,fullname&$top=1`,
+          `/systemusers?$filter=internalemailaddress eq '${safeEmail}'&$select=systemuserid,fullname&$top=1`,
           {}, progress
         );
         const userData = await userRes.json() as { value: { systemuserid: string; fullname: string }[] };
@@ -643,8 +684,9 @@ export async function addAttendeesToEngagement(
         }
       } else {
         // Look up Dynamics contact by email
+        const safeEmail = attendee.email.replace(/'/g, "''");
         const contactRes = await dynamicsFetch(
-          `/contacts?$filter=emailaddress1 eq '${attendee.email}'&$select=contactid,fullname&$top=1`,
+          `/contacts?$filter=emailaddress1 eq '${safeEmail}'&$select=contactid,fullname&$top=1`,
           {}, progress
         );
         const contactData = await contactRes.json() as { value: { contactid: string; fullname: string }[] };

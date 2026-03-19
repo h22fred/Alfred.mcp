@@ -65,9 +65,10 @@ async function acquireGraphTokenRawCDP(progress: ProgressFn): Promise<string> {
   }
 
   if (!outlookTarget) {
+    process.stderr.write("[alfred] CDP: no Outlook tab found in Alfred Chrome window\n");
     throw new Error(
       "No Outlook tab found in Alfred.\n" +
-      "Please open https://outlook.office.com in the Alfred window and log in, then retry."
+      "Please open Outlook in the Alfred window and log in, then retry."
     );
   }
 
@@ -105,9 +106,10 @@ async function acquireGraphTokenRawCDP(progress: ProgressFn): Promise<string> {
 
     const timer = setTimeout(() => {
       try { ws.close(); } catch {}
+      process.stderr.write("[alfred] CDP: Graph token capture timed out from Outlook tab\n");
       reject(new Error(
         "Could not capture Graph token from Outlook.\n" +
-        "Make sure you are logged into https://outlook.office.com in Alfred."
+        "Make sure you are logged into Outlook in the Alfred window."
       ));
     }, 10_000);
 
@@ -175,7 +177,7 @@ async function acquireGraphToken(progress: ProgressFn): Promise<string> {
       const deadline = Date.now() + 10_000;
       while (!capturedToken && Date.now() < deadline) await page.waitForTimeout(500);
       await page.close();
-      if (!capturedToken) throw new Error("Could not capture Graph token from Outlook.\nMake sure you are logged into https://outlook.office.com in Alfred.");
+      if (!capturedToken) throw new Error("Could not capture Graph token from Outlook.\nMake sure you are logged into Outlook in the Alfred window.");
       tokenCache = { token: capturedToken, expiresAt: Date.now() + TOKEN_CACHE_MS };
       progress("✅ Graph token acquired via Playwright");
       return capturedToken;

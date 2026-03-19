@@ -158,9 +158,10 @@ async function getAuthCookiesViaCDP(progress: ProgressFn): Promise<CachedAuth> {
 
   const authCookies = allCookies.filter(c => AUTH_COOKIE_NAMES.includes(c.name));
   if (authCookies.length === 0) {
+    process.stderr.write("[alfred] CDP auth: no Dynamics cookies found — user not logged in\n");
     throw new Error(
       "Alfred is open but you are not logged into Dynamics yet.\n" +
-      "Please log into servicenow.crm.dynamics.com in the Alfred window, then retry."
+      "Please log into Dynamics in the Alfred window, then retry."
     );
   }
 
@@ -206,9 +207,10 @@ export async function getOutlookCookies(progress: ProgressFn = () => {}): Promis
 
   const allCookies = await getCookiesViaRawCDP([OUTLOOK_URL]);
   if (allCookies.length === 0) {
+    process.stderr.write("[alfred] CDP auth: no Outlook cookies found — user not logged in\n");
     throw new Error(
       "Not logged into Outlook in the Alfred window.\n" +
-      "Log into https://outlook.office.com in the Alfred Chrome window, then retry."
+      "Log into Outlook in the Alfred Chrome window, then retry."
     );
   }
 

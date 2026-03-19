@@ -193,6 +193,7 @@ if [ -n "$EXISTING_WEBHOOK" ]; then
   if [ -n "$NEW_WEBHOOK" ]; then
     EXISTING_WEBHOOK="$NEW_WEBHOOK"
     python3 -c "import json; f='$CONFIG_FILE'; d=json.load(open(f)) if __import__('os').path.exists(f) else {}; d['teamsWebhook']='$NEW_WEBHOOK'; json.dump(d,open(f,'w'),indent=2)"
+    chmod 600 "$CONFIG_FILE"
     echo "   ✅ Webhook updated"
   fi
 else
@@ -204,6 +205,7 @@ else
   read -r NEW_WEBHOOK
   if [ -n "$NEW_WEBHOOK" ]; then
     python3 -c "import json; f='$CONFIG_FILE'; d=json.load(open(f)) if __import__('os').path.exists(f) else {}; d['teamsWebhook']='$NEW_WEBHOOK'; json.dump(d,open(f,'w'),indent=2)"
+    chmod 600 "$CONFIG_FILE"
     echo "   ✅ Webhook saved to $CONFIG_FILE"
   else
     echo "   ⏭  Skipped — hygiene sweep will run without Teams notifications"
@@ -217,11 +219,14 @@ fi
 echo ""
 echo "▶ Installing cron jobs..."
 
+# Rotate log if > 1MB before appending (keeps last 500 lines)
+ROTATE_LOG="f=\$HOME/.alfred-hygiene.log; [ -f \"\$f\" ] && [ \$(wc -c < \"\$f\") -gt 1048576 ] && tail -500 \"\$f\" > \"\$f.tmp\" && mv \"\$f.tmp\" \"\$f\""
 HYGIENE_CMD="$NODE_PATH $SCRIPT_DIR/scripts/hygiene-sweep.mjs >> $HOME/.alfred-hygiene.log 2>&1"
-HYGIENE_CRON="30 9 * * 1 $HYGIENE_CMD"
+HYGIENE_CRON="30 9 * * 1 $ROTATE_LOG; $HYGIENE_CMD"
 
+ROTATE_LOG2="f=\$HOME/.alfred-meetings.log; [ -f \"\$f\" ] && [ \$(wc -c < \"\$f\") -gt 1048576 ] && tail -500 \"\$f\" > \"\$f.tmp\" && mv \"\$f.tmp\" \"\$f\""
 MEETING_CMD="$NODE_PATH $SCRIPT_DIR/scripts/post-meeting-sweep.mjs >> $HOME/.alfred-meetings.log 2>&1"
-MEETING_CRON="0 14 * * 5 $MEETING_CMD"
+MEETING_CRON="0 14 * * 5 $ROTATE_LOG2; $MEETING_CMD"
 
 CURRENT_CRON=$(crontab -l 2>/dev/null)
 
@@ -243,6 +248,10 @@ $MEETING_CRON"
 fi
 
 echo "$UPDATED_CRON" | crontab -
+
+# Ensure log files exist and are readable only by the owner
+touch "$HOME/.alfred-hygiene.log" "$HOME/.alfred-meetings.log"
+chmod 600 "$HOME/.alfred-hygiene.log" "$HOME/.alfred-meetings.log"
 
 # ------------------------------------------------------------
 # Done
