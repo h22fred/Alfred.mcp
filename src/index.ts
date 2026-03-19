@@ -299,7 +299,9 @@ IMPORTANT: Always show the user a full summary of what will be created (name, ty
 
 Always populate the structured description fields for every engagement type:
 - use_case, key_points (label auto-adapts per type), next_actions, risks, stakeholders
-A timeline note is created automatically on creation.`,
+A timeline note is created automatically on creation.
+
+When creating from a calendar event or meeting, always pass the attendees list — they are automatically linked as Active Participants (internal @servicenow.com colleagues) and Active Engagement Contacts (external customers).`,
   {
     opportunity_id: z.string().describe("Dynamics opportunity GUID"),
     primary_product_id: z.string().describe("Dynamics product GUID (use search_products to find it)"),
@@ -314,8 +316,13 @@ A timeline note is created automatically on creation.`,
     stakeholders: z.string().optional().describe("Stakeholders (e.g. 'Brent Harrison and Lucio')"),
     // Plain text fallback
     notes: z.string().optional().describe("Plain text description (used only if structured fields are not provided)"),
+    // Attendees — pass from the calendar event, linked automatically after creation
+    attendees: z.array(z.object({
+      name:  z.string(),
+      email: z.string(),
+    })).optional().describe("Meeting attendees from the calendar event. Always pass these when creating from a meeting — internal (@servicenow.com/@now.com) become Active Participants, external become Active Engagement Contacts."),
   },
-  async ({ opportunity_id, primary_product_id, name, type, completed_date, use_case, key_points, next_actions, risks, stakeholders, notes }) => {
+  async ({ opportunity_id, primary_product_id, name, type, completed_date, use_case, key_points, next_actions, risks, stakeholders, notes, attendees }) => {
     const progress = makeProgress(server);
     progress(`🎯 Creating engagement: "${name}" (${type})`);
     const opp = await fetchOpportunityById(opportunity_id, progress);
@@ -334,6 +341,12 @@ A timeline note is created automatically on creation.`,
       notes: finalNotes,
       completedDate: completed_date,
     }, progress);
+
+    // Auto-link attendees if provided
+    if (attendees?.length && engagement.sn_engagementid) {
+      progress(`👥 Linking ${attendees.length} attendee(s)...`);
+      await addAttendeesToEngagement(engagement.sn_engagementid, attendees, progress);
+    }
 
     // Check which SC required milestones are still missing after this creation
     const SC_REQUIRED = ["Discovery", "Demo", "Technical Win"];
