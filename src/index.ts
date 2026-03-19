@@ -536,8 +536,10 @@ IMPORTANT: Before calling this tool, ask the user:
   async ({ start_date, end_date, search }) => {
     const progress = makeProgress(server);
     const events = await getCalendarEvents(start_date, end_date, search, progress);
+    // Slim down: keep attendee emails+names but drop large bodyPreview to stay under 1MB
+    const slim = events.map(({ bodyPreview: _bp, ...e }) => e);
     return {
-      content: [{ type: "text", text: JSON.stringify(events, null, 2) }],
+      content: [{ type: "text", text: JSON.stringify(slim, null, 2) }],
     };
   }
 );
@@ -738,7 +740,13 @@ If no transcript, use the meeting subject, attendees and calendar notes for best
       return { content: [{ type: "text", text: "No ended online meetings found in the specified window." }] };
     }
 
-    return { content: [{ type: "text", text: JSON.stringify(candidates, null, 2) }] };
+    // Strip raw calendarEvent (large Graph API blob Claude doesn't need) and truncate transcripts
+    const slim = candidates.map(({ calendarEvent: _raw, transcript, ...c }) => ({
+      ...c,
+      ...(transcript ? { transcript: transcript.length > 4000 ? transcript.slice(0, 4000) + "\n…[truncated]" : transcript } : {}),
+    }));
+
+    return { content: [{ type: "text", text: JSON.stringify(slim, null, 2) }] };
   }
 );
 
