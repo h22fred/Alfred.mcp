@@ -219,14 +219,16 @@ fi
 echo ""
 echo "▶ What is your role?"
 echo ""
-echo "   1) SC  — Solution Consultant (you have assigned opportunities in Dynamics)"
-echo "   2) SSC — Sales Support Consultant (you support SCs, no assigned pipeline)"
+echo "   1) SC      — Solution Consultant (you have assigned opportunities in Dynamics)"
+echo "   2) SSC     — Sales Support Consultant (you support SCs, no assigned pipeline)"
+echo "   3) Manager — SC Manager (you want to see your team's pipeline)"
 echo ""
-printf "   Enter 1 or 2 (default: 1): "
+printf "   Enter 1, 2 or 3 (default: 1): "
 read -r ROLE_CHOICE
 case "$ROLE_CHOICE" in
-  2) USER_ROLE="ssc"; echo "   ✅ Role set to SSC — Alfred will search all accounts by default" ;;
-  *) USER_ROLE="sc";  echo "   ✅ Role set to SC — Alfred will default to your own pipeline" ;;
+  2) USER_ROLE="ssc";     echo "   ✅ Role set to SSC — Alfred will search all accounts by default" ;;
+  3) USER_ROLE="manager"; echo "   ✅ Role set to Manager — Alfred will browse by territory/SC by default" ;;
+  *) USER_ROLE="sc";      echo "   ✅ Role set to SC — Alfred will default to your own pipeline" ;;
 esac
 python3 -c "
 import json, os

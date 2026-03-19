@@ -83,7 +83,7 @@ const deleteWriteLimiter      = new WriteRateLimiter(3,  10 * 60 * 1000); // 3 p
 // ---------------------------------------------------------------------------
 interface AlfredConfig {
   teamsWebhook?: string;
-  role?: "sc" | "ssc";
+  role?: "sc" | "ssc" | "manager";
   engagementTypes?: string[];
 }
 
@@ -92,7 +92,8 @@ const alfredConfig: AlfredConfig = existsSync(alfredConfigPath)
   ? JSON.parse(readFileSync(alfredConfigPath, "utf8")) as AlfredConfig
   : {};
 
-const isSSC = alfredConfig.role === "ssc";
+const isSSC     = alfredConfig.role === "ssc";
+const isManager = alfredConfig.role === "manager";
 
 // Which engagement types this user has enabled (defaults to all if not configured)
 const ALL_ENGAGEMENT_TYPES = [
@@ -237,6 +238,15 @@ This user is an SSC (Sales Support Consultant) — they do not have an assigned 
 IMPORTANT: Before calling this tool, always ask:
 1. "Which account or opportunity are you looking for?"
 2. "100K+ NNACV only, or all sizes?" (default: 100K+ only)`
+    : isManager
+    ? `List open opportunities from Dynamics 365.
+
+This user is an SC Manager — they want to see their team's pipeline, not just their own. Always search across ALL opportunities (my_opportunities_only=false). Their territory filter is applied automatically when my_opportunities_only=true, but they may want to search by SC name or account instead.
+
+IMPORTANT: Before calling this tool, always ask:
+1. "Your whole team's pipeline, a specific SC, or a specific account?"
+   — If a specific SC or account is named, pass it as the search field
+2. "100K+ NNACV only, or all sizes?" (default: 100K+ only)`
     : `List open opportunities from Dynamics 365.
 
 Defaults to the current user's pipeline only (SC or territory). Only set my_opportunities_only=false if the user explicitly asks for all opportunities, a colleague's pipeline, a region, or a manager view.
@@ -253,6 +263,8 @@ Ask both together in one message. Only call this tool once you have their answer
     my_opportunities_only: z.boolean().optional().describe(
       isSSC
         ? "SSC mode — default false (search all accounts). Set true only if explicitly asked to show a specific SC's pipeline."
+        : isManager
+        ? "Manager mode — default false (search all/team). Set true to use territory filter for the full team view."
         : "Filter to current user's owned opportunities only — default true."
     ),
     include_closed: z.boolean().optional().describe("Include won/lost/closed opportunities — default false (open only). Set true when user asks about a specific opp by OPTY number or explicitly wants closed deals."),
@@ -263,7 +275,7 @@ Ask both together in one message. Only call this tool once you have their answer
       top,
       search,
       minNnacv: min_nnacv ?? 100000,
-      myOpportunitiesOnly: my_opportunities_only ?? (isSSC ? false : true),
+      myOpportunitiesOnly: my_opportunities_only ?? (isSSC || isManager ? false : true),
       includeClosed: include_closed ?? false,
     };
     const opportunities = await fetchOpportunities(filter, progress);
