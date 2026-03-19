@@ -1,7 +1,8 @@
 import { getAuthCookies, clearAuthCache, type ProgressFn } from "../auth/tokenExtractor.js";
 import { userInfo } from "os";
+import { DYNAMICS_HOST } from "../config.js";
 
-const DYNAMICS_BASE = "https://servicenow.crm.dynamics.com/api/data/v9.2";
+const DYNAMICS_BASE = `${DYNAMICS_HOST}/api/data/v9.2`;
 
 // ---------------------------------------------------------------------------
 // Security helpers

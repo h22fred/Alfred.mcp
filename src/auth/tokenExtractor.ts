@@ -1,6 +1,7 @@
 import { execFileSync, execFile } from "child_process";
+import { DYNAMICS_HOST } from "../config.js";
 
-const DYNAMICS_URL = "https://servicenow.crm.dynamics.com";
+const DYNAMICS_URL = DYNAMICS_HOST;
 const OUTLOOK_URL  = "https://outlook.office.com";
 const CDP_PORT = 9222;
 const COOKIE_REFRESH_MARGIN_MS = 5 * 60 * 1000;
