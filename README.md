@@ -2,7 +2,7 @@
 
 > *Every superhero needs an Alfred. Yours logs the Engagements.*
 
-Built by **Fredrik Holmström**, Solution Consultant @ ServiceNow
+Built by **Fred** — Solution Consultant @ ServiceNow
 
 Connects Claude Desktop directly to your CRM, calendar, email and Teams — using your existing browser session. No Azure app registration. No stored credentials. No CRM admin work ever again.
 
@@ -117,4 +117,4 @@ Config lives in `~/.alfred-config.json`:
 
 ---
 
-*Questions? Ping Fredrik on Teams or open an issue.*
+*Questions? Open a [Discussion](https://github.com/h22fred/Alfred.mcp/discussions) or ping Fred on Teams.*
