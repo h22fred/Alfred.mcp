@@ -125,9 +125,9 @@ echo "▶ Creating Alfred.app on Desktop..."
 mkdir -p "$CHROMELINK_APP/Contents/MacOS"
 mkdir -p "$CHROMELINK_APP/Contents/Resources"
 
-cat > "$CHROMELINK_APP/Contents/MacOS/Alfred" << 'SHELLEOF'
+cat > "$CHROMELINK_APP/Contents/MacOS/Alfred" << SHELLEOF
 #!/bin/bash
-notify() { osascript -e "display notification \"$1\" with title \"Alfred\"" 2>/dev/null; }
+notify() { osascript -e "display notification \"\$1\" with title \"Alfred\"" 2>/dev/null; }
 
 # Already running?
 if pgrep -f "alfred-profile" > /dev/null 2>&1; then
@@ -136,10 +136,10 @@ if pgrep -f "alfred-profile" > /dev/null 2>&1; then
   exit 0
 fi
 
-mkdir -p "$HOME/.alfred-profile"
+mkdir -p "\$HOME/.alfred-profile"
 open -na "Google Chrome" --args \
   --remote-debugging-port=9222 \
-  --user-data-dir="$HOME/.alfred-profile" \
+  --user-data-dir="\$HOME/.alfred-profile" \
   --no-first-run \
   --no-default-browser-check \
   --disable-extensions \
@@ -149,13 +149,13 @@ open -na "Google Chrome" --args \
   --disable-component-update \
   --disable-domain-reliability \
   --disable-client-side-phishing-detection \
-  "https://servicenow.crm.dynamics.com" \
+  "$NEW_DYNAMICS_URL" \
   "https://outlook.office.com" \
   "https://teams.microsoft.com/v2/"
 
 # First run detection — profile dir will be nearly empty on first launch
-PROFILE_SIZE=$(du -sk "$HOME/.alfred-profile" 2>/dev/null | cut -f1)
-if [ -z "$PROFILE_SIZE" ] || [ "$PROFILE_SIZE" -lt 500 ]; then
+PROFILE_SIZE=\$(du -sk "\$HOME/.alfred-profile" 2>/dev/null | cut -f1)
+if [ -z "\$PROFILE_SIZE" ] || [ "\$PROFILE_SIZE" -lt 500 ]; then
   notify "First time setup: log into Dynamics, Outlook and Teams in this window. You only do this once!"
 else
   notify "Launched — ready for Claude!"
@@ -164,17 +164,17 @@ open -a "Claude" 2>/dev/null || true
 
 # Background update check — runs silently, never blocks startup
 (
-  INSTALLED=$(python3 -c "
+  INSTALLED=\$(python3 -c "
 import json, os
 f = os.path.expanduser('~/.alfred-config.json')
 d = json.load(open(f)) if os.path.exists(f) else {}
 print(d.get('installedVersion', ''))
 " 2>/dev/null)
-  if [ -z "$INSTALLED" ]; then exit 0; fi
-  LATEST=$(curl -sf --max-time 5 \
+  if [ -z "\$INSTALLED" ]; then exit 0; fi
+  LATEST=\$(curl -sf --max-time 5 \
     "https://api.github.com/repos/h22fred/Alfred.mcp/commits/main" \
     | python3 -c "import json,sys; print(json.load(sys.stdin)['sha'][:7])" 2>/dev/null)
-  if [ -n "$LATEST" ] && [ "$INSTALLED" != "$LATEST" ]; then
+  if [ -n "\$LATEST" ] && [ "\$INSTALLED" != "\$LATEST" ]; then
     osascript -e "display notification \"A new version of Alfred is available. Re-run Setup.command to update.\" with title \"Alfred Update Available 🆕\" sound name \"Ping\"" 2>/dev/null
   fi
 ) &
@@ -205,11 +205,44 @@ echo "   ✅ Alfred.app created on Desktop"
 echo "   ℹ️  First launch: right-click → Open (one-time macOS approval)"
 
 # ------------------------------------------------------------
-# 5. Teams webhook config
+# 5. Dynamics URL
+# ------------------------------------------------------------
+echo ""
+echo "▶ Dynamics 365 instance..."
+
+EXISTING_DYNAMICS_URL=$(python3 -c "import json,os; d=json.load(open(os.path.expanduser('~/.alfred-config.json'))) if os.path.exists(os.path.expanduser('~/.alfred-config.json')) else {}; print(d.get('dynamicsUrl',''))" 2>/dev/null)
+
+if [ -n "$EXISTING_DYNAMICS_URL" ]; then
+  echo "   ✅ Dynamics URL already set: $EXISTING_DYNAMICS_URL"
+  printf "   Change company name? (press Enter to keep): "
+  read -r NEW_COMPANY
+  if [ -n "$NEW_COMPANY" ]; then
+    NEW_DYNAMICS_URL="https://${NEW_COMPANY}.crm.dynamics.com"
+  else
+    NEW_DYNAMICS_URL="$EXISTING_DYNAMICS_URL"
+  fi
+else
+  printf "   What is your company name? (press Enter for 'servicenow'): "
+  read -r NEW_COMPANY
+  [ -z "$NEW_COMPANY" ] && NEW_COMPANY="servicenow"
+  NEW_DYNAMICS_URL="https://${NEW_COMPANY}.crm.dynamics.com"
+fi
+
+python3 -c "
+import json, os
+f = os.path.expanduser('~/.alfred-config.json')
+d = json.load(open(f)) if os.path.exists(f) else {}
+d['dynamicsUrl'] = '$NEW_DYNAMICS_URL'
+json.dump(d, open(f, 'w'), indent=2)
+"
+chmod 600 "$HOME/.alfred-config.json"
+echo "   ✅ Dynamics URL set to: $NEW_DYNAMICS_URL"
+
+# ------------------------------------------------------------
+# 5b. Teams webhook config
 # ------------------------------------------------------------
 echo ""
 echo "▶ Setting up Teams webhook for hygiene sweep notifications..."
-
 CONFIG_FILE="$HOME/.alfred-config.json"
 EXISTING_WEBHOOK=""
 if [ -f "$CONFIG_FILE" ]; then

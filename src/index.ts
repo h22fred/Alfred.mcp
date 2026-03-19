@@ -4,6 +4,7 @@ import { z } from "zod";
 import { readFileSync, existsSync } from "fs";
 import { homedir } from "os";
 import { join } from "path";
+import { DYNAMICS_HOST, alfredConfig as _baseConfig } from "./config.js";
 import {
   fetchOpportunities,
   fetchOpportunityById,
@@ -30,7 +31,7 @@ import { setTeamsWebhook, postTeamsNotification, getTeamsTranscript, getTeamsCha
 import { runHygieneSweep, formatHygieneReport } from "./tools/hygieneClient.js";
 import { detectPostMeetingEngagements } from "./tools/postMeetingClient.js";
 
-const DYNAMICS_BASE_URL = "https://servicenow.crm.dynamics.com";
+const DYNAMICS_BASE_URL = DYNAMICS_HOST;
 
 // ---------------------------------------------------------------------------
 // Security helpers
@@ -79,19 +80,9 @@ const engagementWriteLimiter = new WriteRateLimiter(10, 10 * 60 * 1000); // 10 p
 const deleteWriteLimiter      = new WriteRateLimiter(3,  10 * 60 * 1000); // 3 per 10 min
 
 // ---------------------------------------------------------------------------
-// User config (~/.alfred-config.json) — personalises behaviour per role
+// User config — loaded from shared config.ts
 // ---------------------------------------------------------------------------
-interface AlfredConfig {
-  teamsWebhook?: string;
-  role?: "sc" | "ssc" | "manager";
-  engagementTypes?: string[];
-}
-
-const alfredConfigPath = join(homedir(), ".alfred-config.json");
-const alfredConfig: AlfredConfig = existsSync(alfredConfigPath)
-  ? JSON.parse(readFileSync(alfredConfigPath, "utf8")) as AlfredConfig
-  : {};
-
+const alfredConfig = _baseConfig;
 const isSSC     = alfredConfig.role === "ssc";
 const isManager = alfredConfig.role === "manager";
 
