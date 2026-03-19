@@ -90,8 +90,11 @@ async function postTeamsSimple(webhookUrl, title, body) {
 
 function macosNotify(title, message) {
   try {
+    // Strip characters that could break out of the AppleScript string literal
+    const safeTitle   = String(title).replace(/["\n\r]/g, " ").slice(0, 80);
+    const safeMessage = String(message).replace(/["\n\r]/g, " ").slice(0, 200);
     execFileSync("osascript", ["-e",
-      `display notification "${message}" with title "${title}" sound name "Ping"`
+      `display notification "${safeMessage}" with title "${safeTitle}" sound name "Ping"`
     ]);
   } catch { /* non-fatal */ }
 }
@@ -305,10 +308,13 @@ const card = {
   body: cardBody,
 };
 
-// Dump card to file for debugging
-const debugPath = "/tmp/meeting-card-debug.json";
-writeFileSync(debugPath, JSON.stringify({ type: "message", attachments: [{ contentType: "application/vnd.microsoft.card.adaptive", content: card }] }, null, 2));
-log(`Card JSON saved to ${debugPath} for inspection`);
+// Dump card to file for debugging — only when ALFRED_DEBUG=1 is set
+if (process.env.ALFRED_DEBUG) {
+  const debugPath = join(homedir(), ".alfred-meeting-debug.json");
+  writeFileSync(debugPath, JSON.stringify({ type: "message", attachments: [{ contentType: "application/vnd.microsoft.card.adaptive", content: card }] }, null, 2));
+  try { execFileSync("chmod", ["600", debugPath]); } catch { /* non-fatal */ }
+  log(`Card JSON saved to ${debugPath} for inspection`);
+}
 
 if (config.teamsWebhook) {
   const ok = await postAdaptiveCardRaw(config.teamsWebhook, card);
