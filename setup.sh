@@ -49,6 +49,21 @@ echo "▶ Building MCP server..."
 PATH="$NODE_DIR:$PATH" npm run build --prefix "$SCRIPT_DIR"
 echo "   ✅ Build complete"
 
+# Save installed version SHA for update checks
+INSTALLED_SHA=$(git -C "$SCRIPT_DIR" rev-parse --short HEAD 2>/dev/null || echo "")
+if [ -n "$INSTALLED_SHA" ]; then
+  CONFIG_FILE_EARLY="$HOME/.alfred-config.json"
+  python3 -c "
+import json, os
+f = os.path.expanduser('~/.alfred-config.json')
+d = json.load(open(f)) if os.path.exists(f) else {}
+d['installedVersion'] = '$INSTALLED_SHA'
+json.dump(d, open(f, 'w'), indent=2)
+" 2>/dev/null
+  chmod 600 "$HOME/.alfred-config.json" 2>/dev/null || true
+  echo "   ✅ Installed version: $INSTALLED_SHA"
+fi
+
 # ------------------------------------------------------------
 # 3. Configure Claude Desktop
 # ------------------------------------------------------------
@@ -146,6 +161,23 @@ else
   notify "Launched — ready for Claude!"
 fi
 open -a "Claude" 2>/dev/null || true
+
+# Background update check — runs silently, never blocks startup
+(
+  INSTALLED=$(python3 -c "
+import json, os
+f = os.path.expanduser('~/.alfred-config.json')
+d = json.load(open(f)) if os.path.exists(f) else {}
+print(d.get('installedVersion', ''))
+" 2>/dev/null)
+  if [ -z "$INSTALLED" ]; then exit 0; fi
+  LATEST=$(curl -sf --max-time 5 \
+    "https://api.github.com/repos/h22fred/Alfred.mcp/commits/main" \
+    | python3 -c "import json,sys; print(json.load(sys.stdin)['sha'][:7])" 2>/dev/null)
+  if [ -n "$LATEST" ] && [ "$INSTALLED" != "$LATEST" ]; then
+    osascript -e "display notification \"A new version of Alfred is available. Re-run Setup.command to update.\" with title \"Alfred Update Available 🆕\" sound name \"Ping\"" 2>/dev/null
+  fi
+) &
 SHELLEOF
 
 chmod +x "$CHROMELINK_APP/Contents/MacOS/Alfred"
