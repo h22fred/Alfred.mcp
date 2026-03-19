@@ -592,3 +592,83 @@ export async function searchAccounts(name: string, progress: ProgressFn = () => 
   progress(`✅ Found ${results.length} account(s)`);
   return results;
 }
+
+// ---------------------------------------------------------------------------
+// Engagement attendees — Active Participants (internal) + Engagement Contacts (external)
+// ---------------------------------------------------------------------------
+
+const INTERNAL_ATTENDEE_DOMAINS = new Set(["servicenow.com", "now.com"]);
+
+export interface AttendeeResult {
+  email: string;
+  name: string;
+  type: "participant" | "contact" | "not_found";
+  id?: string;
+}
+
+export async function addAttendeesToEngagement(
+  engagementId: string,
+  attendees: { name: string; email: string }[],
+  progress: ProgressFn = () => {}
+): Promise<AttendeeResult[]> {
+  const results: AttendeeResult[] = [];
+
+  for (const attendee of attendees) {
+    const domain = attendee.email.split("@")[1]?.toLowerCase() ?? "";
+    const isInternal = INTERNAL_ATTENDEE_DOMAINS.has(domain);
+
+    try {
+      if (isInternal) {
+        // Look up Dynamics systemuser by internal email
+        const userRes = await dynamicsFetch(
+          `/systemusers?$filter=internalemailaddress eq '${attendee.email}'&$select=systemuserid,fullname&$top=1`,
+          {}, progress
+        );
+        const userData = await userRes.json() as { value: { systemuserid: string; fullname: string }[] };
+        const user = userData.value?.[0];
+        if (user) {
+          await dynamicsFetch("/sn_engagementassignees", {
+            method: "POST",
+            body: JSON.stringify({
+              sn_name: user.fullname,
+              "sn_assigneeid@odata.bind":   `/systemusers(${user.systemuserid})`,
+              "sn_engagementid@odata.bind": `/sn_engagements(${engagementId})`,
+            }),
+          }, progress);
+          progress(`👤 Added participant: ${user.fullname}`);
+          results.push({ email: attendee.email, name: user.fullname, type: "participant", id: user.systemuserid });
+        } else {
+          progress(`⚠️ Internal user not found in Dynamics: ${attendee.email}`);
+          results.push({ email: attendee.email, name: attendee.name, type: "not_found" });
+        }
+      } else {
+        // Look up Dynamics contact by email
+        const contactRes = await dynamicsFetch(
+          `/contacts?$filter=emailaddress1 eq '${attendee.email}'&$select=contactid,fullname&$top=1`,
+          {}, progress
+        );
+        const contactData = await contactRes.json() as { value: { contactid: string; fullname: string }[] };
+        const contact = contactData.value?.[0];
+        if (contact) {
+          await dynamicsFetch("/sn_engagementcontacts", {
+            method: "POST",
+            body: JSON.stringify({
+              sn_name: contact.fullname,
+              "sn_contactid@odata.bind":    `/contacts(${contact.contactid})`,
+              "sn_engagementid@odata.bind": `/sn_engagements(${engagementId})`,
+            }),
+          }, progress);
+          progress(`👤 Added engagement contact: ${contact.fullname}`);
+          results.push({ email: attendee.email, name: contact.fullname, type: "contact", id: contact.contactid });
+        } else {
+          progress(`⚠️ Contact not found in CRM: ${attendee.email}`);
+          results.push({ email: attendee.email, name: attendee.name, type: "not_found" });
+        }
+      }
+    } catch {
+      results.push({ email: attendee.email, name: attendee.name, type: "not_found" });
+    }
+  }
+
+  return results;
+}

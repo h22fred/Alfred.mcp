@@ -16,6 +16,7 @@ import {
   deleteTimelineNote,
   fetchAccountById,
   searchAccounts,
+  addAttendeesToEngagement,
   type EngagementType,
   type OpportunityFilter,
   type EngagementDescription,
@@ -353,6 +354,46 @@ A timeline note is created automatically on creation.`,
     return {
       content: [{ type: "text", text }],
     };
+  }
+);
+
+// ---------------------------------------------------------------------------
+// Tool: add_engagement_attendees
+// ---------------------------------------------------------------------------
+server.tool(
+  "add_engagement_attendees",
+  `Add meeting attendees to an engagement in Dynamics 365.
+
+- Internal attendees (@servicenow.com / @now.com) are added as Active Participants (sn_engagementassignee → systemuser)
+- External attendees (customers) are added as Active Engagement Contacts (sn_engagementcontact → contact)
+- Attendees not found in Dynamics are reported but do not cause failure
+
+Use this after creating or updating an engagement when you have a list of meeting attendees from the calendar event.`,
+  {
+    engagement_id: z.string().describe("Dynamics sn_engagement GUID"),
+    attendees: z.array(z.object({
+      name:  z.string().describe("Attendee display name"),
+      email: z.string().describe("Attendee email address"),
+    })).describe("List of meeting attendees — split automatically into internal participants and external contacts"),
+  },
+  async ({ engagement_id, attendees }) => {
+    const progress = makeProgress(server);
+    progress(`👥 Adding ${attendees.length} attendee(s) to engagement ${engagement_id}...`);
+
+    const results = await addAttendeesToEngagement(engagement_id, attendees, progress);
+
+    const participants = results.filter(r => r.type === "participant");
+    const contacts     = results.filter(r => r.type === "contact");
+    const notFound     = results.filter(r => r.type === "not_found");
+
+    const lines = [
+      `**Attendees added to engagement**`,
+      participants.length ? `👤 Participants (internal): ${participants.map(r => r.name).join(", ")}` : "",
+      contacts.length     ? `🤝 Contacts (external): ${contacts.map(r => r.name).join(", ")}` : "",
+      notFound.length     ? `⚠️ Not found in Dynamics: ${notFound.map(r => r.email).join(", ")}` : "",
+    ].filter(Boolean);
+
+    return { content: [{ type: "text", text: lines.join("\n") }] };
   }
 );
 
