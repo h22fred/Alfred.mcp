@@ -189,7 +189,7 @@ IMPORTANT AFTER CALLING THIS TOOL:
     clearGraphTokenCache();
     await ensureAlfred(progress);
     return {
-      content: [{ type: "text", text: "✅ Alfred is open. Please log into Dynamics, Outlook and Teams in the Chrome window using ServiceNow SSO, then tell me when you're ready and I'll continue." }],
+      content: [{ type: "text", text: "✅ Alfred is open. Please log into Dynamics, Outlook and Teams in the Chrome window, then tell me when you're ready and I'll continue." }],
     };
   }
 );
