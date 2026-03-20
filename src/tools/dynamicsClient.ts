@@ -550,6 +550,123 @@ export async function listTimelineNotes(
   return notes;
 }
 
+// ---------------------------------------------------------------------------
+// Opportunity write operations (Sales MCP)
+// ---------------------------------------------------------------------------
+
+export interface CreateOpportunityInput {
+  name: string;
+  accountId: string;
+  closeDate: string;               // ISO date e.g. "2026-12-31"
+  opportunityType?: number;        // 1=New Business 2=Renewal 3=Existing Customer
+  forecastCategory?: number;       // 100000001=Pipeline 100000002=Best Case 100000003=Committed
+  ownerId?: string;                // Sales Rep systemuser GUID
+  scId?: string;                   // SC systemuser GUID
+  notes?: string;
+}
+
+export interface UpdateOpportunityInput {
+  opportunityId: string;
+  name?: string;
+  closeDate?: string;
+  forecastCategory?: number;
+  ownerId?: string;
+  scId?: string;
+  notes?: string;
+}
+
+export async function createOpportunity(
+  input: CreateOpportunityInput,
+  progress: ProgressFn = () => {}
+): Promise<Opportunity> {
+  auditLog("create_opportunity", { name: input.name, accountId: input.accountId });
+  progress(`📝 Creating opportunity "${input.name}"...`);
+
+  const payload: Record<string, unknown> = {
+    name: input.name,
+    estimatedclosedate: input.closeDate,
+    "parentaccountid@odata.bind": `/accounts(${input.accountId})`,
+    ...(input.opportunityType !== undefined ? { opportunitytypecode: input.opportunityType } : {}),
+    ...(input.forecastCategory !== undefined ? { msdyn_forecastcategory: input.forecastCategory } : {}),
+    ...(input.ownerId ? { "ownerid@odata.bind": `/systemusers(${input.ownerId})` } : {}),
+    ...(input.scId  ? { "sn_solutionconsultant@odata.bind": `/systemusers(${input.scId})` } : {}),
+    ...(input.notes ? { description: input.notes } : {}),
+  };
+
+  const res = await dynamicsFetch("/opportunities", {
+    method: "POST",
+    body: JSON.stringify(payload),
+    headers: { Prefer: "return=representation" },
+  }, progress);
+
+  let opp: Opportunity;
+  if (res.status === 201) {
+    opp = mapOpportunity(await res.json() as Record<string, unknown>);
+  } else {
+    const location = res.headers.get("OData-EntityId") ?? res.headers.get("Location");
+    const match = location?.match(/opportunities\(([^)]+)\)/);
+    if (!match?.[1]) throw new Error("Opportunity created but could not retrieve ID from response");
+    opp = await fetchOpportunityById(match[1], progress);
+  }
+
+  progress(`✅ Opportunity created: ${opp.name} (${opp.sn_number ?? opp.opportunityid})`);
+  return opp;
+}
+
+export async function updateOpportunity(
+  input: UpdateOpportunityInput,
+  progress: ProgressFn = () => {}
+): Promise<Opportunity> {
+  auditLog("update_opportunity", { opportunityId: input.opportunityId });
+  progress(`📝 Updating opportunity ${input.opportunityId}...`);
+
+  const payload: Record<string, unknown> = {
+    ...(input.name        ? { name: input.name } : {}),
+    ...(input.closeDate   ? { estimatedclosedate: input.closeDate } : {}),
+    ...(input.forecastCategory !== undefined ? { msdyn_forecastcategory: input.forecastCategory } : {}),
+    ...(input.ownerId     ? { "ownerid@odata.bind": `/systemusers(${input.ownerId})` } : {}),
+    ...(input.scId        ? { "sn_solutionconsultant@odata.bind": `/systemusers(${input.scId})` } : {}),
+    ...(input.notes       ? { description: input.notes } : {}),
+  };
+
+  await dynamicsFetch(`/opportunities(${input.opportunityId})`, {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  }, progress);
+
+  const updated = await fetchOpportunityById(input.opportunityId, progress);
+  progress(`✅ Opportunity updated`);
+  return updated;
+}
+
+export interface SystemUser {
+  systemuserid: string;
+  fullname: string;
+  internalemailaddress?: string;
+  title?: string;
+}
+
+export async function searchSystemUsers(
+  name: string,
+  progress: ProgressFn = () => {}
+): Promise<SystemUser[]> {
+  const safe = sanitizeODataSearch(name);
+  progress(`👤 Searching users for "${safe}"...`);
+  const res = await dynamicsFetch(
+    `/systemusers?$select=systemuserid,fullname,internalemailaddress,title` +
+    `&$filter=contains(fullname,'${safe}') and isdisabled eq false` +
+    `&$top=10`,
+    {}, progress
+  );
+  const data = await res.json() as { value: Record<string, unknown>[] };
+  return (data.value ?? []).map(r => ({
+    systemuserid: r.systemuserid as string,
+    fullname:     r.fullname as string,
+    internalemailaddress: r.internalemailaddress as string | undefined,
+    title:        r.title as string | undefined,
+  }));
+}
+
 export async function deleteEngagement(
   engagementId: string,
   progress: ProgressFn = () => {}

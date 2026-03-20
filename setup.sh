@@ -102,7 +102,7 @@ fi
 echo ""
 echo "▶ Configuring Claude Desktop..."
 
-DIST_PATH="$SCRIPT_DIR/dist/index.js"
+DIST_PATH="$SCRIPT_DIR/dist/${ALFRED_VARIANT:-sc}/index.js"
 MCP_ENTRY=$(cat <<EOF
 {
   "command": "$NODE_PATH",
@@ -319,13 +319,15 @@ echo ""
 echo "   1) SC      — Solution Consultant (you have assigned opportunities in Dynamics)"
 echo "   2) SSC     — Sales Support Consultant (you support SCs, no assigned pipeline)"
 echo "   3) Manager — SC Manager (you want to see your team's pipeline)"
+echo "   4) Sales   — Account Executive (create & manage opportunities)"
 echo ""
-printf "   Enter 1, 2 or 3 (default: 1): "
+printf "   Enter 1, 2, 3 or 4 (default: 1): "
 read -r ROLE_CHOICE
 case "$ROLE_CHOICE" in
-  2) USER_ROLE="ssc";     echo "   ✅ Role set to SSC — Alfred will search all accounts by default" ;;
-  3) USER_ROLE="manager"; echo "   ✅ Role set to Manager — Alfred will browse by territory/SC by default" ;;
-  *) USER_ROLE="sc";      echo "   ✅ Role set to SC — Alfred will default to your own pipeline" ;;
+  2) USER_ROLE="ssc";     ALFRED_VARIANT="sc";    echo "   ✅ Role set to SSC — Alfred will search all accounts by default" ;;
+  3) USER_ROLE="manager"; ALFRED_VARIANT="sc";    echo "   ✅ Role set to Manager — Alfred will browse by territory/SC by default" ;;
+  4) USER_ROLE="sales";   ALFRED_VARIANT="sales"; echo "   ✅ Role set to Sales AE — Alfred will help you create and manage opportunities" ;;
+  *) USER_ROLE="sc";      ALFRED_VARIANT="sc";    echo "   ✅ Role set to SC — Alfred will default to your own pipeline" ;;
 esac
 python3 -c "
 import json, os
@@ -337,8 +339,12 @@ json.dump(d, open(f, 'w'), indent=2)
 chmod 600 "$HOME/.alfred-config.json"
 
 # ------------------------------------------------------------
-# 7. Engagement types
+# 7. Engagement types (SC/SSC/Manager only)
 # ------------------------------------------------------------
+if [ "$ALFRED_VARIANT" = "sales" ]; then
+  echo ""
+  echo "   ⏭  Engagement types skipped (not needed for Sales role)"
+else
 echo ""
 echo "▶ Which engagement types do you use?"
 echo "   (Press Enter to keep all, or enter numbers separated by spaces)"
@@ -371,11 +377,15 @@ json.dump(d, open(f, 'w'), indent=2)
 print("   ✅ Engagement types: " + ", ".join(selected))
 PYEOF
 chmod 600 "$HOME/.alfred-config.json"
+fi # end sales skip
 
 # ------------------------------------------------------------
-# 8. Install cron jobs
+# 8. Install cron jobs (SC/SSC/Manager only)
 # ------------------------------------------------------------
 echo ""
+if [ "$ALFRED_VARIANT" = "sales" ]; then
+  echo "   ⏭  Automated jobs skipped (not needed for Sales role)"
+else
 echo "▶ Automated jobs..."
 echo ""
 
@@ -493,6 +503,7 @@ $MEETING_CRON"
 fi
 
 echo "$UPDATED_CRON" | crontab -
+fi # end sales skip
 
 # ------------------------------------------------------------
 # Done

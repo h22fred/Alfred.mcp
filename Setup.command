@@ -5,7 +5,26 @@
 set -e
 
 REPO_URL="https://github.com/h22fred/alfred.mcp.git"
-INSTALL_DIR="$HOME/Documents/alfred.mcp"
+
+# Ask role first so we know which folder to install into
+echo ""
+echo "▶ What is your role?"
+echo ""
+echo "   1) SC / SSC / Manager  — Solution Consulting"
+echo "   2) Sales               — Account Executive"
+echo ""
+printf "   Enter 1 or 2 (default: 1): "
+read -r VARIANT_CHOICE
+if [ "$VARIANT_CHOICE" = "2" ]; then
+  ALFRED_VARIANT="sales"
+  INSTALL_DIR="$HOME/Documents/alfred.sales"
+  echo "   ✅ Installing Alfred Sales to ~/Documents/alfred.sales"
+else
+  ALFRED_VARIANT="sc"
+  INSTALL_DIR="$HOME/Documents/alfred.sc"
+  echo "   ✅ Installing Alfred SC to ~/Documents/alfred.sc"
+fi
+export ALFRED_VARIANT
 
 echo ""
 echo "=================================================="
