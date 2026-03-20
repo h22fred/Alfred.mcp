@@ -26,20 +26,33 @@ export async function postAdaptiveCard(
 ): Promise<void> {
   if (!webhookUrl) throw new Error("Teams webhook not configured. Use configure_teams_webhook first.");
   progress("📣 Posting to Teams...");
+  const payload = JSON.stringify({
+    type: "message",
+    attachments: [{
+      contentType: "application/vnd.microsoft.card.adaptive",
+      content: card,
+    }],
+  });
+  const sizeKb = payload.length / 1024;
+  progress(`📦 Card payload: ${sizeKb.toFixed(1)}KB`);
+  if (sizeKb > 27) {
+    progress(`⚠️  Card payload is ${sizeKb.toFixed(1)}KB — Teams limit is ~28KB, card may be silently dropped`);
+  }
   const res = await fetch(webhookUrl, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      type: "message",
-      attachments: [{
-        contentType: "application/vnd.microsoft.card.adaptive",
-        content: card,
-      }],
-    }),
+    body: payload,
   });
+  const responseText = await res.text().catch(() => "");
   if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    throw new Error(`Teams webhook error: ${res.status} ${res.statusText}${text ? ` — ${text}` : ""}`);
+    throw new Error(`Teams webhook error: ${res.status} ${res.statusText}${responseText ? ` — ${responseText}` : ""}`);
+  }
+  // Teams returns "1" on success, anything else is a silent error
+  if (responseText && responseText !== "1") {
+    progress(`⚠️  Teams response: ${responseText}`);
+    if (responseText.toLowerCase().includes("failed") || responseText.toLowerCase().includes("error")) {
+      throw new Error(`Teams rejected the card: ${responseText}`);
+    }
   }
   progress("✅ Posted to Teams");
 }

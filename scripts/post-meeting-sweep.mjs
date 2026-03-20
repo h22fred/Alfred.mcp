@@ -240,56 +240,72 @@ const cardBody = [
 for (const c of displayCandidates) {
   const txIcon  = c.transcriptAvailable ? "📝" : "🎙";
   const dayTime = `${fmtDate(c.meetingStart)} ${fmtTime(c.meetingStart)}`;
-  const duration = c.durationMinutes ? `${c.durationMinutes}m` : "";
-  const subtitle = duration ? `${dayTime} · ${duration}` : dayTime;
-  const oppText  = c.suggestedAccountName ? truncate(c.suggestedAccountName, 20) : "—";
+  const duration = c.durationMinutes ? ` · ${c.durationMinutes}m` : "";
+  const subtitle = `${dayTime}${duration}`;
 
   const hygiene = c.suggestedOpportunityId ? hygieneByOpp.get(c.suggestedOpportunityId) : null;
 
-  // ACTION column: up to two lines — what to log (missing) + what to update (existing)
-  const actionItems = [];
+  const items = [
+    // Meeting name — full, wrapping
+    { type: "TextBlock", text: `${txIcon} **${c.meetingSubject}**`, wrap: true },
+    // Date / duration
+    { type: "TextBlock", text: subtitle, size: "Small", isSubtle: true, spacing: "None" },
+  ];
+
   if (!c.suggestedOpportunityId) {
-    actionItems.push({ text: "🔍 Find opp", color: "Warning" });
+    items.push({
+      type: "TextBlock",
+      text: "⚠️ No opportunity matched — open Claude Desktop to find it",
+      color: "Warning", wrap: true, size: "Small",
+    });
   } else {
+    // Opportunity name + why it was matched
+    const matchDesc = c.matchReason ? ` _(matched by ${c.matchReason})_` : "";
+    const oppDisplay = c.suggestedOpportunityName ?? c.suggestedAccountName ?? "Unknown";
+    items.push({
+      type: "TextBlock",
+      text: `🏢 **${oppDisplay}**${matchDesc}`,
+      wrap: true, color: "Accent", size: "Small",
+    });
+
     if (hygiene?.missing.length) {
-      actionItems.push({ text: "📝 Log: " + hygiene.missing.join(" · "), color: "Attention" });
-    } else {
-      actionItems.push({ text: "✅ All logged", color: "Good" });
+      // Explain what to log and why
+      items.push({
+        type: "TextBlock",
+        text: `📝 **Log new engagement${hygiene.missing.length > 1 ? "s" : ""}:** ${hygiene.missing.join(", ")} — these types are missing on the opportunity and should be created from this meeting`,
+        wrap: true, color: "Attention", size: "Small", spacing: "None",
+      });
+    } else if (hygiene) {
+      items.push({
+        type: "TextBlock",
+        text: "✅ All required engagement types are already logged",
+        wrap: true, color: "Good", size: "Small", spacing: "None",
+      });
     }
+
     if (hygiene?.existing.length) {
-      actionItems.push({ text: "✏️ Update: " + hygiene.existing.join(" · "), color: "Accent" });
+      // Explain what to update and what to add
+      items.push({
+        type: "TextBlock",
+        text: `✏️ **Update existing engagement${hygiene.existing.length > 1 ? "s" : ""}:** ${hygiene.existing.join(", ")} — open each record and add meeting notes, outcome, and next steps from this meeting`,
+        wrap: true, size: "Small", spacing: "None",
+      });
+    }
+
+    // Direct link to the opportunity in Dynamics
+    if (config.dynamicsUrl && c.suggestedOpportunityId) {
+      const oppUrl = `${config.dynamicsUrl}/main.aspx?etn=opportunity&pagetype=entityrecord&id=${c.suggestedOpportunityId}`;
+      items.push({
+        type: "TextBlock",
+        text: `[Open opportunity in Dynamics →](${oppUrl})`,
+        wrap: true, size: "Small", spacing: "None",
+      });
     }
   }
 
   cardBody.push({
     type: "Container", spacing: "Small", separator: cardBody.length > 2,
-    items: [
-      // Line 1: full-width meeting name
-      { type: "TextBlock", text: `${txIcon} ${c.meetingSubject}`, wrap: false },
-      // Line 2: date · account · action
-      {
-        type: "ColumnSet", spacing: "None",
-        columns: [
-          {
-            type: "Column", width: "stretch",
-            items: [{ type: "TextBlock", text: subtitle, size: "Small", isSubtle: true }],
-          },
-          {
-            type: "Column", width: "auto",
-            items: [{ type: "TextBlock", text: oppText, size: "Small",
-              color: c.suggestedAccountName ? "Accent" : "Attention",
-              horizontalAlignment: "Right" }],
-          },
-          {
-            type: "Column", width: "160px",
-            items: actionItems.map((a, i) => ({
-              type: "TextBlock", text: a.text, size: "Small", color: a.color,
-              wrap: false, horizontalAlignment: "Right", ...(i > 0 ? { spacing: "None" } : {}),
-            })),
-          },
-        ],
-      },
-    ],
+    items,
   });
 }
 
