@@ -22,48 +22,37 @@ echo ""
 # ------------------------------------------------------------
 echo "▶ Checking Node.js..."
 NODE_PATH=""
-for p in /opt/homebrew/bin/node /usr/local/bin/node; do
+for p in /opt/homebrew/bin/node /usr/local/bin/node "$HOME/.nvm/versions/node/$(ls "$HOME/.nvm/versions/node/" 2>/dev/null | sort -V | tail -1)/bin/node"; do
   if [ -x "$p" ]; then NODE_PATH="$p"; break; fi
 done
 
+# Also check if nvm is already loaded
+if [ -z "$NODE_PATH" ] && command -v node &>/dev/null; then
+  NODE_PATH="$(command -v node)"
+fi
+
 if [ -z "$NODE_PATH" ]; then
-  echo "   ⚠️  Node.js not found — installing via Homebrew..."
+  echo "   ⚠️  Node.js not found — installing via nvm (no password required)..."
 
-  # Install Homebrew if missing
-  if ! command -v brew &>/dev/null && [ ! -x /opt/homebrew/bin/brew ] && [ ! -x /usr/local/bin/brew ]; then
-    echo "   ⚠️  Homebrew not found — installing Homebrew first (this may take a few minutes)..."
-    /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-    # Add Homebrew to PATH for the rest of this script
-    if [ -x /opt/homebrew/bin/brew ]; then
-      eval "$(/opt/homebrew/bin/brew shellenv)"
-    elif [ -x /usr/local/bin/brew ]; then
-      eval "$(/usr/local/bin/brew shellenv)"
-    fi
-    echo "   ✅ Homebrew installed"
-  else
-    # Ensure brew is on PATH
-    if [ -x /opt/homebrew/bin/brew ]; then
-      eval "$(/opt/homebrew/bin/brew shellenv)"
-    elif [ -x /usr/local/bin/brew ]; then
-      eval "$(/usr/local/bin/brew shellenv)"
-    fi
-  fi
+  # Install nvm — runs entirely in the user's home directory, no sudo needed
+  export NVM_DIR="$HOME/.nvm"
+  curl -fsSL https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.1/install.sh | bash
 
-  echo "   📦 Installing Node.js..."
-  brew install node
-  echo "   ✅ Node.js installed"
+  # Load nvm for the rest of this script
+  [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
 
-  # Re-detect after install
-  for p in /opt/homebrew/bin/node /usr/local/bin/node; do
-    if [ -x "$p" ]; then NODE_PATH="$p"; break; fi
-  done
+  echo "   📦 Installing Node.js LTS..."
+  nvm install --lts
+  nvm use --lts
+
+  NODE_PATH="$(command -v node 2>/dev/null)"
 
   if [ -z "$NODE_PATH" ]; then
     echo ""
-    echo "❌ Node.js installation failed. Please install manually:"
-    echo "   brew install node"
+    echo "❌ Node.js installation failed. Please install manually from https://nodejs.org"
     exit 1
   fi
+  echo "   ✅ Node.js installed via nvm"
 fi
 
 NODE_DIR="$(dirname "$NODE_PATH")"
