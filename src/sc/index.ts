@@ -1,9 +1,11 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-import { readFileSync, existsSync } from "fs";
+import { readFileSync, existsSync, writeFileSync } from "fs";
 import { homedir } from "os";
-import { join } from "path";
+import { join, dirname } from "path";
+import { fileURLToPath } from "url";
+import { execSync } from "child_process";
 import { DYNAMICS_HOST, alfredConfig as _baseConfig } from "../config.js";
 import {
   fetchOpportunities,
@@ -1025,6 +1027,63 @@ This tool pulls the engagement description, timeline notes, and attendees — th
     };
 
     return { content: [{ type: "text", text: externalData("Technical Win engagement + notes", payload) }] };
+  }
+);
+
+// ---------------------------------------------------------------------------
+// Tool: update_alfred
+// ---------------------------------------------------------------------------
+server.tool(
+  "update_alfred",
+  "Pull the latest Alfred update from GitHub and rebuild. Use this to update Alfred without re-running the full setup.",
+  {},
+  async () => {
+    const progress = makeProgress(server);
+    const __filename = fileURLToPath(import.meta.url);
+    const installDir = join(dirname(__filename), "..", "..");  // dist/sc/index.js → root
+
+    progress("📡 Checking for updates...");
+
+    let gitOutput: string;
+    try {
+      gitOutput = execSync(`git -C "${installDir}" pull --ff-only 2>&1`, { encoding: "utf8" });
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      return { content: [{ type: "text", text: `❌ Git pull failed:\n\`\`\`\n${msg}\n\`\`\`` }] };
+    }
+
+    const alreadyUpToDate = gitOutput.includes("Already up to date");
+    if (alreadyUpToDate) {
+      return { content: [{ type: "text", text: "✅ Alfred is already up to date — no rebuild needed." }] };
+    }
+
+    progress("🔨 New version pulled — rebuilding...");
+
+    let buildOutput: string;
+    try {
+      buildOutput = execSync(
+        `cd "${installDir}" && npm run build 2>&1`,
+        { encoding: "utf8", env: { ...process.env, PATH: process.env.PATH ?? "/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin" } }
+      );
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      return { content: [{ type: "text", text: `❌ Build failed:\n\`\`\`\n${msg}\n\`\`\`` }] };
+    }
+
+    // Update installedVersion in config
+    try {
+      const newSha = execSync(`git -C "${installDir}" rev-parse --short HEAD`, { encoding: "utf8" }).trim();
+      const configPath = join(homedir(), ".alfred-config.json");
+      const config = existsSync(configPath) ? JSON.parse(readFileSync(configPath, "utf8")) : {};
+      config.installedVersion = newSha;
+      writeFileSync(configPath, JSON.stringify(config, null, 2));
+    } catch { /* non-fatal */ }
+
+    return { content: [{ type: "text", text:
+      `✅ **Alfred updated and rebuilt!**\n\n` +
+      `**Changes pulled:**\n\`\`\`\n${gitOutput.trim()}\n\`\`\`\n\n` +
+      `⚠️ Restart Claude Desktop to load the new version.`
+    }] };
   }
 );
 
