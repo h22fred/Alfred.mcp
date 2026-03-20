@@ -14,11 +14,18 @@ echo "=================================================="
 echo ""
 
 # ------------------------------------------------------------
-# 1. Check Git
+# 1. Check Git — install Xcode Command Line Tools if missing
 # ------------------------------------------------------------
 if ! command -v git &>/dev/null; then
-  echo "❌ Git not found. Install Xcode Command Line Tools:"
-  echo "   xcode-select --install"
+  echo "   ⚠️  Git not found — installing Xcode Command Line Tools..."
+  xcode-select --install 2>/dev/null || true
+  echo ""
+  echo "   A popup will appear asking you to install the Command Line Tools."
+  echo "   Click Install, wait for it to finish, then re-run this script:"
+  echo ""
+  echo "   bash ~/Downloads/Setup.command"
+  echo ""
+  echo "   (Full instructions and download: https://github.com/h22fred/Alfred.mcp)"
   echo ""
   echo "Press any key to close..."
   read -n 1
