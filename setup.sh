@@ -398,8 +398,8 @@ parse_time() {
   TIME_INPUT="$1"
   T_HOUR=$(echo "$TIME_INPUT" | cut -d: -f1 | sed 's/^0*//')
   T_MIN=$(echo "$TIME_INPUT"  | cut -d: -f2 | sed 's/^0*//')
-  [ -z "$T_HOUR" ] && T_HOUR=0
-  [ -z "$T_MIN"  ] && T_MIN=0
+  T_HOUR="${T_HOUR:-0}"
+  T_MIN="${T_MIN:-0}"
 }
 
 # --- Hygiene sweep ---
@@ -414,18 +414,18 @@ case "$INSTALL_HYGIENE" in
   *)
     printf "   Run on which day?       [Monday]: "
     read -r HYGIENE_DAY
-    [ -z "$HYGIENE_DAY" ] && HYGIENE_DAY="Monday"
+    HYGIENE_DAY="${HYGIENE_DAY:-Monday}"
     HYGIENE_CRON_DAY=$(day_to_cron "$HYGIENE_DAY")
     while [ -z "$HYGIENE_CRON_DAY" ]; do
       printf "   Unknown day — try again [Monday]: "
       read -r HYGIENE_DAY
-      [ -z "$HYGIENE_DAY" ] && HYGIENE_DAY="Monday"
+      HYGIENE_DAY="${HYGIENE_DAY:-Monday}"
       HYGIENE_CRON_DAY=$(day_to_cron "$HYGIENE_DAY")
     done
 
     printf "   Run at what time? (HH:MM 24h) [09:30]: "
     read -r HYGIENE_TIME
-    [ -z "$HYGIENE_TIME" ] && HYGIENE_TIME="09:30"
+    HYGIENE_TIME="${HYGIENE_TIME:-09:30}"
     parse_time "$HYGIENE_TIME"
     HYGIENE_HOUR=$T_HOUR; HYGIENE_MIN=$T_MIN
 
@@ -450,18 +450,18 @@ case "$INSTALL_MEETING" in
   *)
     printf "   Run on which day?       [Friday]: "
     read -r MEETING_DAY
-    [ -z "$MEETING_DAY" ] && MEETING_DAY="Friday"
+    MEETING_DAY="${MEETING_DAY:-Friday}"
     MEETING_CRON_DAY=$(day_to_cron "$MEETING_DAY")
     while [ -z "$MEETING_CRON_DAY" ]; do
       printf "   Unknown day — try again [Friday]: "
       read -r MEETING_DAY
-      [ -z "$MEETING_DAY" ] && MEETING_DAY="Friday"
+      MEETING_DAY="${MEETING_DAY:-Friday}"
       MEETING_CRON_DAY=$(day_to_cron "$MEETING_DAY")
     done
 
     printf "   Run at what time? (HH:MM 24h) [14:00]: "
     read -r MEETING_TIME
-    [ -z "$MEETING_TIME" ] && MEETING_TIME="14:00"
+    MEETING_TIME="${MEETING_TIME:-14:00}"
     parse_time "$MEETING_TIME"
     MEETING_HOUR=$T_HOUR; MEETING_MIN=$T_MIN
 

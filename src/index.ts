@@ -898,6 +898,83 @@ If no transcript, use the meeting subject, attendees and calendar notes for best
 );
 
 // ---------------------------------------------------------------------------
+// Tool: assess_tech_win
+// ---------------------------------------------------------------------------
+server.tool(
+  "assess_tech_win",
+  `Fetch a Technical Win engagement from Dynamics and assess whether it meets the Definition of Done.
+
+This tool pulls the engagement description, timeline notes, and attendees — then you MUST apply the full Tech Win coaching framework below.
+
+**ROLE:** You are an SC Manager validating a Tech Win. Be friendly and supportive, but do not accept vagueness. If something is unknown or unconfirmed, treat it as an action item — not a blocker, but something that must be resolved.
+
+**DEFINITION OF DONE — Tech Win requires ALL four criteria confirmed by a named customer technical champion:**
+
+1. **Business Challenges Solved** — Our solution uniquely addresses the customer's business challenges.
+2. **Use Cases Covered** — All agreed use cases have been demonstrated and validated.
+3. **Architecture Requirements Met** — All architectural expectations (scalability, integrations, performance) are fulfilled.
+4. **Security & Privacy Requirements Met** — All security, compliance, and privacy concerns have been addressed.
+
+**For each criterion assess:**
+- A) What was required
+- B) How it was addressed
+- C) Who confirmed it (name, role, when)
+- 🔴/🟡/🟢 Traffic light: 🟢 = explicitly confirmed, 🟡 = partially addressed, 🔴 = missing or unknown
+
+**Validation check:**
+- Has everything been explicitly confirmed by the customer?
+- By whom and how (email, meeting, workshop)?
+- What is still pending?
+- At least one named technical champion must be on the engagement record as primary contact.
+
+**Confidence rating:** Score 1–5 and explain. Only 4–5 = genuine Tech Win.
+
+**Output format:**
+1. Traffic light summary of all four criteria
+2. Gaps and action items (be specific — "we don't know" is an action item)
+3. Confidence score with explanation
+4. If Tech Win is achieved: suggest clean Description text ready to save back to Dynamics
+5. If not achieved: suggested next steps to get there`,
+  {
+    engagement_id: z.string().optional().describe("Dynamics Technical Win engagement GUID"),
+    opportunity_id: z.string().optional().describe("Opportunity GUID — Alfred will find the Technical Win engagement on this opp"),
+  },
+  async ({ engagement_id, opportunity_id }) => {
+    const progress = makeProgress(server);
+
+    let twEngagement: Engagement | undefined;
+
+    if (engagement_id) {
+      requireGuid(engagement_id, "engagement_id");
+      twEngagement = await fetchEngagementById(engagement_id, progress);
+    } else if (opportunity_id) {
+      requireGuid(opportunity_id, "opportunity_id");
+      const all = await fetchEngagementsByOpportunity(opportunity_id, progress);
+      twEngagement = all.find(e => e.engagementTypeName === "Technical Win");
+      if (!twEngagement) {
+        return { content: [{ type: "text", text: "No Technical Win engagement found on this opportunity." }] };
+      }
+    } else {
+      return { content: [{ type: "text", text: "Provide either engagement_id or opportunity_id." }] };
+    }
+
+    if (!twEngagement.sn_engagementid) {
+      return { content: [{ type: "text", text: "Engagement found but has no ID — cannot fetch notes." }] };
+    }
+
+    progress("📋 Fetching timeline notes...");
+    const notes = await listTimelineNotes(twEngagement.sn_engagementid, progress);
+
+    const payload = {
+      engagement: twEngagement,
+      timelineNotes: notes,
+    };
+
+    return { content: [{ type: "text", text: externalData("Technical Win engagement + notes", payload) }] };
+  }
+);
+
+// ---------------------------------------------------------------------------
 // Start server
 // ---------------------------------------------------------------------------
 const transport = new StdioServerTransport();
