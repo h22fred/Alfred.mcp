@@ -15,6 +15,11 @@ import {
   listTimelineNotes,
 } from "../tools/dynamicsClient.js";
 import { closeBrowser, ensureAlfred } from "../auth/tokenExtractor.js";
+import { execSync } from "child_process";
+import { readFileSync, existsSync, writeFileSync } from "fs";
+import { homedir } from "os";
+import { join, dirname } from "path";
+import { fileURLToPath } from "url";
 
 const DYNAMICS_BASE_URL = DYNAMICS_HOST;
 
@@ -324,6 +329,157 @@ server.tool(
     const progress = makeProgress(server);
     const notes = await listTimelineNotes(opportunity_id, progress);
     return { content: [{ type: "text", text: JSON.stringify(notes, null, 2) }] };
+  }
+);
+
+// ---------------------------------------------------------------------------
+// Tool: get_territory_pipeline
+// ---------------------------------------------------------------------------
+server.tool(
+  "get_territory_pipeline",
+  `Get a pipeline health overview across your territory — for Sales Managers and AEs who want the full picture.
+
+Shows all open opportunities grouped by forecast category with health flags:
+- Missing SC assignment
+- Close date in the past or very soon (<30 days)
+- No value set (totalamount = 0)
+
+Sales AE: leave owner blank to see your own pipeline. Filter by account name to drill into an account.
+Sales Manager: use owner_name to filter by one of your reps (e.g. "John"), or leave blank for all open opps in the territory.`,
+  {
+    owner_name:  z.string().optional().describe("Filter by rep name (partial match). Leave blank for all."),
+    account_name: z.string().optional().describe("Filter by account name (partial match)."),
+    min_value:   z.number().optional().describe("Only include opps above this USD value."),
+    my_opps_only: z.boolean().optional().describe("Set true to see only your own opportunities. Default false (territory view)."),
+    top:         z.number().optional().describe("Max results (default 100)."),
+  },
+  async ({ owner_name, account_name, min_value, my_opps_only, top }) => {
+    const progress = makeProgress(server);
+
+    const opps = await fetchOpportunities({
+      search: account_name,
+      minNnacv: min_value,
+      myOpportunitiesOnly: my_opps_only ?? false,
+      ownerSearch: owner_name,
+      includeClosed: false,
+      top: top ?? 100,
+    }, progress);
+
+    if (opps.length === 0) {
+      return { content: [{ type: "text", text: "No open opportunities found matching your filters." }] };
+    }
+
+    const today = new Date();
+    const soon = new Date(today.getTime() + 30 * 24 * 60 * 60 * 1000);
+
+    // Health flags
+    const flags = opps.map(o => {
+      const issues: string[] = [];
+      if (!o.scName) issues.push("no SC");
+      if (!o.estimatedclosedate) issues.push("no close date");
+      else {
+        const close = new Date(o.estimatedclosedate);
+        if (close < today) issues.push("overdue");
+        else if (close < soon) issues.push("closing <30d");
+      }
+      if (!o.totalamount || o.totalamount === 0) issues.push("no value");
+      return { ...o, issues };
+    });
+
+    // Group by forecast category
+    const groups: Record<string, typeof flags> = {};
+    for (const o of flags) {
+      const cat = o.forecastCategoryName ?? "Unknown";
+      if (!groups[cat]) groups[cat] = [];
+      groups[cat].push(o);
+    }
+
+    const totalValue = opps.reduce((s, o) => s + (o.totalamount ?? 0), 0);
+    const withIssues = flags.filter(o => o.issues.length > 0).length;
+
+    const lines: string[] = [
+      `## Pipeline Overview — ${opps.length} open opportunities`,
+      `**Total pipeline value:** $${totalValue.toLocaleString()}`,
+      `**Needs attention:** ${withIssues} opportunity${withIssues !== 1 ? "ies" : "y"}`,
+      "",
+    ];
+
+    const catOrder = ["Committed", "Best Case", "Pipeline", "Omitted", "Unknown"];
+    for (const cat of catOrder) {
+      const group = groups[cat];
+      if (!group?.length) continue;
+      const groupVal = group.reduce((s, o) => s + (o.totalamount ?? 0), 0);
+      lines.push(`### ${cat} — ${group.length} opps | $${groupVal.toLocaleString()}`);
+      for (const o of group.sort((a, b) => (a.estimatedclosedate ?? "").localeCompare(b.estimatedclosedate ?? ""))) {
+        const close = o.estimatedclosedate ? o.estimatedclosedate.slice(0, 10) : "no date";
+        const val = o.totalamount ? `$${o.totalamount.toLocaleString()}` : "no value";
+        const sc = o.scName ?? "no SC";
+        const owner = o.ownerName ?? "unknown";
+        const flagStr = o.issues.length ? ` ⚠️ ${o.issues.join(", ")}` : " ✅";
+        lines.push(`- **${o.name}** (${o.accountName}) | ${val} | close: ${close} | AE: ${owner} | SC: ${sc}${flagStr}`);
+      }
+      lines.push("");
+    }
+
+    return { content: [{ type: "text", text: lines.join("\n") }] };
+  }
+);
+
+// ---------------------------------------------------------------------------
+// Tool: update_alfred
+// ---------------------------------------------------------------------------
+server.tool(
+  "update_alfred",
+  "Pull the latest Alfred update from GitHub and rebuild. Use this to update Alfred without re-running the full setup.",
+  {},
+  async () => {
+    const progress = makeProgress(server);
+    const __filename = fileURLToPath(import.meta.url);
+    const installDir = join(dirname(__filename), "..", "..");  // dist/sales/index.js → root
+
+    progress("📡 Checking for updates...");
+
+    let gitOutput: string;
+    try {
+      gitOutput = execSync(`git -C "${installDir}" pull --ff-only 2>&1`, { encoding: "utf8" });
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      return { content: [{ type: "text", text: `❌ Git pull failed:\n\`\`\`\n${msg}\n\`\`\`` }] };
+    }
+
+    const alreadyUpToDate = gitOutput.includes("Already up to date");
+    if (alreadyUpToDate) {
+      return { content: [{ type: "text", text: "✅ Alfred is already up to date — no rebuild needed." }] };
+    }
+
+    progress("🔨 New version pulled — rebuilding...");
+
+    let buildOutput: string;
+    try {
+      buildOutput = execSync(
+        `cd "${installDir}" && npm run build 2>&1`,
+        { encoding: "utf8", env: { ...process.env, PATH: process.env.PATH ?? "/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin" } }
+      );
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      return { content: [{ type: "text", text: `❌ Build failed:\n\`\`\`\n${msg}\n\`\`\`` }] };
+    }
+
+    // Update installedVersion in config
+    try {
+      const newSha = execSync(`git -C "${installDir}" rev-parse --short HEAD`, { encoding: "utf8" }).trim();
+      const configPath = join(homedir(), ".alfred-config.json");
+      const config = existsSync(configPath) ? JSON.parse(readFileSync(configPath, "utf8")) : {};
+      config.installedVersion = newSha;
+      writeFileSync(configPath, JSON.stringify(config, null, 2));
+    } catch { /* non-fatal */ }
+
+    progress("✅ Done — restart Claude Desktop to load the new version.");
+    return { content: [{ type: "text", text:
+      `✅ **Alfred updated and rebuilt!**\n\n` +
+      `**Changes pulled:**\n\`\`\`\n${gitOutput.trim()}\n\`\`\`\n\n` +
+      `⚠️ Restart Claude Desktop to load the new version.`
+    }] };
   }
 );
 

@@ -191,6 +191,7 @@ export interface OpportunityFilter {
   minNnacv?: number;   // minimum totalamount (NNACV) in USD
   myOpportunitiesOnly?: boolean; // filter to current user's owned opportunities
   includeClosed?: boolean; // include won/lost/closed opps — default false (open only)
+  ownerSearch?: string; // filter by owner (AE) name — resolves to user IDs
 }
 
 interface CurrentUser {
@@ -244,6 +245,16 @@ export async function fetchOpportunities(filter: OpportunityFilter = {}, progres
     const scFilter = `_sn_solutionconsultant_value eq '${userId}'`;
     const terrFilter = territoryId ? ` or _sn_fieldterritory_value eq '${territoryId}'` : "";
     filterClause += ` and (${scFilter}${terrFilter})`;
+  }
+  if (filter.ownerSearch) {
+    const users = await searchSystemUsers(filter.ownerSearch, progress);
+    if (users.length === 0) {
+      progress(`⚠️ No users found matching "${filter.ownerSearch}" — returning unfiltered results`);
+    } else {
+      const ownerConditions = users.map(u => `_ownerid_value eq '${u.systemuserid}'`).join(" or ");
+      filterClause += ` and (${ownerConditions})`;
+      progress(`👥 Filtering by ${users.length} owner(s): ${users.map(u => u.fullname).join(", ")}`);
+    }
   }
 
   const path =
