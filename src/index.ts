@@ -21,6 +21,7 @@ import {
   fetchAccountById,
   searchAccounts,
   addAttendeesToEngagement,
+  deleteEngagement,
   type EngagementType,
   type OpportunityFilter,
   type EngagementDescription,
@@ -620,6 +621,59 @@ server.tool(
     const progress = makeProgress(server);
     await deleteTimelineNote(annotation_id, progress);
     return { content: [{ type: "text", text: `✅ Timeline note ${annotation_id} deleted.` }] };
+  }
+);
+
+// ---------------------------------------------------------------------------
+// Tool: delete_engagement
+// ---------------------------------------------------------------------------
+server.tool(
+  "delete_engagement",
+  `Delete a CANCELLED engagement record from Dynamics 365. Only cancelled engagements can be deleted.
+
+IMPORTANT: This is irreversible. Always:
+1. Call with confirmed=false first — shows the engagement details and verifies it is cancelled
+2. Show the user the engagement name, type, and opportunity
+3. Ask explicitly: "Are you sure you want to permanently delete this? This cannot be undone."
+4. Only call with confirmed=true after the user confirms a second time`,
+  {
+    engagement_id: z.string().describe("Dynamics sn_engagement GUID"),
+    confirmed: z.boolean().optional().describe("MUST be true to actually delete. Omit or false for dry-run preview. Always preview first — deletion is irreversible."),
+  },
+  async ({ engagement_id, confirmed }) => {
+    requireGuid(engagement_id, "engagement_id");
+    const progress = makeProgress(server);
+
+    // Always fetch first — needed for preview and for the cancelled guard
+    const engagement = await fetchEngagementById(engagement_id, progress);
+    const isCancelled = engagement.statuscode === 876130000 || engagement.statusName?.toLowerCase().includes("cancel");
+
+    if (!confirmed) {
+      const status = engagement.statusName ?? (isCancelled ? "Cancelled" : "Not cancelled");
+      const canDelete = isCancelled ? "✅ Status is Cancelled — eligible for deletion." : "🚫 Status is NOT Cancelled — this engagement cannot be deleted.";
+      return { content: [{ type: "text", text:
+        `📋 **Dry-run — nothing deleted yet.**\n\n` +
+        `**Engagement:** ${engagement.sn_name} (${engagement.sn_engagementnumber ?? engagement_id})\n` +
+        `**Type:** ${engagement.engagementTypeName ?? "—"}\n` +
+        `**Opportunity:** ${engagement.opportunityName ?? "—"}\n` +
+        `**Status:** ${status}\n\n` +
+        `${canDelete}\n\n` +
+        `Call again with \`confirmed: true\` to permanently delete.`
+      }] };
+    }
+
+    if (!isCancelled) {
+      return { content: [{ type: "text", text:
+        `🚫 Cannot delete — engagement status is "${engagement.statusName ?? "unknown"}", not Cancelled.\n\nOnly cancelled engagements can be deleted. Cancel it in Dynamics first if you want to remove it.`
+      }] };
+    }
+
+    deleteWriteLimiter.check("delete_engagement");
+    await deleteEngagement(engagement_id, progress);
+    return { content: [{ type: "text", text:
+      `✅ Deleted: **${engagement.sn_name}** (${engagement.sn_engagementnumber ?? engagement_id})\n` +
+      `Type: ${engagement.engagementTypeName ?? "—"} · Opportunity: ${engagement.opportunityName ?? "—"}`
+    }] };
   }
 );
 
