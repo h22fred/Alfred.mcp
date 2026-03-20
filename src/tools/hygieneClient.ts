@@ -217,10 +217,9 @@ async function postHygieneToTeams(results: HygieneResult[], progress: ProgressFn
         { type: "Column", width: "stretch", items: [{ type: "TextBlock", text: `**${fmt(totalPipeline)}** pipeline`, size: "Small", horizontalAlignment: "Right" }] },
       ],
     },
-    { type: "Separator" },
     // Column headers
     {
-      type: "ColumnSet", spacing: "Small",
+      type: "ColumnSet", spacing: "Small", separator: true,
       columns: [
         { type: "Column", width: "stretch", items: [{ type: "TextBlock", text: "ACCOUNT / OPPORTUNITY", size: "Small", weight: "Bolder", isSubtle: true }] },
         { type: "Column", width: "auto",    items: [{ type: "TextBlock", text: "NNACV", size: "Small", weight: "Bolder", isSubtle: true, horizontalAlignment: "Right" }] },

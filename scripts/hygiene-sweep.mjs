@@ -111,10 +111,13 @@ try {
   const isAuthError = e.message.includes("cookie") || e.message.includes("auth") ||
                       e.message.includes("401") || e.message.includes("logged in");
 
-  const title = "⚠️ Weekly CRM Hygiene — Login Required";
+  const isTeamsError = e.message.includes("Teams rejected") || e.message.includes("HTTP error 400") || e.message.includes("webhook");
+  const title = isAuthError ? "⚠️ Weekly CRM Hygiene — Login Required" : "⚠️ Weekly CRM Hygiene — Failed";
   const body = isAuthError
     ? "Dynamics session has expired. Open Alfred.app, log back into Dynamics, then ask Claude: **\"Run hygiene sweep and post to Teams\"**"
-    : `Hygiene sweep failed: ${e.message}. Please run manually via Claude Desktop.`;
+    : isTeamsError
+      ? `Teams rejected the hygiene card: ${e.message}`
+      : `Hygiene sweep failed: ${e.message}. Please run manually via Claude Desktop.`;
 
   if (config.teamsWebhook) await postTeamsRaw(config.teamsWebhook, title, body);
   macosNotify("CRM Hygiene Sweep", isAuthError ? "Login required — open Alfred" : "Sweep failed — check Teams");
