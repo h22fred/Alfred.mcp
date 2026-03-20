@@ -550,6 +550,16 @@ export async function listTimelineNotes(
   return notes;
 }
 
+export async function deleteEngagement(
+  engagementId: string,
+  progress: ProgressFn = () => {}
+): Promise<void> {
+  auditLog("delete_engagement", { engagementId });
+  progress(`🗑️ Deleting engagement ${engagementId}...`);
+  await dynamicsFetch(`/sn_engagements(${engagementId})`, { method: "DELETE" }, progress);
+  progress("✅ Engagement deleted");
+}
+
 export async function deleteTimelineNote(
   annotationId: string,
   progress: ProgressFn = () => {}
