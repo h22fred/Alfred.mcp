@@ -4,7 +4,7 @@ import { z } from "zod";
 import { readFileSync, existsSync } from "fs";
 import { homedir } from "os";
 import { join } from "path";
-import { DYNAMICS_HOST, alfredConfig as _baseConfig } from "./config.js";
+import { DYNAMICS_HOST, alfredConfig as _baseConfig } from "../config.js";
 import {
   fetchOpportunities,
   fetchOpportunityById,
@@ -25,12 +25,12 @@ import {
   type EngagementType,
   type OpportunityFilter,
   type EngagementDescription,
-} from "./tools/dynamicsClient.js";
-import { closeBrowser, setManualCookies, ensureAlfred, clearAuthCache } from "./auth/tokenExtractor.js";
-import { getCalendarEvents, getEmails, setOutlookCookies, clearGraphTokenCache } from "./tools/outlookClient.js";
-import { setTeamsWebhook, postTeamsNotification, getTeamsTranscript, getTeamsChats } from "./tools/teamsClient.js";
-import { runHygieneSweep, formatHygieneReport } from "./tools/hygieneClient.js";
-import { detectPostMeetingEngagements } from "./tools/postMeetingClient.js";
+} from "../tools/dynamicsClient.js";
+import { closeBrowser, setManualCookies, ensureAlfred, clearAuthCache } from "../auth/tokenExtractor.js";
+import { getCalendarEvents, getEmails, setOutlookCookies, clearGraphTokenCache } from "../tools/outlookClient.js";
+import { setTeamsWebhook, postTeamsNotification, getTeamsTranscript, getTeamsChats } from "../tools/teamsClient.js";
+import { runHygieneSweep, formatHygieneReport } from "../tools/hygieneClient.js";
+import { detectPostMeetingEngagements } from "../tools/postMeetingClient.js";
 
 const DYNAMICS_BASE_URL = DYNAMICS_HOST;
 
@@ -101,7 +101,7 @@ process.stderr.write(
   `engagement types: ${activeEngagementTypes.join(", ")}\n`
 );
 
-type Engagement = import("./tools/dynamicsClient.js").Engagement;
+type Engagement = import("../tools/dynamicsClient.js").Engagement;
 
 function engagementLink(e: Engagement): string | null {
   const id = e.sn_engagementid ?? "";
