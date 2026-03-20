@@ -314,21 +314,24 @@ fi
 # 6. Role
 # ------------------------------------------------------------
 echo ""
-echo "▶ What is your role?"
-echo ""
-echo "   1) SC      — Solution Consultant (you have assigned opportunities in Dynamics)"
-echo "   2) SSC     — Sales Support Consultant (you support SCs, no assigned pipeline)"
-echo "   3) Manager — SC Manager (you want to see your team's pipeline)"
-echo "   4) Sales   — Account Executive (create & manage opportunities)"
-echo ""
-printf "   Enter 1, 2, 3 or 4 (default: 1): "
-read -r ROLE_CHOICE
-case "$ROLE_CHOICE" in
-  2) USER_ROLE="ssc";     ALFRED_VARIANT="sc";    echo "   ✅ Role set to SSC — Alfred will search all accounts by default" ;;
-  3) USER_ROLE="manager"; ALFRED_VARIANT="sc";    echo "   ✅ Role set to Manager — Alfred will browse by territory/SC by default" ;;
-  4) USER_ROLE="sales";   ALFRED_VARIANT="sales"; echo "   ✅ Role set to Sales AE — Alfred will help you create and manage opportunities" ;;
-  *) USER_ROLE="sc";      ALFRED_VARIANT="sc";    echo "   ✅ Role set to SC — Alfred will default to your own pipeline" ;;
-esac
+if [ "$ALFRED_VARIANT" = "sales" ]; then
+  USER_ROLE="sales"
+  echo "▶ Role: Sales AE ✅"
+else
+  echo "▶ What is your SC role?"
+  echo ""
+  echo "   1) SC      — Solution Consultant (you have assigned opportunities in Dynamics)"
+  echo "   2) SSC     — Sales Support Consultant (you support SCs, no assigned pipeline)"
+  echo "   3) Manager — SC Manager (you want to see your team's pipeline)"
+  echo ""
+  printf "   Enter 1, 2 or 3 (default: 1): "
+  read -r ROLE_CHOICE
+  case "$ROLE_CHOICE" in
+    2) USER_ROLE="ssc";     echo "   ✅ Role set to SSC — Alfred will search all accounts by default" ;;
+    3) USER_ROLE="manager"; echo "   ✅ Role set to Manager — Alfred will browse by territory/SC by default" ;;
+    *) USER_ROLE="sc";      echo "   ✅ Role set to SC — Alfred will default to your own pipeline" ;;
+  esac
+fi
 python3 -c "
 import json, os
 f = os.path.expanduser('~/.alfred-config.json')
