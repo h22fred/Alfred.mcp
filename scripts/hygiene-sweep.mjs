@@ -33,7 +33,11 @@ if (!existsSync(configPath)) {
 }
 const config = JSON.parse(readFileSync(configPath, "utf8"));
 
-if (config.teamsWebhook) setTeamsWebhook(config.teamsWebhook);
+if (config.teamsWebhook) {
+  setTeamsWebhook(config.teamsWebhook);
+} else {
+  log("⚠️  No Teams webhook in config — results will only appear in the log. Re-run Setup.command to add one.");
+}
 
 // ---------------------------------------------------------------------------
 // Helpers
