@@ -346,52 +346,119 @@ chmod 600 "$HOME/.alfred-config.json"
 echo ""
 echo "▶ Automated jobs..."
 echo ""
-printf "   Install Monday 9:30am hygiene sweep (flags missing engagements on your pipeline)? [Y/n]: "
+
+# Helper: parse day name to cron weekday number (1=Mon … 5=Fri, 0=Sun)
+day_to_cron() {
+  case "$(echo "$1" | tr '[:upper:]' '[:lower:]')" in
+    mon|monday)    echo 1 ;;
+    tue|tuesday)   echo 2 ;;
+    wed|wednesday) echo 3 ;;
+    thu|thursday)  echo 4 ;;
+    fri|friday)    echo 5 ;;
+    sat|saturday)  echo 6 ;;
+    sun|sunday)    echo 0 ;;
+    *)             echo ""  ;;
+  esac
+}
+
+# Helper: parse HH:MM into separate hour/minute, stripping leading zeros
+parse_time() {
+  TIME_INPUT="$1"
+  T_HOUR=$(echo "$TIME_INPUT" | cut -d: -f1 | sed 's/^0*//')
+  T_MIN=$(echo "$TIME_INPUT"  | cut -d: -f2 | sed 's/^0*//')
+  [ -z "$T_HOUR" ] && T_HOUR=0
+  [ -z "$T_MIN"  ] && T_MIN=0
+}
+
+# --- Hygiene sweep ---
+printf "   Install hygiene sweep (flags missing engagements on your pipeline)? [Y/n]: "
 read -r INSTALL_HYGIENE
-printf "   Install Friday 2:00pm meeting review (matches this week's meetings to open opps)? [Y/n]: "
-read -r INSTALL_MEETING
 
-CURRENT_CRON=$(crontab -l 2>/dev/null)
-UPDATED_CRON="$CURRENT_CRON"
-
-# Rotate log if > 1MB before appending (keeps last 500 lines)
-ROTATE_LOG="f=\$HOME/.alfred-hygiene.log; [ -f \"\$f\" ] && [ \$(wc -c < \"\$f\") -gt 1048576 ] && tail -500 \"\$f\" > \"\$f.tmp\" && mv \"\$f.tmp\" \"\$f\""
-HYGIENE_CMD="$NODE_PATH $SCRIPT_DIR/scripts/hygiene-sweep.mjs >> $HOME/.alfred-hygiene.log 2>&1"
-HYGIENE_CRON="30 9 * * 1 $ROTATE_LOG; $HYGIENE_CMD"
-
-ROTATE_LOG2="f=\$HOME/.alfred-meetings.log; [ -f \"\$f\" ] && [ \$(wc -c < \"\$f\") -gt 1048576 ] && tail -500 \"\$f\" > \"\$f.tmp\" && mv \"\$f.tmp\" \"\$f\""
-MEETING_CMD="$NODE_PATH $SCRIPT_DIR/scripts/post-meeting-sweep.mjs >> $HOME/.alfred-meetings.log 2>&1"
-MEETING_CRON="0 14 * * 5 $ROTATE_LOG2; $MEETING_CMD"
+HYGIENE_CRON=""
+HYGIENE_SCHEDULE_DESC=""
 
 case "$INSTALL_HYGIENE" in
   [nN]*) echo "   ⏭  Hygiene sweep skipped" ;;
   *)
-    if echo "$CURRENT_CRON" | grep -q "hygiene-sweep"; then
-      echo "   ✅ Hygiene cron already installed (Monday 9:30am)"
-    else
-      UPDATED_CRON="$UPDATED_CRON
-$HYGIENE_CRON"
-      echo "   ✅ Hygiene cron installed (Monday 9:30am)"
-    fi
+    printf "   Run on which day?       [Monday]: "
+    read -r HYGIENE_DAY
+    [ -z "$HYGIENE_DAY" ] && HYGIENE_DAY="Monday"
+    HYGIENE_CRON_DAY=$(day_to_cron "$HYGIENE_DAY")
+    while [ -z "$HYGIENE_CRON_DAY" ]; do
+      printf "   Unknown day — try again [Monday]: "
+      read -r HYGIENE_DAY
+      [ -z "$HYGIENE_DAY" ] && HYGIENE_DAY="Monday"
+      HYGIENE_CRON_DAY=$(day_to_cron "$HYGIENE_DAY")
+    done
+
+    printf "   Run at what time? (HH:MM 24h) [09:30]: "
+    read -r HYGIENE_TIME
+    [ -z "$HYGIENE_TIME" ] && HYGIENE_TIME="09:30"
+    parse_time "$HYGIENE_TIME"
+    HYGIENE_HOUR=$T_HOUR; HYGIENE_MIN=$T_MIN
+
+    HYGIENE_SCHEDULE_DESC="$HYGIENE_DAY at $HYGIENE_TIME"
+    ROTATE_LOG="f=\$HOME/.alfred-hygiene.log; [ -f \"\$f\" ] && [ \$(wc -c < \"\$f\") -gt 1048576 ] && tail -500 \"\$f\" > \"\$f.tmp\" && mv \"\$f.tmp\" \"\$f\""
+    HYGIENE_CMD="$NODE_PATH $SCRIPT_DIR/scripts/hygiene-sweep.mjs >> $HOME/.alfred-hygiene.log 2>&1"
+    HYGIENE_CRON="$HYGIENE_MIN $HYGIENE_HOUR * * $HYGIENE_CRON_DAY $ROTATE_LOG; $HYGIENE_CMD"
     touch "$HOME/.alfred-hygiene.log"
     chmod 600 "$HOME/.alfred-hygiene.log"
     ;;
 esac
 
+# --- Meeting review ---
+printf "   Install meeting review (matches this week's meetings to open opps)? [Y/n]: "
+read -r INSTALL_MEETING
+
+MEETING_CRON=""
+MEETING_SCHEDULE_DESC=""
+
 case "$INSTALL_MEETING" in
   [nN]*) echo "   ⏭  Meeting review skipped" ;;
   *)
-    if echo "$CURRENT_CRON" | grep -q "post-meeting-sweep"; then
-      echo "   ✅ Meeting review cron already installed (Friday 2:00pm)"
-    else
-      UPDATED_CRON="$UPDATED_CRON
-$MEETING_CRON"
-      echo "   ✅ Meeting review cron installed (Friday 2:00pm)"
-    fi
+    printf "   Run on which day?       [Friday]: "
+    read -r MEETING_DAY
+    [ -z "$MEETING_DAY" ] && MEETING_DAY="Friday"
+    MEETING_CRON_DAY=$(day_to_cron "$MEETING_DAY")
+    while [ -z "$MEETING_CRON_DAY" ]; do
+      printf "   Unknown day — try again [Friday]: "
+      read -r MEETING_DAY
+      [ -z "$MEETING_DAY" ] && MEETING_DAY="Friday"
+      MEETING_CRON_DAY=$(day_to_cron "$MEETING_DAY")
+    done
+
+    printf "   Run at what time? (HH:MM 24h) [14:00]: "
+    read -r MEETING_TIME
+    [ -z "$MEETING_TIME" ] && MEETING_TIME="14:00"
+    parse_time "$MEETING_TIME"
+    MEETING_HOUR=$T_HOUR; MEETING_MIN=$T_MIN
+
+    MEETING_SCHEDULE_DESC="$MEETING_DAY at $MEETING_TIME"
+    ROTATE_LOG2="f=\$HOME/.alfred-meetings.log; [ -f \"\$f\" ] && [ \$(wc -c < \"\$f\") -gt 1048576 ] && tail -500 \"\$f\" > \"\$f.tmp\" && mv \"\$f.tmp\" \"\$f\""
+    MEETING_CMD="$NODE_PATH $SCRIPT_DIR/scripts/post-meeting-sweep.mjs >> $HOME/.alfred-meetings.log 2>&1"
+    MEETING_CRON="$MEETING_MIN $MEETING_HOUR * * $MEETING_CRON_DAY $ROTATE_LOG2; $MEETING_CMD"
     touch "$HOME/.alfred-meetings.log"
     chmod 600 "$HOME/.alfred-meetings.log"
     ;;
 esac
+
+# Apply crontab — remove stale entries then add new ones
+CURRENT_CRON=$(crontab -l 2>/dev/null)
+UPDATED_CRON="$CURRENT_CRON"
+
+if [ -n "$HYGIENE_CRON" ]; then
+  UPDATED_CRON=$(echo "$UPDATED_CRON" | grep -v "hygiene-sweep")
+  UPDATED_CRON="$UPDATED_CRON
+$HYGIENE_CRON"
+  echo "   ✅ Hygiene sweep scheduled: $HYGIENE_SCHEDULE_DESC"
+fi
+
+if [ -n "$MEETING_CRON" ]; then
+  UPDATED_CRON=$(echo "$UPDATED_CRON" | grep -v "post-meeting-sweep")
+  UPDATED_CRON="$UPDATED_CRON
+$MEETING_CRON"
+  echo "   ✅ Meeting review scheduled: $MEETING_SCHEDULE_DESC"
+fi
 
 echo "$UPDATED_CRON" | crontab -
 
@@ -409,10 +476,10 @@ echo "  2. Log into Dynamics, Outlook and Teams in that window"
 echo "  3. Restart Claude Desktop"
 echo "  4. Ask Claude anything — opportunities, calendar, hygiene sweep!"
 echo ""
-if [[ "$INSTALL_HYGIENE" != [nN]* ]] || [[ "$INSTALL_MEETING" != [nN]* ]]; then
+if [ -n "$HYGIENE_SCHEDULE_DESC" ] || [ -n "$MEETING_SCHEDULE_DESC" ]; then
   echo "Automated jobs:"
-  [[ "$INSTALL_HYGIENE" != [nN]* ]] && echo "  • Monday 9:30am — CRM hygiene sweep"
-  [[ "$INSTALL_MEETING" != [nN]* ]] && echo "  • Friday 2:00pm — Weekly meeting review"
+  [ -n "$HYGIENE_SCHEDULE_DESC" ] && echo "  • $HYGIENE_SCHEDULE_DESC — CRM hygiene sweep"
+  [ -n "$MEETING_SCHEDULE_DESC"  ] && echo "  • $MEETING_SCHEDULE_DESC — Weekly meeting review"
   if [ -n "$EXISTING_WEBHOOK" ] || [ -n "$NEW_WEBHOOK" ]; then
     echo "Results will be posted to your Teams channel."
   else
