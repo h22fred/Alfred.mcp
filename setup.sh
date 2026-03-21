@@ -196,7 +196,7 @@ print(d.get('installedVersion', ''))
     "https://api.github.com/repos/h22fred/Alfred.mcp/commits/main" \
     | python3 -c "import json,sys; print(json.load(sys.stdin)['sha'][:7])" 2>/dev/null)
   if [ -n "\$LATEST" ] && [ "\$INSTALLED" != "\$LATEST" ]; then
-    osascript -e "display notification \"A new version of Alfred is available. Re-run Setup.command to update.\" with title \"Alfred Update Available 🆕\" sound name \"Ping\"" 2>/dev/null
+    osascript -e "display notification \"A new version of Alfred is available. Ask Claude: update Alfred\" with title \"Alfred Update Available 🆕\" sound name \"Ping\"" 2>/dev/null
   fi
 ) &
 SHELLEOF
