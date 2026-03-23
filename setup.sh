@@ -63,7 +63,7 @@ echo "   ✅ Node.js found at $NODE_PATH"
 # ------------------------------------------------------------
 echo ""
 echo "▶ Installing dependencies..."
-PATH="$NODE_DIR:$PATH" npm install --prefix "$SCRIPT_DIR" --no-fund
+PATH="$NODE_DIR:$PATH" npm ci --prefix "$SCRIPT_DIR" --no-fund
 
 echo ""
 echo "▶ Building MCP server..."
