@@ -226,33 +226,18 @@ async function postHygieneToTeams(results: HygieneResult[], requiredTypes: strin
   const body: Record<string, unknown>[] = [
     { type: "TextBlock", text: `📋 My CRM Hygiene — ${today}`, weight: "Bolder", size: "Large", wrap: true },
     { type: "TextBlock", text: `🔴 ${red} critical  ·  🟡 ${yellow} on track  ·  ✅ ${green} complete  ·  ${fmt(totalPipeline)} pipeline`, size: "Small", wrap: true, spacing: "Small" },
-    // Table header — dynamic columns based on configured engagement types
-    {
-      type: "ColumnSet", spacing: "Medium", separator: true,
-      columns: [
-        col("OPPORTUNITY", "stretch", { weight: "Bolder", isSubtle: true }),
-        col("NNACV",       "auto",    { weight: "Bolder", isSubtle: true, horizontalAlignment: "Right" }),
-        col("CLOSE",       "auto",    { weight: "Bolder", isSubtle: true, horizontalAlignment: "Center" }),
-        ...requiredTypes.map(t => col(abbrev(t), "auto", { weight: "Bolder", isSubtle: true, horizontalAlignment: "Center" })),
-      ],
-    },
+    { type: "TextBlock", text: `_Columns: ${requiredTypes.map(abbrev).join(" · ")}_`, size: "Small", isSubtle: true, wrap: true, spacing: "None" },
   ];
 
   for (const r of displayResults) {
     const icon = r.status === "red" ? "🔴" : "🟡";
     const typeNames = r.engagements.map(e => e.engagementTypeName ?? "");
-
+    const checks = requiredTypes.map(t => `${abbrev(t)} ${typeNames.includes(t) ? "✅" : "❌"}`).join("  ");
+    const close = shortClose(r.opportunity.estimatedclosedate);
     body.push({
-      type: "ColumnSet", spacing: "Small",
-      columns: [
-        col(`${icon} ${truncate(r.opportunity.name, 35)}`, "stretch"),
-        col(fmt(r.opportunity.totalamount),               "auto", { horizontalAlignment: "Right", color: "Accent" }),
-        col(shortClose(r.opportunity.estimatedclosedate), "auto", { horizontalAlignment: "Center" }),
-        ...requiredTypes.map(t => {
-          const check = typeNames.includes(t) ? "✅" : "❌";
-          return col(check, "auto", { horizontalAlignment: "Center", color: check === "✅" ? "Good" : "Attention" });
-        }),
-      ],
+      type: "TextBlock",
+      text: `${icon} **${truncate(r.opportunity.name, 38)}** (${fmt(r.opportunity.totalamount)} · ${close})  ${checks}`,
+      size: "Small", wrap: true, spacing: "Small",
     });
   }
 
