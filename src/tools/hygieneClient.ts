@@ -263,17 +263,8 @@ async function postHygieneToTeams(results: HygieneResult[], requiredTypes: strin
   if (hiddenOverCap > 0) footerParts.push(`+${hiddenOverCap} more not shown.`);
   body.push({ type: "TextBlock", text: footerParts.join("  ") || "\u200B", size: "Small", isSubtle: true, separator: true, spacing: "Medium", wrap: true });
 
-  // Build a ready-to-paste Claude prompt for all missing engagements
-  const missingLines = actionable
-    .filter(r => r.missingRequired.length > 0)
-    .map(r => `${r.missingRequired.join(", ")} for ${truncate(r.opportunity.name, 35)}`);
-
-  if (missingLines.length > 0) {
-    const claudePrompt = `Create missing engagements: ${missingLines.join("; ")}`;
-    body.push(
-      { type: "TextBlock", text: "**Ask Claude to fix this:**", size: "Small", spacing: "Small", wrap: true },
-      { type: "TextBlock", text: claudePrompt, size: "Small", isSubtle: true, wrap: true, spacing: "None" },
-    );
+  if (actionable.length > 0) {
+    body.push({ type: "TextBlock", text: `Ask Claude: _"Create missing engagements for my red opportunities"_`, size: "Small", isSubtle: true, wrap: true, spacing: "Small" });
   }
 
   await postAdaptiveCard({
