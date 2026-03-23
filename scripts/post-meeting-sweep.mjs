@@ -187,7 +187,9 @@ if (candidates.length === 0) {
 log(`Found ${candidates.length} meeting candidate(s) — checking engagement hygiene...`);
 
 // Step 3 — check hygiene for matched opps
-const SC_REQUIRED = ["Discovery", "Demo", "Technical Win"];
+const SC_REQUIRED = config.engagementTypes?.length
+  ? config.engagementTypes
+  : ["Discovery", "Demo", "Technical Win"];
 
 const hygieneByOpp = new Map(); // oppId → { missing: string[], status: "red"|"yellow"|"green" }
 for (const c of candidates) {
