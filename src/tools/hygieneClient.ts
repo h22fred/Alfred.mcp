@@ -12,10 +12,24 @@ const DEFAULT_REQUIRED: string[] = ["Discovery", "Demo", "Technical Win"];
 
 // Short column header labels for the Teams card
 const TYPE_ABBREV: Record<string, string> = {
-  "Discovery": "DISC", "Demo": "DEMO", "Technical Win": "TW",
+  "Discovery": "DIS", "Demo": "Demo", "Technical Win": "TW",
   "RFx": "RFx", "Business Case": "BC", "Workshop": "WS", "POV": "POV", "EBC": "EBC",
+  "Opportunity Summary": "OppSum", "Mutual Plan": "MP", "Budget": "Budget",
+  "Implementation Plan": "ImpPlan", "Stakeholder Alignment": "StkhAl",
+  "Customer Business Review": "CBR", "Post Sale Engagement": "PSE",
 };
 function abbrev(t: string): string { return TYPE_ABBREV[t] ?? t.slice(0, 4).toUpperCase(); }
+
+function closeDateLabel(date?: string): string {
+  if (!date) return "—";
+  const d = new Date(date);
+  const now = new Date();
+  const daysOut = Math.round((d.getTime() - now.getTime()) / 86_400_000);
+  const label = d.toLocaleDateString("en-GB", { month: "short", year: "2-digit" });
+  if (daysOut < 0)  return `🔴 ${label}`;
+  if (daysOut < 30) return `🟡 ${label}`;
+  return label;
+}
 
 export interface HygieneResult {
   opportunity: Opportunity;
@@ -29,6 +43,7 @@ export async function runHygieneSweep(opts: {
   postToTeams?: boolean;
   minNnacv?: number;
   engagementTypes?: string[];
+  dynamicsUrl?: string;
 }, progress: ProgressFn = () => {}): Promise<HygieneResult[]> {
   progress("🔍 Starting CRM hygiene sweep...");
 
@@ -64,7 +79,7 @@ export async function runHygieneSweep(opts: {
   });
 
   if (opts.postToTeams) {
-    await postHygieneToTeams(results, requiredTypes, progress);
+    await postHygieneToTeams(results, requiredTypes, opts.dynamicsUrl, progress);
   }
 
   progress(`✅ Hygiene sweep complete — ${results.filter(r => r.status === "red").length} red, ${results.filter(r => r.status === "yellow").length} yellow, ${results.filter(r => r.status === "green").length} green`);
@@ -210,7 +225,7 @@ function shortClose(date?: string): string {
   return d.toLocaleDateString("en-GB", { month: "short", year: "2-digit" });
 }
 
-async function postHygieneToTeams(results: HygieneResult[], requiredTypes: string[], progress: ProgressFn): Promise<void> {
+async function postHygieneToTeams(results: HygieneResult[], requiredTypes: string[], dynamicsUrl: string | undefined, progress: ProgressFn): Promise<void> {
   const today = new Date().toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
 
   const red    = results.filter(r => r.status === "red").length;
@@ -233,17 +248,21 @@ async function postHygieneToTeams(results: HygieneResult[], requiredTypes: strin
     const icon = r.status === "red" ? "🔴" : "🟡";
     const typeNames = r.engagements.map(e => e.engagementTypeName ?? "");
     const checks = requiredTypes.map(t => `${abbrev(t)} ${typeNames.includes(t) ? "✅" : "❌"}`).join("  ");
-    const close = shortClose(r.opportunity.estimatedclosedate);
+    const close = closeDateLabel(r.opportunity.estimatedclosedate);
+    const oppLink = dynamicsUrl
+      ? `[↗ Dynamics](${dynamicsUrl}/main.aspx?etn=opportunity&pagetype=entityrecord&id=${r.opportunity.opportunityid})`
+      : "";
     body.push(
-      { type: "TextBlock", text: `${icon} **${truncate(r.opportunity.name, 45)}** — ${fmt(r.opportunity.totalamount)} · ${close}`, size: "Small", wrap: true, spacing: "Small" },
+      { type: "TextBlock", text: `${icon} **${truncate(r.opportunity.name, 40)}** — ${fmt(r.opportunity.totalamount)} · ${close}${oppLink ? `  ${oppLink}` : ""}`, size: "Small", wrap: true, spacing: "Small" },
       { type: "TextBlock", text: checks, size: "Small", isSubtle: true, wrap: true, spacing: "None" },
     );
   }
 
-  const footerParts: string[] = [`Ask Claude: "Run hygiene sweep" for full details`];
-  if (hiddenOverCap > 0) footerParts.unshift(`+${hiddenOverCap} more not shown.`);
-  if (green > 0) footerParts.unshift(`✅ ${green} complete hidden.`);
-  body.push({ type: "TextBlock", text: footerParts.join(" "), size: "Small", isSubtle: true, separator: true, spacing: "Medium", wrap: true });
+  const footerParts: string[] = [];
+  if (green > 0) footerParts.push(`✅ ${green} complete hidden.`);
+  if (hiddenOverCap > 0) footerParts.push(`+${hiddenOverCap} more not shown.`);
+  footerParts.push(`Ask Claude: _"Run hygiene sweep and post to Teams"_`);
+  body.push({ type: "TextBlock", text: footerParts.join("  "), size: "Small", isSubtle: true, separator: true, spacing: "Medium", wrap: true });
 
   await postAdaptiveCard({
     $schema: "http://adaptivecards.io/schemas/adaptive-card.json",
