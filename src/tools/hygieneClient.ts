@@ -234,11 +234,10 @@ async function postHygieneToTeams(results: HygieneResult[], requiredTypes: strin
     const typeNames = r.engagements.map(e => e.engagementTypeName ?? "");
     const checks = requiredTypes.map(t => `${abbrev(t)} ${typeNames.includes(t) ? "✅" : "❌"}`).join("  ");
     const close = shortClose(r.opportunity.estimatedclosedate);
-    body.push({
-      type: "TextBlock",
-      text: `${icon} **${truncate(r.opportunity.name, 38)}** (${fmt(r.opportunity.totalamount)} · ${close})  ${checks}`,
-      size: "Small", wrap: true, spacing: "Small",
-    });
+    body.push(
+      { type: "TextBlock", text: `${icon} **${truncate(r.opportunity.name, 45)}** — ${fmt(r.opportunity.totalamount)} · ${close}`, size: "Small", wrap: true, spacing: "Small" },
+      { type: "TextBlock", text: checks, size: "Small", isSubtle: true, wrap: true, spacing: "None" },
+    );
   }
 
   const footerParts: string[] = [`Ask Claude: "Run hygiene sweep" for full details`];
