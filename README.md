@@ -4,7 +4,7 @@
 
 Built by **Fred** — Solution Consultant @ ServiceNow
 
-<a href="https://www.buymeacoffee.com/h22fred"><img src="https://img.buymeacoffee.com/button-api/?text=Buy me a coffee&emoji=&slug=h22fred&button_colour=FF5F5F&font_colour=ffffff&font_family=Cookie&outline_colour=000000&coffee_colour=FFDD00" /></a>
+<a href="https://www.buymeacoffee.com/h22fred"><img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me A Coffee" height="40"></a>
 
 Connects Claude Desktop directly to your CRM, calendar, email and Teams — using your existing browser session. No Azure app registration. No stored credentials. No CRM admin work ever again.
 
