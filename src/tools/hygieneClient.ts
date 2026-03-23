@@ -192,6 +192,16 @@ function accountBlock(account: string, opps: HygieneResult[]): Record<string, un
   return blocks;
 }
 
+function col(text: string, width: string, opts: Record<string, unknown> = {}): Record<string, unknown> {
+  return { type: "Column", width, items: [{ type: "TextBlock", text, size: "Small", wrap: false, ...opts }] };
+}
+
+function shortClose(date?: string): string {
+  if (!date) return "—";
+  const d = new Date(date);
+  return d.toLocaleDateString("en-GB", { month: "short", year: "2-digit" });
+}
+
 async function postHygieneToTeams(results: HygieneResult[], progress: ProgressFn): Promise<void> {
   const today = new Date().toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
 
@@ -200,8 +210,7 @@ async function postHygieneToTeams(results: HygieneResult[], progress: ProgressFn
   const green  = results.filter(r => r.status === "green").length;
   const totalPipeline = results.reduce((s, r) => s + (r.opportunity.totalamount ?? 0), 0);
 
-  // Only show red/yellow — green opps need no action
-  // Cap at 20 to stay under the 28KB Teams limit; use flat TextBlocks (much smaller than ColumnSets)
+  // Only show red/yellow — green opps need no action. Cap at 20 rows.
   const actionable = results.filter(r => r.status !== "green");
   const displayResults = actionable.slice(0, 20);
   const hiddenOverCap = actionable.length - displayResults.length;
@@ -209,25 +218,43 @@ async function postHygieneToTeams(results: HygieneResult[], progress: ProgressFn
   const body: Record<string, unknown>[] = [
     { type: "TextBlock", text: `📋 My CRM Hygiene — ${today}`, weight: "Bolder", size: "Large", wrap: true },
     { type: "TextBlock", text: `🔴 ${red} critical  ·  🟡 ${yellow} on track  ·  ✅ ${green} complete  ·  ${fmt(totalPipeline)} pipeline`, size: "Small", wrap: true, spacing: "Small" },
+    // Table header
+    {
+      type: "ColumnSet", spacing: "Medium", separator: true,
+      columns: [
+        col("OPPORTUNITY", "stretch", { weight: "Bolder", isSubtle: true }),
+        col("NNACV",       "auto",    { weight: "Bolder", isSubtle: true, horizontalAlignment: "Right" }),
+        col("CLOSE",       "auto",    { weight: "Bolder", isSubtle: true, horizontalAlignment: "Center" }),
+        col("DISC",        "auto",    { weight: "Bolder", isSubtle: true, horizontalAlignment: "Center" }),
+        col("DEMO",        "auto",    { weight: "Bolder", isSubtle: true, horizontalAlignment: "Center" }),
+        col("TW",          "auto",    { weight: "Bolder", isSubtle: true, horizontalAlignment: "Center" }),
+      ],
+    },
   ];
 
-  // Group by account for readability but use flat TextBlocks
-  const grouped = groupByAccount(displayResults);
-  for (const [account, opps] of grouped) {
-    const accountTotal = opps.reduce((s, r) => s + (r.opportunity.totalamount ?? 0), 0);
-    const worstIcon = opps.some(r => r.status === "red") ? "🔴" : "🟡";
-    body.push({ type: "TextBlock", text: `${worstIcon} **${account}** — ${fmt(accountTotal)}`, weight: "Bolder", size: "Small", wrap: true, separator: true, spacing: "Medium" });
+  for (const r of displayResults) {
+    const icon = r.status === "red" ? "🔴" : "🟡";
+    const typeNames = r.engagements.map(e => e.engagementTypeName ?? "");
+    const disc = typeNames.includes("Discovery")    ? "✅" : "❌";
+    const demo = typeNames.includes("Demo")         ? "✅" : "❌";
+    const tw   = typeNames.includes("Technical Win")? "✅" : "❌";
 
-    for (const r of opps) {
-      const icon = r.status === "red" ? "🔴" : "🟡";
-      const close = r.opportunity.estimatedclosedate ? ` · ${r.opportunity.estimatedclosedate.slice(0, 10)}` : "";
-      const missing = r.missingRequired.length ? r.missingRequired.join(", ") : `optional: ${r.missingOptional.slice(0, 2).join(", ")}`;
-      body.push({ type: "TextBlock", text: `${icon} ${truncate(r.opportunity.name, 45)} (${fmt(r.opportunity.totalamount)}${close}) — ${missing}`, size: "Small", wrap: true, spacing: "None" });
-    }
+    body.push({
+      type: "ColumnSet", spacing: "Small",
+      columns: [
+        col(`${icon} ${truncate(r.opportunity.name, 35)}`, "stretch"),
+        col(fmt(r.opportunity.totalamount),                 "auto",   { horizontalAlignment: "Right", color: "Accent" }),
+        col(shortClose(r.opportunity.estimatedclosedate),   "auto",   { horizontalAlignment: "Center" }),
+        col(disc, "auto", { horizontalAlignment: "Center", color: disc === "✅" ? "Good" : "Attention" }),
+        col(demo, "auto", { horizontalAlignment: "Center", color: demo === "✅" ? "Good" : "Attention" }),
+        col(tw,   "auto", { horizontalAlignment: "Center", color: tw   === "✅" ? "Good" : "Attention" }),
+      ],
+    });
   }
 
-  const footerParts: string[] = [`Ask Claude: "Run hygiene sweep"`];
+  const footerParts: string[] = [`Ask Claude: "Run hygiene sweep" for full details`];
   if (hiddenOverCap > 0) footerParts.unshift(`+${hiddenOverCap} more not shown.`);
+  if (green > 0) footerParts.unshift(`✅ ${green} complete hidden.`);
   body.push({ type: "TextBlock", text: footerParts.join(" "), size: "Small", isSubtle: true, separator: true, spacing: "Medium", wrap: true });
 
   await postAdaptiveCard({
