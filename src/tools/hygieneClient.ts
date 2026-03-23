@@ -7,9 +7,15 @@ import {
 import { postTeamsNotification, postAdaptiveCard } from "./teamsClient.js";
 import type { ProgressFn } from "../auth/tokenExtractor.js";
 
-// Engagement types owned by SC (Solution Consultants)
-const SC_REQUIRED: string[] = ["Discovery", "Demo", "Technical Win"];
-const SC_OPTIONAL: string[] = ["RFx", "Business Case", "Workshop", "POV", "EBC"];
+// Fallback engagement types if none configured
+const DEFAULT_REQUIRED: string[] = ["Discovery", "Demo", "Technical Win"];
+
+// Short column header labels for the Teams card
+const TYPE_ABBREV: Record<string, string> = {
+  "Discovery": "DISC", "Demo": "DEMO", "Technical Win": "TW",
+  "RFx": "RFx", "Business Case": "BC", "Workshop": "WS", "POV": "POV", "EBC": "EBC",
+};
+function abbrev(t: string): string { return TYPE_ABBREV[t] ?? t.slice(0, 4).toUpperCase(); }
 
 export interface HygieneResult {
   opportunity: Opportunity;
@@ -22,8 +28,11 @@ export interface HygieneResult {
 export async function runHygieneSweep(opts: {
   postToTeams?: boolean;
   minNnacv?: number;
+  engagementTypes?: string[];
 }, progress: ProgressFn = () => {}): Promise<HygieneResult[]> {
   progress("🔍 Starting CRM hygiene sweep...");
+
+  const requiredTypes = opts.engagementTypes?.length ? opts.engagementTypes : DEFAULT_REQUIRED;
 
   const opps = await fetchOpportunities({
     myOpportunitiesOnly: true,
@@ -39,24 +48,23 @@ export async function runHygieneSweep(opts: {
     const activeEngagements = engagements.filter(e => !e.statusName?.toLowerCase().includes("cancel"));
     const typeNames = activeEngagements.map(e => e.engagementTypeName ?? "").filter(Boolean);
 
-    const missingRequired = SC_REQUIRED.filter(t => !typeNames.includes(t));
-    const missingOptional = SC_OPTIONAL.filter(t => !typeNames.includes(t));
+    const missingRequired = requiredTypes.filter(t => !typeNames.includes(t));
+    const missingOptional: string[] = []; // optional concept removed — all configured types are required
 
     const status: HygieneResult["status"] =
-      missingRequired.length > 0 ? "red" :
-      missingOptional.length > 0 ? "yellow" : "green";
+      missingRequired.length > 0 ? "red" : "green";
 
     results.push({ opportunity: opp, engagements, missingRequired, missingOptional, status });
   }
 
-  // Sort: red first, then yellow, then green
+  // Sort: red first, then green
   results.sort((a, b) => {
     const order = { red: 0, yellow: 1, green: 2 };
     return order[a.status] - order[b.status];
   });
 
   if (opts.postToTeams) {
-    await postHygieneToTeams(results, progress);
+    await postHygieneToTeams(results, requiredTypes, progress);
   }
 
   progress(`✅ Hygiene sweep complete — ${results.filter(r => r.status === "red").length} red, ${results.filter(r => r.status === "yellow").length} yellow, ${results.filter(r => r.status === "green").length} green`);
@@ -202,7 +210,7 @@ function shortClose(date?: string): string {
   return d.toLocaleDateString("en-GB", { month: "short", year: "2-digit" });
 }
 
-async function postHygieneToTeams(results: HygieneResult[], progress: ProgressFn): Promise<void> {
+async function postHygieneToTeams(results: HygieneResult[], requiredTypes: string[], progress: ProgressFn): Promise<void> {
   const today = new Date().toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
 
   const red    = results.filter(r => r.status === "red").length;
@@ -218,16 +226,14 @@ async function postHygieneToTeams(results: HygieneResult[], progress: ProgressFn
   const body: Record<string, unknown>[] = [
     { type: "TextBlock", text: `📋 My CRM Hygiene — ${today}`, weight: "Bolder", size: "Large", wrap: true },
     { type: "TextBlock", text: `🔴 ${red} critical  ·  🟡 ${yellow} on track  ·  ✅ ${green} complete  ·  ${fmt(totalPipeline)} pipeline`, size: "Small", wrap: true, spacing: "Small" },
-    // Table header
+    // Table header — dynamic columns based on configured engagement types
     {
       type: "ColumnSet", spacing: "Medium", separator: true,
       columns: [
         col("OPPORTUNITY", "stretch", { weight: "Bolder", isSubtle: true }),
         col("NNACV",       "auto",    { weight: "Bolder", isSubtle: true, horizontalAlignment: "Right" }),
         col("CLOSE",       "auto",    { weight: "Bolder", isSubtle: true, horizontalAlignment: "Center" }),
-        col("DISC",        "auto",    { weight: "Bolder", isSubtle: true, horizontalAlignment: "Center" }),
-        col("DEMO",        "auto",    { weight: "Bolder", isSubtle: true, horizontalAlignment: "Center" }),
-        col("TW",          "auto",    { weight: "Bolder", isSubtle: true, horizontalAlignment: "Center" }),
+        ...requiredTypes.map(t => col(abbrev(t), "auto", { weight: "Bolder", isSubtle: true, horizontalAlignment: "Center" })),
       ],
     },
   ];
@@ -235,19 +241,17 @@ async function postHygieneToTeams(results: HygieneResult[], progress: ProgressFn
   for (const r of displayResults) {
     const icon = r.status === "red" ? "🔴" : "🟡";
     const typeNames = r.engagements.map(e => e.engagementTypeName ?? "");
-    const disc = typeNames.includes("Discovery")    ? "✅" : "❌";
-    const demo = typeNames.includes("Demo")         ? "✅" : "❌";
-    const tw   = typeNames.includes("Technical Win")? "✅" : "❌";
 
     body.push({
       type: "ColumnSet", spacing: "Small",
       columns: [
         col(`${icon} ${truncate(r.opportunity.name, 35)}`, "stretch"),
-        col(fmt(r.opportunity.totalamount),                 "auto",   { horizontalAlignment: "Right", color: "Accent" }),
-        col(shortClose(r.opportunity.estimatedclosedate),   "auto",   { horizontalAlignment: "Center" }),
-        col(disc, "auto", { horizontalAlignment: "Center", color: disc === "✅" ? "Good" : "Attention" }),
-        col(demo, "auto", { horizontalAlignment: "Center", color: demo === "✅" ? "Good" : "Attention" }),
-        col(tw,   "auto", { horizontalAlignment: "Center", color: tw   === "✅" ? "Good" : "Attention" }),
+        col(fmt(r.opportunity.totalamount),               "auto", { horizontalAlignment: "Right", color: "Accent" }),
+        col(shortClose(r.opportunity.estimatedclosedate), "auto", { horizontalAlignment: "Center" }),
+        ...requiredTypes.map(t => {
+          const check = typeNames.includes(t) ? "✅" : "❌";
+          return col(check, "auto", { horizontalAlignment: "Center", color: check === "✅" ? "Good" : "Attention" });
+        }),
       ],
     });
   }

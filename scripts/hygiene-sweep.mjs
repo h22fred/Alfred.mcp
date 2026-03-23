@@ -99,6 +99,7 @@ try {
   const results = await runHygieneSweep({
     postToTeams: !!config.teamsWebhook,
     minNnacv: 100_000,
+    engagementTypes: config.engagementTypes,
   }, log);
 
   const report = formatHygieneReport(results);
