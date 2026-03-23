@@ -331,26 +331,52 @@ json.dump(d, open(f, 'w'), indent=2)
 chmod 600 "$HOME/.alfred-config.json"
 
 # ------------------------------------------------------------
-# 7. Engagement types (SC/SSC/Manager only)
+# 7. Engagement types
 # ------------------------------------------------------------
-if [ "$ALFRED_VARIANT" = "sales" ]; then
-  echo ""
-  echo "   ⏭  Engagement types skipped (not needed for Sales role)"
-else
 echo ""
-echo "▶ Which engagement types do you use?"
-echo "   (Press Enter to keep all, or enter numbers separated by spaces)"
+echo "▶ Which milestones do you track on your opportunities?"
+echo "   (Press Enter to keep all defaults, or enter numbers separated by spaces)"
 echo ""
-echo "    1) Business Case            6) Post Sale Engagement"
-echo "    2) Customer Business Review 7) POV"
-echo "    3) Demo                     8) RFx"
-echo "    4) Discovery                9) Technical Win"
-echo "    5) EBC                     10) Workshop"
-echo ""
-printf "   Your selection (e.g. 3 4 8 9), or Enter for all: "
-read -r TYPE_SELECTION
 
-python3 - <<PYEOF
+if [ "$ALFRED_VARIANT" = "sales" ]; then
+  # AE-owned milestones per NowSell AI Native Sales framework
+  echo "    1) Discovery               4) Budget"
+  echo "    2) Opportunity Summary     5) Implementation Plan"
+  echo "    3) Mutual Plan             6) Stakeholder Alignment"
+  echo ""
+  printf "   Your selection (e.g. 1 2 3), or Enter for all: "
+  read -r TYPE_SELECTION
+
+  python3 - <<PYEOF
+import json, os
+all_types = [
+  "Discovery", "Opportunity Summary", "Mutual Plan",
+  "Budget", "Implementation Plan", "Stakeholder Alignment"
+]
+sel = "$TYPE_SELECTION".strip()
+if sel:
+    indices = [int(x)-1 for x in sel.split() if x.isdigit() and 1 <= int(x) <= len(all_types)]
+    selected = [all_types[i] for i in indices] if indices else all_types
+else:
+    selected = all_types
+f = os.path.expanduser('~/.alfred-config.json')
+d = json.load(open(f)) if os.path.exists(f) else {}
+d['engagementTypes'] = selected
+json.dump(d, open(f, 'w'), indent=2)
+print("   ✅ Milestones: " + ", ".join(selected))
+PYEOF
+else
+  # SC/SSC/Manager-owned engagement types
+  echo "    1) Business Case            6) Post Sale Engagement"
+  echo "    2) Customer Business Review 7) POV"
+  echo "    3) Demo                     8) RFx"
+  echo "    4) Discovery                9) Technical Win"
+  echo "    5) EBC                     10) Workshop"
+  echo ""
+  printf "   Your selection (e.g. 3 4 8 9), or Enter for all: "
+  read -r TYPE_SELECTION
+
+  python3 - <<PYEOF
 import json, os
 all_types = [
   "Business Case", "Customer Business Review", "Demo", "Discovery", "EBC",
@@ -368,16 +394,13 @@ d['engagementTypes'] = selected
 json.dump(d, open(f, 'w'), indent=2)
 print("   ✅ Engagement types: " + ", ".join(selected))
 PYEOF
+fi
 chmod 600 "$HOME/.alfred-config.json"
-fi # end sales skip
 
 # ------------------------------------------------------------
-# 8. Install cron jobs (SC/SSC/Manager only)
+# 8. Install cron jobs
 # ------------------------------------------------------------
 echo ""
-if [ "$ALFRED_VARIANT" = "sales" ]; then
-  echo "   ⏭  Automated jobs skipped (not needed for Sales role)"
-else
 echo "▶ Automated jobs..."
 echo ""
 
@@ -495,7 +518,6 @@ $MEETING_CRON"
 fi
 
 echo "$UPDATED_CRON" | crontab -
-fi # end sales skip
 
 # ------------------------------------------------------------
 # Done
