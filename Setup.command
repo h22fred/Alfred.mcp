@@ -56,7 +56,7 @@ fi
 # ------------------------------------------------------------
 if [ -d "$INSTALL_DIR/.git" ]; then
   echo "▶ Updating existing installation..."
-  git -C "$INSTALL_DIR" checkout -- package.json package-lock.json 2>/dev/null || true
+  git -C "$INSTALL_DIR" reset --hard HEAD
   git -C "$INSTALL_DIR" pull --ff-only
   echo "   ✅ Updated to latest"
   echo "▶ Updating dependencies..."
