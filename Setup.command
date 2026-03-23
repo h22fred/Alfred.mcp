@@ -56,8 +56,8 @@ fi
 # ------------------------------------------------------------
 if [ -d "$INSTALL_DIR/.git" ]; then
   echo "▶ Updating existing installation..."
-  git -C "$INSTALL_DIR" reset --hard HEAD
-  git -C "$INSTALL_DIR" pull --ff-only
+  git -C "$INSTALL_DIR" fetch origin
+  git -C "$INSTALL_DIR" reset --hard origin/main
   echo "   ✅ Updated to latest"
   echo "▶ Updating dependencies..."
   PATH="$(dirname "$NODE_PATH"):$PATH" npm ci --prefix "$INSTALL_DIR" --no-fund
