@@ -261,14 +261,29 @@ async function postHygieneToTeams(results: HygieneResult[], requiredTypes: strin
   const footerParts: string[] = [];
   if (green > 0) footerParts.push(`✅ ${green} complete hidden.`);
   if (hiddenOverCap > 0) footerParts.push(`+${hiddenOverCap} more not shown.`);
-  footerParts.push(`Ask Claude: _"Run hygiene sweep and post to Teams"_`);
-  body.push({ type: "TextBlock", text: footerParts.join("  "), size: "Small", isSubtle: true, separator: true, spacing: "Medium", wrap: true });
+  body.push({ type: "TextBlock", text: footerParts.join("  ") || "\u200B", size: "Small", isSubtle: true, separator: true, spacing: "Medium", wrap: true });
+
+  // Build a ready-to-paste Claude prompt for all missing engagements
+  const missingLines = actionable
+    .filter(r => r.missingRequired.length > 0)
+    .map(r => `${r.missingRequired.join(", ")} for ${truncate(r.opportunity.name, 35)}`);
+
+  if (missingLines.length > 0) {
+    const claudePrompt = `Create missing engagements: ${missingLines.join("; ")}`;
+    body.push(
+      { type: "TextBlock", text: "**Ask Claude to fix this:**", size: "Small", spacing: "Small", wrap: true },
+      { type: "TextBlock", text: claudePrompt, size: "Small", isSubtle: true, wrap: true, spacing: "None" },
+    );
+  }
 
   await postAdaptiveCard({
     $schema: "http://adaptivecards.io/schemas/adaptive-card.json",
     type: "AdaptiveCard",
     version: "1.4",
     body,
+    actions: [
+      { type: "Action.OpenUrl", title: "Open Claude", url: "claude://" },
+    ],
   }, progress);
 }
 
