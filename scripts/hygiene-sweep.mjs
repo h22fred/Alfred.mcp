@@ -100,6 +100,7 @@ try {
     postToTeams: !!config.teamsWebhook,
     minNnacv: 100_000,
     engagementTypes: config.engagementTypes,
+    dynamicsUrl: config.dynamicsUrl,
   }, log);
 
   const report = formatHygieneReport(results);
