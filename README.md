@@ -48,22 +48,20 @@ Two flavours — one installer:
 
 ## Setup
 
-1. Go to **https://github.com/h22fred/Alfred.mcp** and download `Setup.command`
-2. Open Terminal and run:
+Open Terminal and run:
 ```bash
-bash ~/Downloads/Setup.command
+curl -fsSL https://raw.githubusercontent.com/h22fred/Alfred.mcp/main/Setup.command -o ~/Downloads/Setup.command && bash ~/Downloads/Setup.command
 ```
 
 > If a popup appears asking to install Command Line Tools, click **Install**, wait for it to finish, then run the same command again.
-> If Homebrew is not installed, it will ask for your **Mac login password** once — this is normal.
 
 The installer asks:
 - **SC or Sales?** — determines which Alfred is installed
 - **Dynamics company name** — your CRM URL (e.g. `servicenow`)
 - **Teams webhook** — for automated notifications (optional)
 - **SC role** (SC only) — SC / SSC / Manager
-- **Engagement types** (SC only) — which types you use
-- **Automated jobs** (SC only) — Monday hygiene sweep + Friday meeting review
+- **Engagement types** — which milestones you track (SC types or AE milestones depending on role)
+- **Automated jobs** — Monday hygiene sweep + Friday meeting review
 
 ---
 
@@ -114,7 +112,7 @@ Auth flow:
 
 ---
 
-## Automated jobs (SC only)
+## Automated jobs
 
 | When | What |
 |------|------|
