@@ -236,7 +236,7 @@ EXISTING_DYNAMICS_URL=$(python3 -c "import json,os; d=json.load(open(os.path.exp
 if [ -n "$EXISTING_DYNAMICS_URL" ]; then
   echo "   ✅ Dynamics URL already set: $EXISTING_DYNAMICS_URL"
   printf "   Change company name? (press Enter to keep): "
-  read -r NEW_COMPANY
+  read -r NEW_COMPANY </dev/tty
   if [ -n "$NEW_COMPANY" ]; then
     NEW_DYNAMICS_URL="https://${NEW_COMPANY}.crm.dynamics.com"
   else
@@ -244,7 +244,7 @@ if [ -n "$EXISTING_DYNAMICS_URL" ]; then
   fi
 else
   printf "   What is your company name? (press Enter for 'servicenow'): "
-  read -r NEW_COMPANY
+  read -r NEW_COMPANY </dev/tty
   [ -z "$NEW_COMPANY" ] && NEW_COMPANY="servicenow"
   NEW_DYNAMICS_URL="https://${NEW_COMPANY}.crm.dynamics.com"
 fi
@@ -275,7 +275,7 @@ if [ -n "$EXISTING_WEBHOOK" ]; then
   echo "      $EXISTING_WEBHOOK"
   echo ""
   printf "   Replace it? (press Enter to keep, or paste a new URL): "
-  read -r NEW_WEBHOOK
+  read -r NEW_WEBHOOK </dev/tty
   if [ -n "$NEW_WEBHOOK" ]; then
     EXISTING_WEBHOOK="$NEW_WEBHOOK"
     python3 -c "import json; f='$CONFIG_FILE'; d=json.load(open(f)) if __import__('os').path.exists(f) else {}; d['teamsWebhook']='$NEW_WEBHOOK'; json.dump(d,open(f,'w'),indent=2)"
@@ -288,7 +288,7 @@ else
   echo "   Teams → any channel → ··· → Connectors → Incoming Webhook → configure → copy URL"
   echo ""
   printf "   Paste your Teams incoming webhook URL (or press Enter to skip): "
-  read -r NEW_WEBHOOK
+  read -r NEW_WEBHOOK </dev/tty
   if [ -n "$NEW_WEBHOOK" ]; then
     python3 -c "import json; f='$CONFIG_FILE'; d=json.load(open(f)) if __import__('os').path.exists(f) else {}; d['teamsWebhook']='$NEW_WEBHOOK'; json.dump(d,open(f,'w'),indent=2)"
     chmod 600 "$CONFIG_FILE"
@@ -314,7 +314,7 @@ else
   echo "   3) Manager — SC Manager (you want to see your team's pipeline)"
   echo ""
   printf "   Enter 1, 2 or 3 (default: 1): "
-  read -r ROLE_CHOICE
+  read -r ROLE_CHOICE </dev/tty
   case "$ROLE_CHOICE" in
     2) USER_ROLE="ssc";     echo "   ✅ Role set to SSC — Alfred will search all accounts by default" ;;
     3) USER_ROLE="manager"; echo "   ✅ Role set to Manager — Alfred will browse by territory/SC by default" ;;
@@ -345,7 +345,7 @@ if [ "$ALFRED_VARIANT" = "sales" ]; then
   echo "    3) Mutual Plan             6) Stakeholder Alignment"
   echo ""
   printf "   Your selection (e.g. 1 2 3), or Enter for all: "
-  read -r TYPE_SELECTION
+  read -r TYPE_SELECTION </dev/tty
 
   python3 - <<PYEOF
 import json, os
@@ -374,7 +374,7 @@ else
   echo "    5) EBC                     10) Workshop"
   echo ""
   printf "   Your selection (e.g. 3 4 8 9), or Enter for all: "
-  read -r TYPE_SELECTION
+  read -r TYPE_SELECTION </dev/tty
 
   python3 - <<PYEOF
 import json, os
@@ -429,7 +429,7 @@ parse_time() {
 
 # --- Hygiene sweep ---
 printf "   Install hygiene sweep (flags missing engagements on your pipeline)? [Y/n]: "
-read -r INSTALL_HYGIENE
+read -r INSTALL_HYGIENE </dev/tty
 
 HYGIENE_CRON=""
 HYGIENE_SCHEDULE_DESC=""
@@ -438,18 +438,18 @@ case "$INSTALL_HYGIENE" in
   [nN]*) echo "   ⏭  Hygiene sweep skipped" ;;
   *)
     printf "   Run on which day?       [Monday]: "
-    read -r HYGIENE_DAY
+    read -r HYGIENE_DAY </dev/tty
     HYGIENE_DAY="${HYGIENE_DAY:-Monday}"
     HYGIENE_CRON_DAY=$(day_to_cron "$HYGIENE_DAY")
     while [ -z "$HYGIENE_CRON_DAY" ]; do
       printf "   Unknown day — try again [Monday]: "
-      read -r HYGIENE_DAY
+      read -r HYGIENE_DAY </dev/tty
       HYGIENE_DAY="${HYGIENE_DAY:-Monday}"
       HYGIENE_CRON_DAY=$(day_to_cron "$HYGIENE_DAY")
     done
 
     printf "   Run at what time? (HH:MM 24h) [09:30]: "
-    read -r HYGIENE_TIME
+    read -r HYGIENE_TIME </dev/tty
     HYGIENE_TIME="${HYGIENE_TIME:-09:30}"
     parse_time "$HYGIENE_TIME"
     HYGIENE_HOUR=$T_HOUR; HYGIENE_MIN=$T_MIN
@@ -465,7 +465,7 @@ esac
 
 # --- Meeting review ---
 printf "   Install meeting review (matches this week's meetings to open opps)? [Y/n]: "
-read -r INSTALL_MEETING
+read -r INSTALL_MEETING </dev/tty
 
 MEETING_CRON=""
 MEETING_SCHEDULE_DESC=""
@@ -474,18 +474,18 @@ case "$INSTALL_MEETING" in
   [nN]*) echo "   ⏭  Meeting review skipped" ;;
   *)
     printf "   Run on which day?       [Friday]: "
-    read -r MEETING_DAY
+    read -r MEETING_DAY </dev/tty
     MEETING_DAY="${MEETING_DAY:-Friday}"
     MEETING_CRON_DAY=$(day_to_cron "$MEETING_DAY")
     while [ -z "$MEETING_CRON_DAY" ]; do
       printf "   Unknown day — try again [Friday]: "
-      read -r MEETING_DAY
+      read -r MEETING_DAY </dev/tty
       MEETING_DAY="${MEETING_DAY:-Friday}"
       MEETING_CRON_DAY=$(day_to_cron "$MEETING_DAY")
     done
 
     printf "   Run at what time? (HH:MM 24h) [14:00]: "
-    read -r MEETING_TIME
+    read -r MEETING_TIME </dev/tty
     MEETING_TIME="${MEETING_TIME:-14:00}"
     parse_time "$MEETING_TIME"
     MEETING_HOUR=$T_HOUR; MEETING_MIN=$T_MIN

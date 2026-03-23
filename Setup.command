@@ -4,21 +4,26 @@
 
 set -e
 
-REPO_URL="https://github.com/h22fred/alfred.mcp.git"
+REPO_URL="https://github.com/h22fred/Alfred.mcp.git"
 
 # Ask role first so we know which folder to install into
 echo ""
 echo "▶ What is your role?"
 echo ""
-echo "   1) SC / SSC / Manager  — Solution Consulting"
-echo "   2) Sales               — Account Executive"
+echo "   1) SC / SSC / SC Manager  — Solution Consulting"
+echo "   2) Sales AE               — Account Executive"
+echo "   3) Sales Manager          — AE Manager / Sales Lead"
 echo ""
-printf "   Enter 1 or 2 (default: 1): "
-read -r VARIANT_CHOICE
+printf "   Enter 1, 2 or 3 (default: 1): "
+read -r VARIANT_CHOICE </dev/tty
 if [ "$VARIANT_CHOICE" = "2" ]; then
   ALFRED_VARIANT="sales"
   INSTALL_DIR="$HOME/Documents/alfred.sales"
-  echo "   ✅ Installing Alfred Sales to ~/Documents/alfred.sales"
+  echo "   ✅ Installing Alfred Sales (AE) to ~/Documents/alfred.sales"
+elif [ "$VARIANT_CHOICE" = "3" ]; then
+  ALFRED_VARIANT="sales"
+  INSTALL_DIR="$HOME/Documents/alfred.sales"
+  echo "   ✅ Installing Alfred Sales (Manager) to ~/Documents/alfred.sales"
 else
   ALFRED_VARIANT="sc"
   INSTALL_DIR="$HOME/Documents/alfred.sc"
@@ -47,7 +52,7 @@ if ! command -v git &>/dev/null; then
   echo "   (Full instructions and download: https://github.com/h22fred/Alfred.mcp)"
   echo ""
   echo "Press any key to close..."
-  read -n 1
+  read -n 1 </dev/tty
   exit 1
 fi
 
@@ -72,4 +77,4 @@ bash "$INSTALL_DIR/setup.sh"
 
 echo ""
 echo "Press any key to close this window..."
-read -n 1
+read -n 1 </dev/tty
