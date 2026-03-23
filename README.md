@@ -48,7 +48,7 @@ Two flavours — one installer:
 
 ## Setup
 
-1. **[⬇️ Download Setup.command](https://raw.githubusercontent.com/h22fred/Alfred.mcp/main/Setup.command)**
+1. **[⬇️ Download Setup.command](https://raw.githubusercontent.com/h22fred/Alfred.mcp/refs/heads/main/Setup.command)**
 2. Open Terminal and run:
 ```bash
 bash ~/Downloads/Setup.command
