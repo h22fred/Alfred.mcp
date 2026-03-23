@@ -89,7 +89,7 @@ function oppRow(r: HygieneResult): Record<string, unknown> {
         items: [{ type: "TextBlock", text: fmt(r.opportunity.totalamount), wrap: false, size: "Small", color: "Accent", horizontalAlignment: "Right" }],
       },
       {
-        type: "Column", width: "200px",
+        type: "Column", width: "auto",
         items: [{ type: "TextBlock", text: missing || "—", wrap: false, size: "Small", color: "Attention", horizontalAlignment: "Right" }],
       },
     ],
@@ -178,7 +178,7 @@ function accountBlock(account: string, opps: HygieneResult[]): Record<string, un
               color: r.status === "red" ? "Attention" : "Default", horizontalAlignment: "Right" }],
           },
           {
-            type: "Column", width: "160px",
+            type: "Column", width: "auto",
             items: [{
               type: "TextBlock", text: missing, size: "Small", wrap: false,
               color: r.status === "red" ? "Attention" : r.status === "yellow" ? "Warning" : "Good",
@@ -200,38 +200,35 @@ async function postHygieneToTeams(results: HygieneResult[], progress: ProgressFn
   const green  = results.filter(r => r.status === "green").length;
   const totalPipeline = results.reduce((s, r) => s + (r.opportunity.totalamount ?? 0), 0);
 
-  const grouped = groupByAccount(results);
+  // Only show red/yellow — green opps need no action
+  // Cap at 20 to stay under the 28KB Teams limit; use flat TextBlocks (much smaller than ColumnSets)
+  const actionable = results.filter(r => r.status !== "green");
+  const displayResults = actionable.slice(0, 20);
+  const hiddenOverCap = actionable.length - displayResults.length;
 
   const body: Record<string, unknown>[] = [
-    {
-      type: "TextBlock",
-      text: `📋 My CRM Hygiene — ${today}`,
-      weight: "Bolder", size: "Large", wrap: true,
-    },
-    {
-      type: "ColumnSet", spacing: "Small",
-      columns: [
-        { type: "Column", width: "auto",    items: [{ type: "TextBlock", text: `🔴 **${red}** critical`, size: "Small", color: "Attention" }] },
-        { type: "Column", width: "auto",    items: [{ type: "TextBlock", text: `🟡 **${yellow}** on track`, size: "Small", color: "Warning" }] },
-        { type: "Column", width: "auto",    items: [{ type: "TextBlock", text: `✅ **${green}** complete`, size: "Small", color: "Good" }] },
-        { type: "Column", width: "stretch", items: [{ type: "TextBlock", text: `**${fmt(totalPipeline)}** pipeline`, size: "Small", horizontalAlignment: "Right" }] },
-      ],
-    },
-    // Column headers
-    {
-      type: "ColumnSet", spacing: "Small", separator: true,
-      columns: [
-        { type: "Column", width: "stretch", items: [{ type: "TextBlock", text: "ACCOUNT / OPPORTUNITY", size: "Small", weight: "Bolder", isSubtle: true }] },
-        { type: "Column", width: "auto",    items: [{ type: "TextBlock", text: "NNACV", size: "Small", weight: "Bolder", isSubtle: true, horizontalAlignment: "Right" }] },
-        { type: "Column", width: "auto",    items: [{ type: "TextBlock", text: "CLOSE", size: "Small", weight: "Bolder", isSubtle: true, horizontalAlignment: "Right" }] },
-        { type: "Column", width: "160px",   items: [{ type: "TextBlock", text: "MISSING", size: "Small", weight: "Bolder", isSubtle: true, horizontalAlignment: "Right" }] },
-      ],
-    },
+    { type: "TextBlock", text: `📋 My CRM Hygiene — ${today}`, weight: "Bolder", size: "Large", wrap: true },
+    { type: "TextBlock", text: `🔴 ${red} critical  ·  🟡 ${yellow} on track  ·  ✅ ${green} complete  ·  ${fmt(totalPipeline)} pipeline`, size: "Small", wrap: true, spacing: "Small" },
   ];
 
+  // Group by account for readability but use flat TextBlocks
+  const grouped = groupByAccount(displayResults);
   for (const [account, opps] of grouped) {
-    body.push(...accountBlock(account, opps));
+    const accountTotal = opps.reduce((s, r) => s + (r.opportunity.totalamount ?? 0), 0);
+    const worstIcon = opps.some(r => r.status === "red") ? "🔴" : "🟡";
+    body.push({ type: "TextBlock", text: `${worstIcon} **${account}** — ${fmt(accountTotal)}`, weight: "Bolder", size: "Small", wrap: true, separator: true, spacing: "Medium" });
+
+    for (const r of opps) {
+      const icon = r.status === "red" ? "🔴" : "🟡";
+      const close = r.opportunity.estimatedclosedate ? ` · ${r.opportunity.estimatedclosedate.slice(0, 10)}` : "";
+      const missing = r.missingRequired.length ? r.missingRequired.join(", ") : `optional: ${r.missingOptional.slice(0, 2).join(", ")}`;
+      body.push({ type: "TextBlock", text: `${icon} ${truncate(r.opportunity.name, 45)} (${fmt(r.opportunity.totalamount)}${close}) — ${missing}`, size: "Small", wrap: true, spacing: "None" });
+    }
   }
+
+  const footerParts: string[] = [`Ask Claude: "Run hygiene sweep"`];
+  if (hiddenOverCap > 0) footerParts.unshift(`+${hiddenOverCap} more not shown.`);
+  body.push({ type: "TextBlock", text: footerParts.join(" "), size: "Small", isSubtle: true, separator: true, spacing: "Medium", wrap: true });
 
   await postAdaptiveCard({
     $schema: "http://adaptivecards.io/schemas/adaptive-card.json",
