@@ -304,8 +304,17 @@ fi
 # ------------------------------------------------------------
 echo ""
 if [ "$ALFRED_VARIANT" = "sales" ]; then
-  USER_ROLE="sales"
-  echo "▶ Role: Sales AE ✅"
+  echo "▶ What is your Sales role?"
+  echo ""
+  echo "   1) AE      — Account Executive (you own accounts and opportunities)"
+  echo "   2) Manager — Sales Manager (you oversee a team of AEs)"
+  echo ""
+  printf "   Enter 1 or 2 (default: 1): "
+  read -r ROLE_CHOICE </dev/tty
+  case "$ROLE_CHOICE" in
+    2) USER_ROLE="sales_manager"; echo "   ✅ Role set to Sales Manager — Alfred will show territory-wide pipeline" ;;
+    *) USER_ROLE="sales";         echo "   ✅ Role set to AE — Alfred will default to your own pipeline" ;;
+  esac
 else
   echo "▶ What is your SC role?"
   echo ""
