@@ -48,10 +48,16 @@ Two flavours — one installer:
 
 ## Setup
 
+**Option A — Download and run** _(recommended)_
 1. **[⬇️ Download Setup.command](https://raw.githubusercontent.com/h22fred/Alfred.mcp/refs/heads/main/Setup.command)**
 2. Open Terminal and run:
 ```bash
 bash ~/Downloads/Setup.command
+```
+
+**Option B — One-liner** _(for the terminal-comfortable)_
+```bash
+curl -fsSL https://raw.githubusercontent.com/h22fred/Alfred.mcp/refs/heads/main/Setup.command | bash
 ```
 
 > If a popup appears asking to install Command Line Tools, click **Install**, wait for it to finish, then run the same command again.
