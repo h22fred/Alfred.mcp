@@ -56,11 +56,10 @@ fi
 # ------------------------------------------------------------
 if [ -d "$INSTALL_DIR/.git" ]; then
   echo "▶ Updating existing installation..."
-  git -C "$INSTALL_DIR" fetch origin
-  git -C "$INSTALL_DIR" reset --hard origin/main
+  git -C "$INSTALL_DIR" fetch -q origin 2>/dev/null
+  LOCK_CHANGED=$(git -C "$INSTALL_DIR" diff HEAD origin/main -- package-lock.json | grep -c "^+" || true)
+  git -C "$INSTALL_DIR" reset -q --hard origin/main
   echo "   ✅ Updated to latest"
-  echo "▶ Updating dependencies..."
-  PATH="$(dirname "$NODE_PATH"):$PATH" npm ci --prefix "$INSTALL_DIR" --no-fund
 else
   echo "▶ Cloning alfred.mcp..."
   git clone "$REPO_URL" "$INSTALL_DIR"
