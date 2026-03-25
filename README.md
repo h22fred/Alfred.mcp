@@ -154,7 +154,23 @@ Config lives in `~/.alfred-config.json`.
 
 ## Security
 
-The installer runs as your own user — no sudo, no admin rights required. Want to verify the file before running? SHA256 checksums are published in [CHECKSUMS.txt](CHECKSUMS.txt).
+### Security assessment
+
+A full security review was conducted on this codebase covering credential handling, input validation, API calls, network exposure, and the install scripts. No vulnerabilities were found in the core data handling or CRM integration layer. Installer integrity can be verified via the checksum below.
+
+### Data handling
+
+| What | How |
+|------|-----|
+| **Credentials** | Never stored. Alfred reads your existing Chrome session via the local debug port — no passwords, no API keys |
+| **Tokens** | Cached in memory only, cleared when Alfred restarts |
+| **Config file** | `~/.alfred-config.json` — your machine only, permissions 600 |
+| **External calls** | Only to your own Dynamics 365, Microsoft Graph (Outlook/Teams), and your Teams webhook |
+| **No telemetry** | Alfred sends nothing to third parties |
+
+### Installer verification
+
+The installer runs as your own user — no sudo, no admin rights required. SHA256 checksums are published in [CHECKSUMS.txt](CHECKSUMS.txt).
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/h22fred/Alfred.mcp/refs/heads/main/Setup.command -o ~/Downloads/Setup.command
