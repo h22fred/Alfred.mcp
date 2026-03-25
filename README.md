@@ -198,7 +198,7 @@ Automated audit run via [Ruflo](https://github.com/h22fred/ruflo) on 2026-03-25:
 | Prompt injection defence | ✅ 0 detections |
 | External dependencies | ✅ 8 only (MCP SDK, zod, Node built-ins) |
 
-A dependency security audit also runs automatically during installation and will warn if any vulnerability is introduced in a future update.
+`npm ci` runs a vulnerability audit automatically on every install and will report any issues found in dependencies.
 
 ### Data handling
 
