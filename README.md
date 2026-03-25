@@ -4,7 +4,7 @@
 
 Built by **Fred** — Solution Consultant @ ServiceNow
 
-<a href="https://www.buymeacoffee.com/h22fred"><img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me A Coffee" height="28"></a>&nbsp;&nbsp;<a href="https://www.linkedin.com/in/fredholmstrom/"><img src="https://img.shields.io/badge/Follow_on_LinkedIn-0A66C2?style=plastic&logo=linkedin&logoColor=white&logoSize=auto" alt="LinkedIn" height="28"></a>&nbsp;&nbsp;<a href="https://github.com/h22fred"><img src="https://img.shields.io/badge/Follow_on_GitHub-181717?style=plastic&logo=github&logoColor=white" alt="GitHub" height="28"></a>&nbsp;&nbsp;<a href="http://www.x.com/h22fred"><img src="https://img.shields.io/badge/Follow_on_X-000000?style=plastic&logo=x&logoColor=white" alt="X" height="28"></a>
+<a href="https://www.buymeacoffee.com/h22fred"><img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me A Coffee" height="60"></a>&nbsp;&nbsp;<a href="https://www.linkedin.com/in/fredholmstrom/"><img src="https://img.shields.io/badge/Follow_on_LinkedIn-0A66C2?style=for-the-badge&logo=linkedin&logoColor=white" alt="LinkedIn" height="60"></a>&nbsp;&nbsp;<a href="https://github.com/h22fred"><img src="https://img.shields.io/badge/Follow_on_GitHub-2ea44f?style=for-the-badge&logo=github&logoColor=white" alt="GitHub" height="60"></a>&nbsp;&nbsp;<a href="http://www.x.com/h22fred"><img src="https://img.shields.io/badge/Follow_on_X-000000?style=for-the-badge&logo=x&logoColor=white" alt="X" height="60"></a>
 
 Connects Claude Desktop directly to your CRM, calendar, email and Teams — using your existing browser session. No Azure app registration. No stored credentials. No CRM admin work ever again.
 
