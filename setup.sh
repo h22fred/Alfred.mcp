@@ -66,6 +66,19 @@ echo "▶ Installing dependencies..."
 PATH="$NODE_DIR:$PATH" npm ci --prefix "$SCRIPT_DIR" --no-fund
 
 echo ""
+echo "▶ Running dependency security audit..."
+AUDIT_OUT=$(PATH="$NODE_DIR:$PATH" npm audit --audit-level=high --prefix "$SCRIPT_DIR" 2>&1)
+if echo "$AUDIT_OUT" | grep -q "found 0 vulnerabilities"; then
+  echo "   ✅ No vulnerabilities found"
+elif echo "$AUDIT_OUT" | grep -qE "high|critical"; then
+  echo "   ⚠️  High/critical vulnerabilities detected in dependencies:"
+  echo "$AUDIT_OUT" | grep -E "high|critical|npm audit fix"
+  echo "   Continuing install — run 'npm audit' in the Alfred folder to review."
+else
+  echo "   ✅ No high/critical vulnerabilities found"
+fi
+
+echo ""
 echo "▶ Building MCP server..."
 PATH="$NODE_DIR:$PATH" npm run build --prefix "$SCRIPT_DIR"
 echo "   ✅ Build complete"
