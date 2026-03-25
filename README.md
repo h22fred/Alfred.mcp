@@ -188,6 +188,18 @@ The webhook URL is stored in `~/.alfred-config.json` on your machine only and is
 
 A full security review was conducted on this codebase covering credential handling, input validation, API calls, network exposure, and the install scripts. No vulnerabilities were found in the core data handling or CRM integration layer. Installer integrity can be verified via the checksum below.
 
+Automated audit run via [Ruflo](https://github.com/h22fred/ruflo) on 2026-03-25:
+
+| Check | Result |
+|-------|--------|
+| Security scan (full depth) | ✅ 0 issues |
+| Secrets / hardcoded credentials | ✅ None found |
+| CVEs (npm audit) | ✅ 0 vulnerabilities |
+| Prompt injection defence | ✅ 0 detections |
+| External dependencies | ✅ 8 only (MCP SDK, zod, Node built-ins) |
+
+A dependency security audit also runs automatically during installation and will warn if any vulnerability is introduced in a future update.
+
 ### Data handling
 
 | What | How |
