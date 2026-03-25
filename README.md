@@ -6,6 +6,10 @@ Built by **Fred** — Solution Consultant @ ServiceNow
 
 <a href="https://www.buymeacoffee.com/h22fred"><img src="https://img.buymeacoffee.com/button-api/?text=Buy me a coffee&emoji=&slug=h22fred&button_colour=FF5F5F&font_colour=ffffff&font_family=Cookie&outline_colour=000000&coffee_colour=FFDD00" /></a>
 
+[![LinkedIn](https://img.shields.io/badge/LinkedIn-fredholmstrom-0A66C2?logo=linkedin&logoColor=white)](https://www.linkedin.com/in/fredholmstrom/)
+[![GitHub followers](https://img.shields.io/github/followers/h22fred?label=Follow%20on%20GitHub&style=social)](https://github.com/h22fred)
+[![X](https://img.shields.io/badge/X-h22fred-000000?logo=x&logoColor=white)](http://www.x.com/h22fred)
+
 Connects Claude Desktop directly to your CRM, calendar, email and Teams — using your existing browser session. No Azure app registration. No stored credentials. No CRM admin work ever again.
 
 Two flavours — one installer:
@@ -121,18 +125,46 @@ Auth flow:
 
 ## Automated jobs
 
+Alfred sets up two recurring cron jobs during installation (both optional):
+
 | When | What |
 |------|------|
-| Monday 9:30am (configurable) | CRM hygiene sweep — flags missing engagements, posts to Teams |
-| Friday 2:00pm (configurable) | Meeting review — matches this week's meetings to open opps |
+| **Monday 9:30am** | CRM hygiene sweep — checks all open opportunities for missing milestones, posts a summary card to Teams |
+| **Friday 2:00pm** | Meeting review — scans this week's calendar, matches meetings to open opportunities, suggests engagements to log |
 
-To run manually:
+Both jobs run silently in the background. If Alfred isn't running or your Dynamics session has expired, they post a Teams reminder instead of failing silently.
+
+To run manually at any time:
 ```bash
-node scripts/hygiene-sweep.mjs
-node scripts/post-meeting-sweep.mjs
+node ~/Documents/alfred.sc/scripts/hygiene-sweep.mjs
+node ~/Documents/alfred.sc/scripts/post-meeting-sweep.mjs
+```
+
+To change the schedule, edit your crontab:
+```bash
+crontab -e
 ```
 
 Config lives in `~/.alfred-config.json`.
+
+---
+
+## Teams webhook
+
+The Teams webhook is optional but recommended — it's what allows Alfred to post hygiene reports and reminders directly to a Teams channel.
+
+**How to set it up:**
+1. In Teams, go to the channel where you want Alfred to post
+2. Click **···** → **Connectors** (or **Manage channel** → **Connectors**)
+3. Add an **Incoming Webhook**, give it a name (e.g. *Alfred*) and copy the URL
+4. Paste it when the installer asks, or re-run setup to add/update it
+
+**What Alfred posts:**
+- Monday hygiene sweep results — list of opportunities with missing milestones
+- Friday meeting review — suggested engagements to log
+- Auth reminders — if your Dynamics session has expired before an automated job runs
+
+The webhook URL is stored in `~/.alfred-config.json` on your machine only and is never sent anywhere except to post cards to your Teams channel.
 
 ---
 
