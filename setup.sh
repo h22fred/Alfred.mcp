@@ -63,10 +63,14 @@ echo "   ✅ Node.js found at $NODE_PATH"
 # ------------------------------------------------------------
 echo ""
 echo "▶ Installing dependencies..."
-if [ "${LOCK_CHANGED:-1}" = "0" ] && [ -d "$SCRIPT_DIR/node_modules" ]; then
-  echo "   ✅ Dependencies unchanged — skipping reinstall"
+LOCKSUM_FILE="$SCRIPT_DIR/node_modules/.alfred-locksum"
+CURRENT_SUM=$(md5 -q "$SCRIPT_DIR/package-lock.json" 2>/dev/null || md5sum "$SCRIPT_DIR/package-lock.json" 2>/dev/null | awk '{print $1}')
+STORED_SUM=$(cat "$LOCKSUM_FILE" 2>/dev/null || echo "")
+if [ "$CURRENT_SUM" = "$STORED_SUM" ] && [ -d "$SCRIPT_DIR/node_modules" ]; then
+  echo "   ✅ Dependencies up to date — skipping reinstall"
 else
   PATH="$NODE_DIR:$PATH" npm ci --prefix "$SCRIPT_DIR" --no-fund
+  echo "$CURRENT_SUM" > "$LOCKSUM_FILE"
 fi
 
 echo ""

@@ -57,8 +57,6 @@ fi
 if [ -d "$INSTALL_DIR/.git" ]; then
   echo "▶ Updating existing installation..."
   git -C "$INSTALL_DIR" fetch -q origin 2>/dev/null
-  LOCK_CHANGED=$(git -C "$INSTALL_DIR" diff HEAD origin/main -- package-lock.json | grep -c "^+" || true)
-  export LOCK_CHANGED
   git -C "$INSTALL_DIR" reset -q --hard origin/main
   echo "   ✅ Updated to latest"
 else
