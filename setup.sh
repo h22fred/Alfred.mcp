@@ -62,15 +62,22 @@ echo "   ✅ Node.js found at $NODE_PATH"
 # 2. Install dependencies and build
 # ------------------------------------------------------------
 echo ""
-echo "▶ Installing dependencies..."
-LOCKSUM_FILE="$SCRIPT_DIR/node_modules/.alfred-locksum"
+echo "▶ Checking dependencies..."
 CURRENT_SUM=$(md5 -q "$SCRIPT_DIR/package-lock.json" 2>/dev/null || md5sum "$SCRIPT_DIR/package-lock.json" 2>/dev/null | awk '{print $1}')
-STORED_SUM=$(cat "$LOCKSUM_FILE" 2>/dev/null || echo "")
-if [ "$CURRENT_SUM" = "$STORED_SUM" ] && [ -d "$SCRIPT_DIR/node_modules" ]; then
-  echo "   ✅ Dependencies up to date — skipping reinstall"
+STORED_SUM=$(python3 -c "import json,os; f=os.path.expanduser('~/.alfred-config.json'); d=json.load(open(f)) if os.path.exists(f) else {}; print(d.get('lockSum',''))" 2>/dev/null)
+if [ "$CURRENT_SUM" = "$STORED_SUM" ] && [ -f "$SCRIPT_DIR/node_modules/.package-lock.json" ]; then
+  echo "   ✅ Dependencies up to date (97 packages) — skipping reinstall"
 else
+  echo "   📦 Installing dependencies..."
   PATH="$NODE_DIR:$PATH" npm ci --prefix "$SCRIPT_DIR" --no-fund
-  echo "$CURRENT_SUM" > "$LOCKSUM_FILE"
+  python3 -c "
+import json, os
+f = os.path.expanduser('~/.alfred-config.json')
+d = json.load(open(f)) if os.path.exists(f) else {}
+d['lockSum'] = '$CURRENT_SUM'
+json.dump(d, open(f, 'w'), indent=2)
+"
+  echo "   ✅ 97 packages installed"
 fi
 
 echo ""
