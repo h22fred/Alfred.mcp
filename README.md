@@ -4,7 +4,7 @@
 
 Built by **Fred** — Solution Consultant @ ServiceNow
 
-[![Buy Me a Coffee](https://img.shields.io/badge/Buy_me_a_coffee-FFDD00?style=for-the-badge&logo=buy-me-a-coffee&logoColor=black)](https://www.buymeacoffee.com/h22fred) &nbsp; [![Follow on LinkedIn](https://img.shields.io/badge/Follow_on_LinkedIn-0A66C2?style=for-the-badge&logo=linkedin&logoColor=white)](https://www.linkedin.com/in/fredholmstrom/) &nbsp; [![Follow on GitHub](https://img.shields.io/badge/Follow_on_GitHub-2ea44f?style=for-the-badge&logo=github&logoColor=white)](https://github.com/h22fred) &nbsp; [![Follow on X](https://img.shields.io/badge/Follow_on_X-000000?style=for-the-badge&logo=x&logoColor=white)](http://www.x.com/h22fred)
+<a href="https://www.buymeacoffee.com/h22fred"><img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me A Coffee" height="60"></a>&nbsp;&nbsp;<a href="https://www.linkedin.com/in/fredholmstrom/"><img src="assets/btn-linkedin.svg" alt="Follow on LinkedIn" height="60"></a>&nbsp;&nbsp;<a href="https://github.com/h22fred"><img src="assets/btn-github.svg" alt="Follow on GitHub" height="60"></a>&nbsp;&nbsp;<a href="http://www.x.com/h22fred"><img src="assets/btn-x.svg" alt="Follow on X" height="60"></a>
 
 Connects Claude Desktop directly to your CRM, calendar, email and Teams — using your existing browser session. No Azure app registration. No stored credentials. No CRM admin work ever again.
 
