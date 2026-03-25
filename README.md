@@ -4,7 +4,7 @@
 
 Built by **Fred** — Solution Consultant @ ServiceNow
 
-<a href="https://www.buymeacoffee.com/h22fred"><img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me A Coffee" height="60"></a>&nbsp;&nbsp;<a href="https://www.linkedin.com/in/fredholmstrom/"><img src="assets/btn-linkedin.svg" alt="Follow on LinkedIn" height="60"></a>&nbsp;&nbsp;<a href="https://github.com/h22fred"><img src="assets/btn-github.svg" alt="Follow on GitHub" height="60"></a>&nbsp;&nbsp;<a href="http://www.x.com/h22fred"><img src="assets/btn-x.svg" alt="Follow on X" height="60"></a>
+<a href="https://www.buymeacoffee.com/h22fred"><img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me A Coffee" height="68"></a>&nbsp;&nbsp;<a href="https://www.linkedin.com/comm/mynetwork/discovery-see-all?usecase=PEOPLE_FOLLOWS&followMember=fredholmstrom"><img src="assets/btn-linkedin.svg" alt="Follow on LinkedIn"></a>&nbsp;&nbsp;<a href="https://github.com/h22fred"><img src="assets/btn-github.svg" alt="Follow on GitHub"></a>&nbsp;&nbsp;<a href="https://twitter.com/intent/follow?screen_name=h22fred"><img src="assets/btn-x.svg" alt="Follow on X"></a>
 
 Connects Claude Desktop directly to your CRM, calendar, email and Teams — using your existing browser session. No Azure app registration. No stored credentials. No CRM admin work ever again.
 

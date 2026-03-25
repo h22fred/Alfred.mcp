@@ -1,10 +1,11 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 217 60" width="217" height="60">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 68" width="160" height="68">
   <defs>
     <style>@import url('https://fonts.googleapis.com/css2?family=Cookie');</style>
   </defs>
-  <rect x="2" y="2" width="213" height="56" rx="10" ry="10" fill="#000000" stroke="#555555" stroke-width="2"/>
-  <g transform="translate(16,16) scale(1.167)" fill="white">
+  <rect x="2" y="2" width="156" height="64" rx="10" ry="10" fill="#000000" stroke="#555555" stroke-width="2"/>
+  <g transform="translate(68,8) scale(0.917)" fill="white">
     <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-4.714-6.231-5.401 6.231H2.744l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/>
   </g>
-  <text x="56" y="40" font-family="Cookie, cursive" font-size="28" fill="white">Follow on X</text>
+  <text x="80" y="44" font-family="Cookie, cursive" font-size="17" fill="white" text-anchor="middle">Follow on</text>
+  <text x="80" y="62" font-family="Cookie, cursive" font-size="21" fill="white" text-anchor="middle">X</text>
 </svg>
