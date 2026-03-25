@@ -4,11 +4,7 @@
 
 Built by **Fred** — Solution Consultant @ ServiceNow
 
-<a href="https://www.buymeacoffee.com/h22fred"><img src="https://img.buymeacoffee.com/button-api/?text=Buy me a coffee&emoji=&slug=h22fred&button_colour=FF5F5F&font_colour=ffffff&font_family=Cookie&outline_colour=000000&coffee_colour=FFDD00" /></a>
-
-[![LinkedIn](https://img.shields.io/badge/LinkedIn-fredholmstrom-0A66C2?logo=linkedin&logoColor=white)](https://www.linkedin.com/in/fredholmstrom/)
-[![GitHub followers](https://img.shields.io/github/followers/h22fred?label=Follow%20on%20GitHub&style=social)](https://github.com/h22fred)
-[![X](https://img.shields.io/badge/X-h22fred-000000?logo=x&logoColor=white)](http://www.x.com/h22fred)
+[![Buy Me a Coffee](https://img.shields.io/badge/Buy_me_a_coffee-h22fred-FF5F5F?style=for-the-badge&logo=buy-me-a-coffee&logoColor=white)](https://www.buymeacoffee.com/h22fred) [![LinkedIn](https://img.shields.io/badge/LinkedIn-fredholmstrom-0A66C2?style=for-the-badge&logo=linkedin&logoColor=white)](https://www.linkedin.com/in/fredholmstrom/) [![GitHub](https://img.shields.io/badge/Follow_on_GitHub-h22fred-181717?style=for-the-badge&logo=github&logoColor=white)](https://github.com/h22fred) [![X](https://img.shields.io/badge/X-h22fred-000000?style=for-the-badge&logo=x&logoColor=white)](http://www.x.com/h22fred)
 
 Connects Claude Desktop directly to your CRM, calendar, email and Teams — using your existing browser session. No Azure app registration. No stored credentials. No CRM admin work ever again.
 
