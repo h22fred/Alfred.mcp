@@ -149,3 +149,15 @@ Config lives in `~/.alfred-config.json`.
 ---
 
 *Questions? Open a [Discussion](https://github.com/h22fred/Alfred.mcp/discussions) or ping Fred on Teams.*
+
+---
+
+## Security
+
+The installer runs as your own user — no sudo, no admin rights required. Want to verify the file before running? SHA256 checksums are published in [CHECKSUMS.txt](CHECKSUMS.txt).
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/h22fred/Alfred.mcp/refs/heads/main/Setup.command -o ~/Downloads/Setup.command
+shasum -a 256 ~/Downloads/Setup.command  # compare to CHECKSUMS.txt
+bash ~/Downloads/Setup.command
+```
