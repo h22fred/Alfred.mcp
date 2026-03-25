@@ -63,7 +63,11 @@ echo "   ✅ Node.js found at $NODE_PATH"
 # ------------------------------------------------------------
 echo ""
 echo "▶ Installing dependencies..."
-PATH="$NODE_DIR:$PATH" npm ci --prefix "$SCRIPT_DIR" --no-fund
+if [ "${LOCK_CHANGED:-1}" = "0" ] && [ -d "$SCRIPT_DIR/node_modules" ]; then
+  echo "   ✅ Dependencies unchanged — skipping reinstall"
+else
+  PATH="$NODE_DIR:$PATH" npm ci --prefix "$SCRIPT_DIR" --no-fund
+fi
 
 echo ""
 echo "▶ Building MCP server..."
