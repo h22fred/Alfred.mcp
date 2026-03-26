@@ -101,7 +101,41 @@ json.dump(d, open(f, 'w'), indent=2)
 fi
 
 # ------------------------------------------------------------
-# 3. Configure Claude Desktop
+# 3. Dynamics URL (must be set before Alfred.app is created)
+# ------------------------------------------------------------
+echo ""
+echo "▶ Dynamics 365 instance..."
+
+EXISTING_DYNAMICS_URL=$(python3 -c "import json,os; d=json.load(open(os.path.expanduser('~/.alfred-config.json'))) if os.path.exists(os.path.expanduser('~/.alfred-config.json')) else {}; print(d.get('dynamicsUrl',''))" 2>/dev/null)
+
+if [ -n "$EXISTING_DYNAMICS_URL" ]; then
+  echo "   ✅ Dynamics URL already set: $EXISTING_DYNAMICS_URL"
+  printf "   Change company name? (press Enter to keep): "
+  read -r NEW_COMPANY </dev/tty
+  if [ -n "$NEW_COMPANY" ]; then
+    NEW_DYNAMICS_URL="https://${NEW_COMPANY}.crm.dynamics.com"
+  else
+    NEW_DYNAMICS_URL="$EXISTING_DYNAMICS_URL"
+  fi
+else
+  printf "   What is your company name? (press Enter for 'servicenow'): "
+  read -r NEW_COMPANY </dev/tty
+  [ -z "$NEW_COMPANY" ] && NEW_COMPANY="servicenow"
+  NEW_DYNAMICS_URL="https://${NEW_COMPANY}.crm.dynamics.com"
+fi
+
+python3 -c "
+import json, os
+f = os.path.expanduser('~/.alfred-config.json')
+d = json.load(open(f)) if os.path.exists(f) else {}
+d['dynamicsUrl'] = '$NEW_DYNAMICS_URL'
+json.dump(d, open(f, 'w'), indent=2)
+"
+chmod 600 "$HOME/.alfred-config.json"
+echo "   ✅ Dynamics URL set to: $NEW_DYNAMICS_URL"
+
+# ------------------------------------------------------------
+# 4. Configure Claude Desktop
 # ------------------------------------------------------------
 echo ""
 echo "▶ Configuring Claude Desktop..."
@@ -149,7 +183,7 @@ PYEOF
 fi
 
 # ------------------------------------------------------------
-# 4. Create Alfred.app on Desktop (plain shell bundle — no AppleScript)
+# 5. Create Alfred.app on Desktop (plain shell bundle — no AppleScript)
 # ------------------------------------------------------------
 echo ""
 echo "▶ Creating Alfred.app on Desktop..."
@@ -241,41 +275,7 @@ echo "   ✅ Alfred.app created on Desktop"
 echo "   ℹ️  First launch: right-click → Open (one-time macOS approval)"
 
 # ------------------------------------------------------------
-# 5. Dynamics URL
-# ------------------------------------------------------------
-echo ""
-echo "▶ Dynamics 365 instance..."
-
-EXISTING_DYNAMICS_URL=$(python3 -c "import json,os; d=json.load(open(os.path.expanduser('~/.alfred-config.json'))) if os.path.exists(os.path.expanduser('~/.alfred-config.json')) else {}; print(d.get('dynamicsUrl',''))" 2>/dev/null)
-
-if [ -n "$EXISTING_DYNAMICS_URL" ]; then
-  echo "   ✅ Dynamics URL already set: $EXISTING_DYNAMICS_URL"
-  printf "   Change company name? (press Enter to keep): "
-  read -r NEW_COMPANY </dev/tty
-  if [ -n "$NEW_COMPANY" ]; then
-    NEW_DYNAMICS_URL="https://${NEW_COMPANY}.crm.dynamics.com"
-  else
-    NEW_DYNAMICS_URL="$EXISTING_DYNAMICS_URL"
-  fi
-else
-  printf "   What is your company name? (press Enter for 'servicenow'): "
-  read -r NEW_COMPANY </dev/tty
-  [ -z "$NEW_COMPANY" ] && NEW_COMPANY="servicenow"
-  NEW_DYNAMICS_URL="https://${NEW_COMPANY}.crm.dynamics.com"
-fi
-
-python3 -c "
-import json, os
-f = os.path.expanduser('~/.alfred-config.json')
-d = json.load(open(f)) if os.path.exists(f) else {}
-d['dynamicsUrl'] = '$NEW_DYNAMICS_URL'
-json.dump(d, open(f, 'w'), indent=2)
-"
-chmod 600 "$HOME/.alfred-config.json"
-echo "   ✅ Dynamics URL set to: $NEW_DYNAMICS_URL"
-
-# ------------------------------------------------------------
-# 5b. Teams webhook config
+# 6. Teams webhook config
 # ------------------------------------------------------------
 echo ""
 echo "▶ Setting up Teams webhook for hygiene sweep notifications..."
@@ -315,7 +315,7 @@ else
 fi
 
 # ------------------------------------------------------------
-# 6. Role
+# 7. Role
 # ------------------------------------------------------------
 echo ""
 if [ "$ALFRED_VARIANT" = "sales" ]; then
@@ -355,7 +355,7 @@ json.dump(d, open(f, 'w'), indent=2)
 chmod 600 "$HOME/.alfred-config.json"
 
 # ------------------------------------------------------------
-# 7. Engagement types
+# 8. Engagement types
 # ------------------------------------------------------------
 echo ""
 echo "▶ Which milestones do you track on your opportunities?"
@@ -422,7 +422,7 @@ fi
 chmod 600 "$HOME/.alfred-config.json"
 
 # ------------------------------------------------------------
-# 8. Install cron jobs
+# 9. Install cron jobs
 # ------------------------------------------------------------
 echo ""
 echo "▶ Automated jobs..."
