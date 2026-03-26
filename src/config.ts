@@ -11,9 +11,14 @@ interface AlfredConfig {
 }
 
 const configPath = join(homedir(), ".alfred-config.json");
-const raw: AlfredConfig = existsSync(configPath)
-  ? JSON.parse(readFileSync(configPath, "utf8")) as AlfredConfig
-  : {};
+let raw: AlfredConfig = {};
+if (existsSync(configPath)) {
+  try {
+    raw = JSON.parse(readFileSync(configPath, "utf8")) as AlfredConfig;
+  } catch (e) {
+    process.stderr.write(`[alfred] Failed to parse ${configPath}: ${e}\n`);
+  }
+}
 
 /** Base URL of the customer's Dynamics 365 instance, e.g. https://acme.crm.dynamics.com */
 export const DYNAMICS_HOST: string =

@@ -5,8 +5,9 @@ import { readFileSync, existsSync, writeFileSync } from "fs";
 import { homedir } from "os";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
-import { execSync } from "child_process";
+import { execFileSync } from "child_process";
 import { DYNAMICS_HOST, alfredConfig as _baseConfig, ALL_ENGAGEMENT_TYPES } from "../config.js";
+import { requireGuid, makeProgress, WriteRateLimiter } from "../shared.js";
 import {
   fetchOpportunities,
   fetchOpportunityById,
@@ -36,21 +37,13 @@ import { closeBrowser, setManualCookies, ensureAlfred, clearAuthCache } from "..
 import { getCalendarEvents, getEmails, clearGraphTokenCache } from "../tools/outlookClient.js";
 import { setTeamsWebhook, postTeamsNotification, getTeamsTranscript, getTeamsChats } from "../tools/teamsClient.js";
 import { runHygieneSweep, formatHygieneReport } from "../tools/hygieneClient.js";
-import { detectPostMeetingEngagements } from "../tools/postMeetingClient.js";
+import { detectPostMeetingEngagements, notifyPostMeetingCandidates } from "../tools/postMeetingClient.js";
 
 const DYNAMICS_BASE_URL = DYNAMICS_HOST;
 
 // ---------------------------------------------------------------------------
 // Security helpers
 // ---------------------------------------------------------------------------
-
-const GUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
-/** Validate a Dynamics GUID. Throws if invalid — prevents path manipulation in API URLs. */
-function requireGuid(value: string, label: string): string {
-  if (!GUID_RE.test(value)) throw new Error(`Invalid ${label}: expected a Dynamics GUID.`);
-  return value;
-}
 
 /**
  * Wrap external data (from meetings, emails, transcripts) so Claude knows it is
@@ -64,23 +57,6 @@ function externalData(label: string, data: unknown): string {
     JSON.stringify(data, null, 2) +
     `\n\n[END EXTERNAL DATA]`
   );
-}
-
-/** Simple in-process write rate limiter — max N writes per rolling window. */
-class WriteRateLimiter {
-  private timestamps: number[] = [];
-  constructor(private readonly max: number, private readonly windowMs: number) {}
-  check(action: string): void {
-    const now = Date.now();
-    this.timestamps = this.timestamps.filter(t => now - t < this.windowMs);
-    if (this.timestamps.length >= this.max) {
-      throw new Error(
-        `Rate limit: no more than ${this.max} ${action} operations per ${this.windowMs / 60000} minutes. ` +
-        `Please review what you are doing before continuing.`
-      );
-    }
-    this.timestamps.push(now);
-  }
 }
 
 const engagementWriteLimiter = new WriteRateLimiter(10, 10 * 60 * 1000); // 10 per 10 min
@@ -117,8 +93,8 @@ function engagementSummary(e: Engagement, action: "Created" | "Updated"): string
     `Type: ${e.engagementTypeName ?? "—"}`,
     `Status: ${e.statuscode === 876130000 ? "Cancelled" : e.statecode === 0 ? "Open" : "Complete"}`,
     ...(e.sn_completeddate ? [`Completed: ${e.sn_completeddate.slice(0, 10)}`] : []),
+    ...(link ? [`\n🔗 Open in Dynamics: ${link}`] : []),
     ...(e.sn_description ? [`\n${e.sn_description}`] : []),
-    ...(link ? [`\n🔗 ${link}`] : []),
   ];
   return lines.join("\n");
 }
@@ -129,19 +105,12 @@ function engagementListItem(e: Engagement): string {
   const completed = e.sn_completeddate ? ` · ${e.sn_completeddate.slice(0, 10)}` : "";
   const lines = [
     `**${e.sn_name}** (${e.sn_engagementnumber ?? "—"}) · ${e.engagementTypeName ?? "—"} · ${status}${completed}`,
+    ...(link ? [`🔗 Open in Dynamics: ${link}`] : []),
     ...(e.sn_description ? [e.sn_description] : []),
-    ...(link ? [`🔗 ${link}`] : []),
   ];
   return lines.join("\n");
 }
 
-// Sends a log message visible in Claude Desktop's tool execution UI
-function makeProgress(srv: McpServer) {
-  return (msg: string) => {
-    console.error(`[progress] ${msg}`);
-    srv.server.sendLoggingMessage({ level: "info", data: msg });
-  };
-}
 
 const ENGAGEMENT_TYPES = ALL_ENGAGEMENT_TYPES;
 
@@ -543,6 +512,8 @@ server.tool(
 
 IMPORTANT: Always show the user exactly what will change (field by field) and get explicit confirmation BEFORE calling this tool.
 
+To REOPEN a completed engagement, set mark_complete=false — this PATCHes statecode=0, statuscode=1.
+
 Always use the structured description fields to keep the description current (applies to all engagement types).
 A timeline_title + timeline_text should always be provided to log what changed.`,
   {
@@ -550,7 +521,7 @@ A timeline_title + timeline_text should always be provided to log what changed.`
     name: z.string().optional().describe("Updated engagement name"),
     type: z.enum(ENGAGEMENT_TYPES).optional().describe("Updated engagement type"),
     completed_date: z.string().optional().describe("Updated completed date (ISO format e.g. 2026-03-16)"),
-    mark_complete: z.boolean().optional().describe("Set to true to mark the engagement as Complete (sets statecode=1, statuscode=2)"),
+    mark_complete: z.boolean().optional().describe("Set to true to mark Complete. Set to false to REOPEN a completed engagement (sets statecode=0, statuscode=1)."),
     // Structured description fields (all types)
     use_case: z.string().optional().describe("Use case name"),
     key_points: z.array(z.string()).optional().describe("Full updated key points list — label auto-adapts per engagement type"),
@@ -812,15 +783,15 @@ IMPORTANT: Before calling this tool, ask the user:
   {
     start_date: z.string().describe("Start date in ISO format, e.g. 2026-03-16"),
     end_date:   z.string().describe("End date in ISO format, e.g. 2026-03-20"),
-    search:     z.string().optional().describe("Optional keyword to filter event subjects"),
+    search:     z.string().optional().describe("Optional keyword to filter event subjects, organizer, or attendee names. ALWAYS provide this when looking for specific meetings — without it, ALL events in the range are returned."),
+    top:        z.number().optional().describe("Max events to fetch from Graph API (default 100). Use 25–50 for targeted searches."),
   },
-  async ({ start_date, end_date, search }) => {
+  async ({ start_date, end_date, search, top }) => {
     const progress = makeProgress(server);
-    const events = await getCalendarEvents(start_date, end_date, search, progress);
-    // Slim down: keep attendee emails+names but drop large bodyPreview to stay under 1MB
-    const slim = events.map(({ bodyPreview: _bp, ...e }) => e);
+    const events = await getCalendarEvents(start_date, end_date, search, progress, top ?? 100);
+    // bodyPreview and id are already stripped in outlookClient — return directly
     return {
-      content: [{ type: "text", text: externalData("Outlook calendar", slim) }],
+      content: [{ type: "text", text: externalData("Outlook calendar", events) }],
     };
   }
 );
@@ -1031,13 +1002,19 @@ If no transcript, use the meeting subject, attendees and calendar notes for best
   {
     hours_back: z.number().optional().describe("How many hours back to scan for ended meetings (default 24)"),
     search:     z.string().optional().describe("Optional keyword to filter meeting subjects (e.g. 'PMI', 'SITA')"),
+    post_to_teams: z.boolean().optional().describe("Post a summary card per candidate to Teams (requires configure_teams_webhook). Default false."),
   },
-  async ({ hours_back, search }) => {
+  async ({ hours_back, search, post_to_teams }) => {
     const progress = makeProgress(server);
     const candidates = await detectPostMeetingEngagements({ hoursBack: hours_back, search }, progress);
 
     if (candidates.length === 0) {
       return { content: [{ type: "text", text: "No ended online meetings found in the specified window." }] };
+    }
+
+    // Post to Teams if requested
+    if (post_to_teams) {
+      await notifyPostMeetingCandidates(candidates, progress);
     }
 
     // Strip raw calendarEvent (large Graph API blob Claude doesn't need) and truncate transcripts
@@ -1143,7 +1120,7 @@ server.tool(
 
     let gitOutput: string;
     try {
-      gitOutput = execSync(`git -C "${installDir}" pull --ff-only 2>&1`, { encoding: "utf8" });
+      gitOutput = execFileSync("git", ["-C", installDir, "pull", "--ff-only"], { encoding: "utf8", timeout: 30_000 });
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
       return { content: [{ type: "text", text: `❌ Git pull failed:\n\`\`\`\n${msg}\n\`\`\`` }] };
@@ -1158,10 +1135,12 @@ server.tool(
 
     let buildOutput: string;
     try {
-      buildOutput = execSync(
-        `cd "${installDir}" && npm run build 2>&1`,
-        { encoding: "utf8", env: { ...process.env, PATH: process.env.PATH ?? "/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin" } }
-      );
+      buildOutput = execFileSync("npm", ["run", "build"], {
+        encoding: "utf8",
+        cwd: installDir,
+        timeout: 60_000,
+        env: { ...process.env, PATH: process.env.PATH ?? "/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin" },
+      });
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
       return { content: [{ type: "text", text: `❌ Build failed:\n\`\`\`\n${msg}\n\`\`\`` }] };
@@ -1169,7 +1148,7 @@ server.tool(
 
     // Update installedVersion in config
     try {
-      const newSha = execSync(`git -C "${installDir}" rev-parse --short HEAD`, { encoding: "utf8" }).trim();
+      const newSha = execFileSync("git", ["-C", installDir, "rev-parse", "--short", "HEAD"], { encoding: "utf8", timeout: 5_000 }).trim();
       const configPath = join(homedir(), ".alfred-config.json");
       const config = existsSync(configPath) ? JSON.parse(readFileSync(configPath, "utf8")) : {};
       config.installedVersion = newSha;

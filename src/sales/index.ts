@@ -2,6 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import { DYNAMICS_HOST, alfredConfig as _baseConfig } from "../config.js";
+import { requireGuid, makeProgress, WriteRateLimiter, FORECAST_NAMES } from "../shared.js";
 import {
   fetchOpportunities,
   fetchOpportunityById,
@@ -15,7 +16,7 @@ import {
   listTimelineNotes,
 } from "../tools/dynamicsClient.js";
 import { closeBrowser, ensureAlfred } from "../auth/tokenExtractor.js";
-import { execSync } from "child_process";
+import { execFileSync } from "child_process";
 import { readFileSync, existsSync, writeFileSync } from "fs";
 import { homedir } from "os";
 import { join, dirname } from "path";
@@ -23,49 +24,7 @@ import { fileURLToPath } from "url";
 
 const DYNAMICS_BASE_URL = DYNAMICS_HOST;
 
-// ---------------------------------------------------------------------------
-// Security helpers
-// ---------------------------------------------------------------------------
-
-const GUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
-function requireGuid(value: string, label: string): string {
-  if (!GUID_RE.test(value)) throw new Error(`Invalid ${label}: expected a Dynamics GUID.`);
-  return value;
-}
-
-function makeProgress(srv: McpServer) {
-  return (msg: string) => {
-    console.error(`[progress] ${msg}`);
-    srv.server.sendLoggingMessage({ level: "info", data: msg });
-  };
-}
-
-/** Simple in-process write rate limiter — max N writes per rolling window. */
-class WriteRateLimiter {
-  private timestamps: number[] = [];
-  constructor(private readonly max: number, private readonly windowMs: number) {}
-  check(action: string): void {
-    const now = Date.now();
-    this.timestamps = this.timestamps.filter(t => now - t < this.windowMs);
-    if (this.timestamps.length >= this.max) {
-      throw new Error(
-        `Rate limit: no more than ${this.max} ${action} operations per ${this.windowMs / 60000} minutes. ` +
-        `Please review what you are doing before continuing.`
-      );
-    }
-    this.timestamps.push(now);
-  }
-}
-
 const opportunityWriteLimiter = new WriteRateLimiter(10, 10 * 60 * 1000); // 10 per 10 min
-
-const FORECAST_NAMES: Record<number, string> = {
-  100000001: "Pipeline",
-  100000002: "Best Case",
-  100000003: "Committed",
-  100000004: "Omitted",
-};
 
 const OPP_TYPE_CODES: Record<string, number> = {
   "new business": 1,
@@ -200,6 +159,14 @@ Workflow:
 
     const progress = makeProgress(server);
 
+    // Validate close date format and warn if in the past
+    const parsedClose = new Date(close_date);
+    if (isNaN(parsedClose.getTime())) {
+      return { content: [{ type: "text", text: `❌ Invalid close date: "${close_date}". Use ISO format, e.g. 2026-12-31.` }] };
+    }
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    const closeDateWarning = parsedClose < today ? "\n\n⚠️ **Close date is in the past** — update it after creation if needed." : "";
+
     const typeCode = OPP_TYPE_CODES[(opportunity_type ?? "new business").toLowerCase()] ?? 1;
     const forecastMap: Record<string, number> = {
       pipeline: 100000001, "best case": 100000002, committed: 100000003,
@@ -216,7 +183,8 @@ Workflow:
         `**Type:** ${opportunity_type ?? "New Business"}\n` +
         `**Forecast:** ${forecast_category ?? "Pipeline"}\n` +
         `**SC:** ${sc_id ? sc_id : "not assigned"}\n` +
-        `**Notes:** ${notes ?? "—"}\n\n` +
+        `**Notes:** ${notes ?? "—"}` +
+        closeDateWarning + `\n\n` +
         `Call again with \`confirmed: true\` to create this opportunity.`
       }] };
     }
@@ -464,7 +432,7 @@ server.tool(
 
     let gitOutput: string;
     try {
-      gitOutput = execSync(`git -C "${installDir}" pull --ff-only 2>&1`, { encoding: "utf8" });
+      gitOutput = execFileSync("git", ["-C", installDir, "pull", "--ff-only"], { encoding: "utf8", timeout: 30_000 });
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
       return { content: [{ type: "text", text: `❌ Git pull failed:\n\`\`\`\n${msg}\n\`\`\`` }] };
@@ -479,10 +447,12 @@ server.tool(
 
     let buildOutput: string;
     try {
-      buildOutput = execSync(
-        `cd "${installDir}" && npm run build 2>&1`,
-        { encoding: "utf8", env: { ...process.env, PATH: process.env.PATH ?? "/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin" } }
-      );
+      buildOutput = execFileSync("npm", ["run", "build"], {
+        encoding: "utf8",
+        cwd: installDir,
+        timeout: 60_000,
+        env: { ...process.env, PATH: process.env.PATH ?? "/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin" },
+      });
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
       return { content: [{ type: "text", text: `❌ Build failed:\n\`\`\`\n${msg}\n\`\`\`` }] };
@@ -490,7 +460,7 @@ server.tool(
 
     // Update installedVersion in config
     try {
-      const newSha = execSync(`git -C "${installDir}" rev-parse --short HEAD`, { encoding: "utf8" }).trim();
+      const newSha = execFileSync("git", ["-C", installDir, "rev-parse", "--short", "HEAD"], { encoding: "utf8", timeout: 5_000 }).trim();
       const configPath = join(homedir(), ".alfred-config.json");
       const config = existsSync(configPath) ? JSON.parse(readFileSync(configPath, "utf8")) : {};
       config.installedVersion = newSha;

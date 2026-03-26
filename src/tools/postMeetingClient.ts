@@ -1,5 +1,5 @@
 import { getCalendarEvents } from "./outlookClient.js";
-import { getTeamsTranscript } from "./teamsClient.js";
+import { getTeamsTranscript, postAdaptiveCard } from "./teamsClient.js";
 import { fetchOpportunities } from "./dynamicsClient.js";
 import type { ProgressFn } from "../auth/tokenExtractor.js";
 
@@ -66,8 +66,12 @@ export async function detectPostMeetingEngagements(opts: {
 
   progress(`🔍 Scanning meetings from last ${hoursBack}h (${startDate} → ${endDate})...`);
 
-  // 1. Fetch calendar events in window
-  const events = await getCalendarEvents(startDate, endDate, opts.search, progress);
+  // 1. Fetch calendar events + opportunities in parallel (independent data sources)
+  const [events, opportunities] = await Promise.all([
+    getCalendarEvents(startDate, endDate, opts.search, progress),
+    fetchOpportunities({ myOpportunitiesOnly: true, minNnacv: 100_000, top: 100 }, progress)
+      .catch((): { opportunityid: string; name: string; accountName: string }[] => []),
+  ]);
 
   // Keep only online meetings that have already ended
   const ended = events.filter(e => {
@@ -82,15 +86,7 @@ export async function detectPostMeetingEngagements(opts: {
     return [];
   }
 
-  // 2. Fetch open opportunities for matching (best-effort)
-  let opportunities: { opportunityid: string; name: string; accountName: string }[] = [];
-  try {
-    opportunities = await fetchOpportunities({ myOpportunitiesOnly: true, minNnacv: 100_000, top: 100 }, progress);
-  } catch {
-    // Non-fatal — matching is best-effort
-  }
-
-  // 3. Fetch all transcripts for the week in one call, then match per meeting
+  // 2. Fetch all transcripts for the week in one call, then match per meeting
   progress("📋 Fetching this week's transcripts...");
   let allTranscripts: Awaited<ReturnType<typeof getTeamsTranscript>> = [];
   try {
@@ -189,4 +185,58 @@ export async function detectPostMeetingEngagements(opts: {
 
   progress(`✅ ${candidates.length} meeting candidate(s) ready for review`);
   return candidates;
+}
+
+/**
+ * Post an Adaptive Card per candidate to Teams, summarising the meeting and
+ * prompting the user to approve engagement creation in Claude.
+ */
+export async function notifyPostMeetingCandidates(
+  candidates: PostMeetingCandidate[],
+  progress: ProgressFn = () => {}
+): Promise<number> {
+  if (candidates.length === 0) return 0;
+
+  let posted = 0;
+  for (const c of candidates) {
+    const attendeeList = c.attendeeNames.length
+      ? c.attendeeNames.slice(0, 8).join(", ") + (c.attendeeNames.length > 8 ? ` +${c.attendeeNames.length - 8} more` : "")
+      : "—";
+
+    const matchLine = c.suggestedOpportunityName
+      ? `**Suggested opp:** ${c.suggestedOpportunityName} (${c.suggestedAccountName ?? "—"}) — matched by ${c.matchReason}`
+      : "_No matching opportunity found — please specify manually._";
+
+    const durationLine = c.durationMinutes ? `${c.durationMinutes} min` : "—";
+    const transcriptLine = c.transcriptAvailable ? "Transcript available" : "No transcript";
+
+    const body: Record<string, unknown>[] = [
+      { type: "TextBlock", text: `📋 Post-meeting: **${c.meetingSubject}**`, weight: "Bolder", size: "Medium", wrap: true },
+      { type: "FactSet", facts: [
+        { title: "When", value: `${c.meetingStart?.slice(0, 16).replace("T", " ")} · ${durationLine}` },
+        { title: "Attendees", value: attendeeList },
+        { title: "Transcript", value: transcriptLine },
+      ]},
+      { type: "TextBlock", text: matchLine, wrap: true, spacing: "Small" },
+      { type: "TextBlock", text: '_Open Claude and say: "Log the engagement for this meeting"_', size: "Small", isSubtle: true, wrap: true, spacing: "Medium" },
+    ];
+
+    try {
+      await postAdaptiveCard({
+        $schema: "http://adaptivecards.io/schemas/adaptive-card.json",
+        type: "AdaptiveCard",
+        version: "1.4",
+        body,
+        actions: [
+          { type: "Action.OpenUrl", title: "Open Claude", url: "https://claude.ai" },
+        ],
+      }, progress);
+      posted++;
+    } catch (err) {
+      progress(`⚠️ Failed to post card for "${c.meetingSubject}": ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
+  progress(`✅ Posted ${posted}/${candidates.length} meeting notification(s) to Teams`);
+  return posted;
 }
