@@ -12,6 +12,16 @@ const TOKEN_CACHE_MS = 45 * 60 * 1000;
 
 let webhookUrl: string | null = null;
 
+function isValidWebhookUrl(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    return parsed.protocol === "https:" &&
+      (parsed.hostname.endsWith(".webhook.office.com") ||
+       parsed.hostname.endsWith(".office.com") ||
+       parsed.hostname.endsWith(".microsoft.com"));
+  } catch { return false; }
+}
+
 // Auto-load webhook from persistent config
 try {
   const fs = await import("fs");
@@ -20,13 +30,20 @@ try {
   if (fs.default.existsSync(cfgPath)) {
     const cfg = JSON.parse(fs.default.readFileSync(cfgPath, "utf-8"));
     if (cfg.teamsWebhook) {
-      webhookUrl = cfg.teamsWebhook;
-      console.error("[teams] Webhook URL loaded from config");
+      if (!isValidWebhookUrl(cfg.teamsWebhook)) {
+        console.error("[teams] Webhook URL in config rejected — not a valid Microsoft/Office webhook URL");
+      } else {
+        webhookUrl = cfg.teamsWebhook;
+        console.error("[teams] Webhook URL loaded from config");
+      }
     }
   }
 } catch { /* non-fatal — user can set it manually */ }
 
 export function setTeamsWebhook(url: string): void {
+  if (!isValidWebhookUrl(url)) {
+    throw new Error("Invalid webhook URL. Must be an HTTPS URL on *.webhook.office.com, *.office.com, or *.microsoft.com");
+  }
   webhookUrl = url;
   console.error("[teams] Webhook URL configured");
 }
@@ -292,7 +309,8 @@ export async function getTeamsTranscript(opts: {
     $select: "id,subject,start,end,attendees,onlineMeeting",
     $top: "50",
   });
-  if (opts.search) params.set("$search", `"${opts.search}"`);
+  if (opts.search) params.set("$search", `"${opts.search.replace(/"/g, "")}"`);
+
 
   const calData = await graphFetch(`/me/calendarView?${params}`, token);
   const events = (calData.value as Record<string, unknown>[] ?? [])
@@ -308,7 +326,7 @@ export async function getTeamsTranscript(opts: {
     try {
       // Resolve calendar event → onlineMeeting ID
       const meetingData = await graphFetch(
-        `/me/onlineMeetings?$filter=JoinWebUrl eq '${encodeURIComponent(joinUrl)}'`,
+        `/me/onlineMeetings?$filter=JoinWebUrl eq '${encodeURIComponent(joinUrl.replace(/'/g, "''"))}'`,
         token
       );
       const meeting = (meetingData.value as Record<string, unknown>[])?.[0];

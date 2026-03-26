@@ -286,8 +286,9 @@ Then present a combined summary:
 Example output: "SITA has CSM Pro — 600/1400 seats used (43%). This TPSM opportunity is an upsell."`,
   { opportunity_id: z.string().describe("Dynamics opportunity GUID") },
   async ({ opportunity_id }) => {
+    const id = requireGuid(opportunity_id, "opportunity_id");
     const progress = makeProgress(server);
-    const opp = await fetchOpportunityById(opportunity_id, progress);
+    const opp = await fetchOpportunityById(id, progress);
     return {
       content: [{ type: "text", text: JSON.stringify(opp, null, 2) }],
     };
@@ -306,8 +307,9 @@ If account_insights data has not yet been fetched for this account, also call ac
 This gives context on what the customer owns — useful when reviewing engagement history.`,
   { opportunity_id: z.string().describe("Dynamics opportunity GUID") },
   async ({ opportunity_id }) => {
+    const id = requireGuid(opportunity_id, "opportunity_id");
     const progress = makeProgress(server);
-    const engagements = await fetchEngagementsByOpportunity(opportunity_id, progress);
+    const engagements = await fetchEngagementsByOpportunity(id, progress);
     if (engagements.length === 0) {
       return { content: [{ type: "text", text: "No engagements found for this opportunity." }] };
     }
@@ -340,8 +342,9 @@ server.tool(
   "Look up a Dynamics product by its GUID — useful to identify a product from an existing engagement",
   { product_id: z.string().describe("Dynamics product GUID") },
   async ({ product_id }) => {
+    const id = requireGuid(product_id, "product_id");
     const progress = makeProgress(server);
-    const product = await getProductById(product_id, progress);
+    const product = await getProductById(id, progress);
     return {
       content: [{ type: "text", text: JSON.stringify(product, null, 2) }],
     };
@@ -361,8 +364,9 @@ Use this to understand the customer context before creating engagements or revie
 After fetching, ALSO call account_insights with the account name to get subscription/utilization data.`,
   { account_id: z.string().describe("Dynamics account GUID") },
   async ({ account_id }) => {
+    const id = requireGuid(account_id, "account_id");
     const progress = makeProgress(server);
-    const account = await fetchAccountById(account_id, progress);
+    const account = await fetchAccountById(id, progress);
     return { content: [{ type: "text", text: JSON.stringify(account, null, 2) }] };
   }
 );
@@ -509,10 +513,11 @@ Use this after creating or updating an engagement when you have a list of meetin
     })).describe("List of meeting attendees — split automatically into internal participants and external contacts"),
   },
   async ({ engagement_id, attendees }) => {
+    const id = requireGuid(engagement_id, "engagement_id");
     const progress = makeProgress(server);
-    progress(`👥 Adding ${attendees.length} attendee(s) to engagement ${engagement_id}...`);
+    progress(`👥 Adding ${attendees.length} attendee(s) to engagement ${id}...`);
 
-    const results = await addAttendeesToEngagement(engagement_id, attendees, progress);
+    const results = await addAttendeesToEngagement(id, attendees, progress);
 
     const participants = results.filter(r => r.type === "participant");
     const contacts     = results.filter(r => r.type === "contact");
@@ -558,10 +563,11 @@ A timeline_title + timeline_text should always be provided to log what changed.`
     timeline_text: z.string().optional().describe("Body text for the timeline note"),
   },
   async ({ engagement_id, name, type, completed_date, mark_complete, use_case, key_points, next_actions, risks, stakeholders, notes, timeline_title, timeline_text }) => {
+    const id = requireGuid(engagement_id, "engagement_id");
     const progress = makeProgress(server);
     const desc: EngagementDescription = { engagementType: type as EngagementType | undefined, useCase: use_case, keyPoints: key_points, nextActions: next_actions, risks, stakeholders };
     const hasStructured = use_case || key_points?.length || next_actions?.length || stakeholders;
-    const updated = await updateEngagement(engagement_id, {
+    const updated = await updateEngagement(id, {
       name,
       type: type as EngagementType | undefined,
       completedDate: completed_date,
@@ -585,8 +591,9 @@ server.tool(
   "List all timeline notes (annotations) on an engagement — use this to find note IDs before deleting",
   { engagement_id: z.string().describe("Dynamics sn_engagement GUID") },
   async ({ engagement_id }) => {
+    const id = requireGuid(engagement_id, "engagement_id");
     const progress = makeProgress(server);
-    const notes = await listTimelineNotes(engagement_id, progress);
+    const notes = await listTimelineNotes(id, progress);
     return { content: [{ type: "text", text: JSON.stringify(notes, null, 2) }] };
   }
 );
@@ -676,8 +683,9 @@ server.tool(
   "Get a single engagement record by its Dynamics ID",
   { engagement_id: z.string().describe("Dynamics sn_engagement GUID") },
   async ({ engagement_id }) => {
+    const id = requireGuid(engagement_id, "engagement_id");
     const progress = makeProgress(server);
-    const engagement = await fetchEngagementById(engagement_id, progress);
+    const engagement = await fetchEngagementById(id, progress);
     return { content: [{ type: "text", text: engagementListItem(engagement) }] };
   }
 );
