@@ -1,7 +1,6 @@
-import { connectWithRetry, getOutlookCookies, clearAuthCache } from "../auth/tokenExtractor.js";
+import { connectWithRetry } from "../auth/tokenExtractor.js";
 import { acquireTeamsGraphToken } from "./teamsClient.js";
 import type { ProgressFn } from "../auth/tokenExtractor.js";
-import { execFileSync } from "child_process";
 
 const CDP_PORT = 9222;
 const OUTLOOK_ORIGIN = "https://outlook.office.com";
@@ -389,5 +388,3 @@ export async function getEmails(opts: {
   return messages;
 }
 
-// no-op — kept so index.ts import compiles
-export function setOutlookCookies(_cookie: string): void { /* unused */ }

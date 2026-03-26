@@ -169,6 +169,7 @@ async function getAuthCookiesViaCDP(progress: ProgressFn): Promise<CachedAuth> {
   progress(`✅ Found ${authCookies.length} auth cookie(s): ${authCookies.map(c => c.name).join(", ")}`);
 
   const cookieHeader = authCookies.map(c => `${c.name}=${c.value}`).join("; ");
+  // CDP Network.getCookies returns expires as Unix timestamp in seconds; convert to ms
   const expiresAt = Math.min(
     ...authCookies.map(c => c.expires > 0 ? c.expires * 1000 : Date.now() + 8 * 60 * 60 * 1000)
   );
