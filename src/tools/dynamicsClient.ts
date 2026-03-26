@@ -751,6 +751,221 @@ export async function searchAccounts(name: string, progress: ProgressFn = () => 
 }
 
 // ---------------------------------------------------------------------------
+// Collaboration team (opportunity-level) & Engagement participants
+// ---------------------------------------------------------------------------
+
+const COLLAB_ROLE_NAMES: Record<number, string> = {
+  876130005: "Solution Consultant",
+  876130023: "Renewal Account Manager",
+};
+
+const COLLAB_ACCESS_NAMES: Record<number, string> = {
+  876130001: "Edit",
+  876130002: "Read",
+};
+
+const COLLAB_PRIMARY_YES = 876130000;
+
+export interface CollaborationTeamMember {
+  id: string;
+  userName: string;
+  userId: string;
+  collaborationRole: string;
+  jobRole?: string;
+  isPrimary: boolean;
+  accessLevel: string;
+}
+
+function mapCollabMember(r: Record<string, unknown>): CollaborationTeamMember {
+  return {
+    id:                r.sn_opportunitycollaborationteamid as string,
+    userName:          r["_sn_user_value@OData.Community.Display.V1.FormattedValue"] as string ?? "—",
+    userId:            r._sn_user_value as string,
+    collaborationRole: r["sn_collaborationrole@OData.Community.Display.V1.FormattedValue"] as string
+                       ?? COLLAB_ROLE_NAMES[r.sn_collaborationrole as number] ?? String(r.sn_collaborationrole),
+    jobRole:           r["_sn_jobroleid_value@OData.Community.Display.V1.FormattedValue"] as string | undefined,
+    isPrimary:         (r.sn_isprimary as number) === COLLAB_PRIMARY_YES,
+    accessLevel:       r["sn_opportunityheader@OData.Community.Display.V1.FormattedValue"] as string
+                       ?? COLLAB_ACCESS_NAMES[r.sn_opportunityheader as number] ?? "—",
+  };
+}
+
+export async function fetchCollaborationTeam(
+  opportunityId: string,
+  progress: ProgressFn = () => {}
+): Promise<CollaborationTeamMember[]> {
+  progress(`👥 Fetching collaboration team for opportunity ${opportunityId}...`);
+  const path =
+    `/sn_opportunitycollaborationteams` +
+    `?$select=sn_opportunitycollaborationteamid,_sn_user_value,sn_collaborationrole,sn_isprimary,sn_opportunityheader,_sn_jobroleid_value` +
+    `&$filter=_sn_opportunity_value eq ${opportunityId} and statecode eq 0` +
+    `&$orderby=sn_name asc` +
+    `&$top=100`;
+
+  const res = await dynamicsFetch(path, {}, progress);
+  const data = await res.json();
+  const members = (data.value ?? []).map(mapCollabMember);
+  progress(`✅ Found ${members.length} collaboration team member(s)`);
+  return members;
+}
+
+export async function fetchMyCollaborationOpportunities(
+  progress: ProgressFn = () => {}
+): Promise<Opportunity[]> {
+  const userId = await fetchCurrentUserId(progress);
+  progress(`📡 Finding opportunities where you are on the collaboration team...`);
+
+  // Step 1: Get all collab team entries for this user
+  const collabPath =
+    `/sn_opportunitycollaborationteams` +
+    `?$select=_sn_opportunity_value` +
+    `&$filter=_sn_user_value eq ${userId} and statecode eq 0` +
+    `&$top=200`;
+
+  const collabRes = await dynamicsFetch(collabPath, {}, progress);
+  const collabData = await collabRes.json();
+  const oppIds = [...new Set(
+    (collabData.value ?? []).map((r: Record<string, unknown>) => r._sn_opportunity_value as string).filter(Boolean)
+  )] as string[];
+
+  if (oppIds.length === 0) {
+    progress("ℹ️ You are not on any opportunity collaboration teams");
+    return [];
+  }
+
+  // Step 2: Fetch full opportunity details for those IDs (batch in groups of 15 for OData filter length)
+  const allOpps: Opportunity[] = [];
+  for (let i = 0; i < oppIds.length; i += 15) {
+    const batch = oppIds.slice(i, i + 15);
+    const idFilter = batch.map(id => `opportunityid eq ${id}`).join(" or ");
+    const path =
+      `/opportunities` +
+      `?$select=opportunityid,sn_number,name,_accountid_value,_ownerid_value,_sn_solutionconsultant_value,statuscode,estimatedclosedate,totalamount,msdyn_forecastcategory` +
+      `&$expand=parentaccountid($select=accountid,name)` +
+      `&$filter=statecode eq 0 and (${idFilter})` +
+      `&$orderby=estimatedclosedate asc` +
+      `&$top=50`;
+
+    const res = await dynamicsFetch(path, {}, progress);
+    const data = await res.json();
+    allOpps.push(...(data.value ?? []).map(mapOpportunity));
+  }
+
+  progress(`✅ Found ${allOpps.length} open opportunities where you are a collaborator`);
+  return allOpps;
+}
+
+export interface EngagementParticipant {
+  id: string;
+  userName: string;
+  userId: string;
+  title?: string;
+  isPrimary: boolean;
+}
+
+function mapParticipant(r: Record<string, unknown>): EngagementParticipant {
+  return {
+    id:        r.sn_engagementassigneeid as string,
+    userName:  r["_sn_assigneeid_value@OData.Community.Display.V1.FormattedValue"] as string ?? r.sn_name as string ?? "—",
+    userId:    r._sn_assigneeid_value as string,
+    title:     r["a_title"] as string | undefined,
+    isPrimary: r.sn_primary === true,
+  };
+}
+
+export async function fetchEngagementParticipants(
+  engagementId: string,
+  progress: ProgressFn = () => {}
+): Promise<EngagementParticipant[]> {
+  progress(`👥 Fetching participants for engagement ${engagementId}...`);
+  const path =
+    `/sn_engagementassignees` +
+    `?$select=sn_engagementassigneeid,_sn_assigneeid_value,sn_primary,sn_name` +
+    `&$filter=_sn_engagementid_value eq ${engagementId} and statecode eq 0` +
+    `&$top=50`;
+
+  const res = await dynamicsFetch(path, {}, progress);
+  const data = await res.json();
+  const participants = (data.value ?? []).map(mapParticipant);
+  progress(`✅ Found ${participants.length} participant(s)`);
+  return participants;
+}
+
+export interface MyEngagementFilter {
+  search?: string;
+  engagementType?: string;
+  status?: "open" | "complete" | "all";
+  top?: number;
+}
+
+export async function fetchMyEngagementAssignments(
+  filter: MyEngagementFilter = {},
+  progress: ProgressFn = () => {}
+): Promise<Engagement[]> {
+  const userId = await fetchCurrentUserId(progress);
+  const top = filter.top ?? 50;
+  auditLog("fetch_my_engagement_assignments", { userId, filter });
+  progress(`📡 Finding engagements where you are a participant...`);
+
+  // Step 1: Get engagement IDs from assignee table
+  const assigneePath =
+    `/sn_engagementassignees` +
+    `?$select=_sn_engagementid_value` +
+    `&$filter=_sn_assigneeid_value eq ${userId} and statecode eq 0` +
+    `&$top=200`;
+
+  const assigneeRes = await dynamicsFetch(assigneePath, {}, progress);
+  const assigneeData = await assigneeRes.json();
+  const engIds = [...new Set(
+    (assigneeData.value ?? []).map((r: Record<string, unknown>) => r._sn_engagementid_value as string).filter(Boolean)
+  )] as string[];
+
+  if (engIds.length === 0) {
+    progress("ℹ️ You are not a participant on any engagements");
+    return [];
+  }
+
+  // Step 2: Fetch full engagement details (batch in groups of 15)
+  const allEngagements: Engagement[] = [];
+  for (let i = 0; i < engIds.length; i += 15) {
+    const batch = engIds.slice(i, i + 15);
+    const idFilter = batch.map(id => `sn_engagementid eq ${id}`).join(" or ");
+
+    let statusFilter = "";
+    if (filter.status === "open") statusFilter = " and statecode eq 0";
+    else if (filter.status === "complete") statusFilter = " and statecode eq 1";
+
+    let searchFilter = "";
+    if (filter.search) {
+      const safe = sanitizeODataSearch(filter.search);
+      searchFilter = ` and (contains(sn_name,'${safe}'))`;
+    }
+
+    const path =
+      `/sn_engagements` +
+      `?$select=sn_engagementid,sn_engagementnumber,sn_name,sn_description,sn_completeddate,sn_categorycode,sn_salesstagecode,statecode,statuscode,_sn_engagementtypeid_value,_sn_opportunityid_value,_sn_accountid_value,_sn_primaryproductid_value,_ownerid_value,createdon,modifiedon` +
+      `&$expand=sn_engagementtypeid($select=sn_name),sn_accountid($select=name),sn_opportunityid($select=name),sn_primaryproductid($select=sn_name)` +
+      `&$filter=(${idFilter})${statusFilter}${searchFilter}` +
+      `&$orderby=modifiedon desc` +
+      `&$top=${top}`;
+
+    const res = await dynamicsFetch(path, {}, progress);
+    const data = await res.json();
+    allEngagements.push(...(data.value ?? []).map(mapEngagement));
+  }
+
+  // Step 3: Optional type filter (post-query since type is a lookup, not a simple field)
+  let results = allEngagements;
+  if (filter.engagementType) {
+    const typeLower = filter.engagementType.toLowerCase();
+    results = results.filter(e => e.engagementTypeName?.toLowerCase().includes(typeLower));
+  }
+
+  progress(`✅ Found ${results.length} engagements where you are a participant`);
+  return results;
+}
+
+// ---------------------------------------------------------------------------
 // Engagement attendees — Active Participants (internal) + Engagement Contacts (external)
 // ---------------------------------------------------------------------------
 
