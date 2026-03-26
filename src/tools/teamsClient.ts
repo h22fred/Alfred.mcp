@@ -74,6 +74,7 @@ export async function postAdaptiveCard(
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: payload,
+    signal: AbortSignal.timeout(15_000),
   });
   const responseText = await res.text().catch(() => "");
   if (!res.ok) {
@@ -124,6 +125,7 @@ export async function postTeamsNotification(
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(card),
+    signal: AbortSignal.timeout(15_000),
   });
 
   if (!res.ok) {
@@ -259,6 +261,7 @@ export async function acquireTeamsGraphToken(progress: ProgressFn): Promise<stri
 async function graphFetch(path: string, token: string): Promise<Record<string, unknown>> {
   const res = await fetch(`https://graph.microsoft.com/v1.0${path}`, {
     headers: { Authorization: `Bearer ${token}`, Accept: "application/json" },
+    signal: AbortSignal.timeout(30_000),
   });
   if (!res.ok) {
     const body = await res.text().catch(() => "");
@@ -478,7 +481,7 @@ async function fetchTranscriptForMeeting(
   progress(`📄 Downloading transcript ${transcriptId}...`);
   const res = await fetch(
     `https://graph.microsoft.com/v1.0/me/onlineMeetings/${meetingId}/transcripts/${transcriptId}/content?$format=text/vtt`,
-    { headers: { Authorization: `Bearer ${token}`, Accept: "text/vtt" } }
+    { headers: { Authorization: `Bearer ${token}`, Accept: "text/vtt" }, signal: AbortSignal.timeout(30_000) }
   );
 
   let transcriptText = "(Could not download transcript)";

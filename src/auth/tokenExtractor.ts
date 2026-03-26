@@ -17,6 +17,10 @@ interface CachedAuth {
 let cachedAuth: CachedAuth | null = null;
 let cachedOutlookAuth: CachedAuth | null = null;
 
+// Dedup concurrent auth refreshes — only one inflight request at a time
+let inflightDynamics: Promise<string> | null = null;
+let inflightOutlook: Promise<string> | null = null;
+
 export type ProgressFn = (msg: string) => void;
 
 const CHROME_PROFILE_DIR = `${process.env.HOME}/.alfred-profile`;
@@ -68,6 +72,8 @@ async function waitForChrome(timeoutMs = 15_000): Promise<void> {
 export function clearAuthCache(): void {
   cachedAuth = null;
   cachedOutlookAuth = null;
+  inflightDynamics = null;
+  inflightOutlook = null;
 }
 
 export async function ensureAlfred(progress: ProgressFn = () => {}): Promise<void> {
@@ -183,15 +189,26 @@ export async function getAuthCookies(progress: ProgressFn = () => {}): Promise<s
     return cachedAuth.cookieHeader;
   }
 
-  progress("🔐 Acquiring Dynamics session cookies...");
-  await ensureAlfred(progress);
+  // Dedup: if another caller is already refreshing, wait for that result
+  if (inflightDynamics) return inflightDynamics;
 
-  const auth = await getAuthCookiesViaCDP(progress);
-  cachedAuth = auth;
+  inflightDynamics = (async () => {
+    progress("🔐 Acquiring Dynamics session cookies...");
+    await ensureAlfred(progress);
 
-  const expiresIn = Math.round((auth.expiresAt - Date.now()) / 60000);
-  progress(`✅ Session cookies acquired — valid for ~${expiresIn} minutes`);
-  return auth.cookieHeader;
+    const auth = await getAuthCookiesViaCDP(progress);
+    cachedAuth = auth;
+
+    const expiresIn = Math.round((auth.expiresAt - Date.now()) / 60000);
+    progress(`✅ Session cookies acquired — valid for ~${expiresIn} minutes`);
+    return auth.cookieHeader;
+  })();
+
+  try {
+    return await inflightDynamics;
+  } finally {
+    inflightDynamics = null;
+  }
 }
 
 export async function getOutlookCookies(progress: ProgressFn = () => {}): Promise<string> {
@@ -201,30 +218,41 @@ export async function getOutlookCookies(progress: ProgressFn = () => {}): Promis
     return cachedOutlookAuth.cookieHeader;
   }
 
-  progress("🔐 Extracting Outlook cookies via CDP...");
+  // Dedup: if another caller is already refreshing, wait for that result
+  if (inflightOutlook) return inflightOutlook;
 
-  if (!isAlfredgable()) {
-    throw new Error("Chrome debug port not available. Open Alfred.app first.");
-  }
+  inflightOutlook = (async () => {
+    progress("🔐 Extracting Outlook cookies via CDP...");
 
-  const allCookies = await getCookiesViaRawCDP([OUTLOOK_URL]);
-  if (allCookies.length === 0) {
-    process.stderr.write("[alfred] CDP auth: no Outlook cookies found — user not logged in\n");
-    throw new Error(
-      "Not logged into Outlook in the Alfred window.\n" +
-      "Log into Outlook in the Alfred Chrome window, then retry."
+    if (!isAlfredgable()) {
+      throw new Error("Chrome debug port not available. Open Alfred.app first.");
+    }
+
+    const allCookies = await getCookiesViaRawCDP([OUTLOOK_URL]);
+    if (allCookies.length === 0) {
+      process.stderr.write("[alfred] CDP auth: no Outlook cookies found — user not logged in\n");
+      throw new Error(
+        "Not logged into Outlook in the Alfred window.\n" +
+        "Log into Outlook in the Alfred Chrome window, then retry."
+      );
+    }
+
+    const cookieHeader = allCookies.map(c => `${c.name}=${c.value}`).join("; ");
+    const expiresAt = Math.min(
+      ...allCookies.map(c => c.expires > 0 ? c.expires * 1000 : Date.now() + 8 * 60 * 60 * 1000)
     );
+
+    cachedOutlookAuth = { cookieHeader, expiresAt };
+    const minsLeft = Math.round((expiresAt - Date.now()) / 60000);
+    progress(`✅ Outlook cookies acquired — valid for ~${minsLeft} minutes`);
+    return cookieHeader;
+  })();
+
+  try {
+    return await inflightOutlook;
+  } finally {
+    inflightOutlook = null;
   }
-
-  const cookieHeader = allCookies.map(c => `${c.name}=${c.value}`).join("; ");
-  const expiresAt = Math.min(
-    ...allCookies.map(c => c.expires > 0 ? c.expires * 1000 : Date.now() + 8 * 60 * 60 * 1000)
-  );
-
-  cachedOutlookAuth = { cookieHeader, expiresAt };
-  const minsLeft = Math.round((expiresAt - Date.now()) / 60000);
-  progress(`✅ Outlook cookies acquired — valid for ~${minsLeft} minutes`);
-  return cookieHeader;
 }
 
 export function setManualCookies(cookieHeader: string): void {

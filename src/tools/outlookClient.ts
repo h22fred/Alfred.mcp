@@ -195,6 +195,7 @@ const OUTLOOK_API = "https://outlook.office.com/api/v2.0/me";
 async function outlookApiFetch(path: string, token: string, progress?: ProgressFn): Promise<Record<string, unknown>> {
   const res = await fetch(`${OUTLOOK_API}${path}`, {
     headers: { Authorization: `Bearer ${token}`, Accept: "application/json" },
+    signal: AbortSignal.timeout(30_000),
   });
 
   if (res.status === 401) {
@@ -203,6 +204,7 @@ async function outlookApiFetch(path: string, token: string, progress?: ProgressF
     const freshToken = await acquireGraphToken(progress ?? (() => {}));
     const retry = await fetch(`${OUTLOOK_API}${path}`, {
       headers: { Authorization: `Bearer ${freshToken}`, Accept: "application/json" },
+      signal: AbortSignal.timeout(30_000),
     });
     if (!retry.ok) {
       const body = await retry.text().catch(() => "");
@@ -241,31 +243,55 @@ export async function getCalendarEvents(
   startDate: string,
   endDate: string,
   search?: string,
-  progress: ProgressFn = () => {}
+  progress: ProgressFn = () => {},
+  top: number = 100,
 ): Promise<CalendarEvent[]> {
-  progress(`📅 Fetching calendar events ${startDate} → ${endDate}...`);
+  progress(`📅 Fetching calendar events ${startDate} → ${endDate}${search ? ` (filter: "${search}")` : ""}...`);
 
+  // NOTE: /calendarview does NOT support $search — we filter client-side below.
+  // Also skip the massive Graph "id" field to reduce payload size.
   const params = new URLSearchParams({
     startDateTime: `${startDate}T00:00:00Z`,
     endDateTime:   `${endDate}T23:59:59Z`,
-    $select: "id,subject,start,end,location,organizer,attendees,isOnlineMeeting,bodyPreview",
-    $top: "200",
+    $select: "subject,start,end,location,organizer,attendees,isOnlineMeeting",
+    $top: String(top),
     $orderby: "start/dateTime",
   });
-  if (search) params.set("$search", `"${search.replace(/"/g, "")}"`);
 
+  // If search filter is present, use $filter contains(subject,...) where supported,
+  // but calendarView may not support it — so we always apply client-side filter as fallback.
+  if (search) {
+    try {
+      const safe = search.replace(/'/g, "''").slice(0, 80);
+      params.set("$filter", `contains(subject,'${safe}')`);
+    } catch {
+      // Some Graph instances don't support $filter on calendarView — fall through to client filter
+    }
+  }
 
   const token = await acquireTeamsGraphToken(progress);
-  const res = await fetch(`https://graph.microsoft.com/v1.0/me/calendarview?${params}`, {
+  let res = await fetch(`https://graph.microsoft.com/v1.0/me/calendarview?${params}`, {
     headers: { Authorization: `Bearer ${token}`, Accept: "application/json" },
+    signal: AbortSignal.timeout(30_000),
   });
+
+  // If $filter is not supported, retry without it
+  if (!res.ok && search && params.has("$filter")) {
+    progress("⚠️ Server-side filter not supported on calendarView — falling back to client-side filter...");
+    params.delete("$filter");
+    res = await fetch(`https://graph.microsoft.com/v1.0/me/calendarview?${params}`, {
+      headers: { Authorization: `Bearer ${token}`, Accept: "application/json" },
+      signal: AbortSignal.timeout(30_000),
+    });
+  }
+
   if (!res.ok) {
     const body = await res.text().catch(() => "");
     throw new Error(`Calendar API ${res.status} ${res.statusText}${body ? `: ${body.slice(0, 200)}` : ""}`);
   }
   const data = await res.json() as { value?: Record<string, unknown>[] };
 
-  const events = (data.value ?? []).map(e => {
+  let events = (data.value ?? []).map(e => {
     const org = (e.organizer as { emailAddress: { name: string; address: string } } | undefined)?.emailAddress;
     const rawAttendees = e.attendees as Array<{ emailAddress: { name: string; address: string } }> ?? [];
     const attendees = rawAttendees.map(a => ({
@@ -273,7 +299,7 @@ export async function getCalendarEvents(
       email: a.emailAddress?.address ?? "",
     }));
     return {
-      id:              e.id as string,
+      id:              "", // intentionally omitted — Graph IDs are ~200 char base64, not needed downstream
       subject:         e.subject as string,
       start:           (e.start as { dateTime: string })?.dateTime,
       end:             (e.end   as { dateTime: string })?.dateTime,
@@ -282,9 +308,23 @@ export async function getCalendarEvents(
       organizerEmail:  org?.address || undefined,
       attendees,
       isOnlineMeeting: e.isOnlineMeeting as boolean,
-      bodyPreview:     e.bodyPreview as string | undefined,
+      bodyPreview:     undefined, // dropped to save context — use search_emails for full content
     };
   });
+
+  // Client-side search filter (always applied when search is set, in case server-side filter was not used)
+  if (search) {
+    const needle = search.toLowerCase();
+    const beforeCount = events.length;
+    events = events.filter(e =>
+      e.subject?.toLowerCase().includes(needle) ||
+      e.organizer?.toLowerCase().includes(needle) ||
+      e.attendees.some(a => a.name.toLowerCase().includes(needle) || a.email.toLowerCase().includes(needle))
+    );
+    if (events.length < beforeCount) {
+      progress(`🔍 Filtered ${beforeCount} → ${events.length} events matching "${search}"`);
+    }
+  }
 
   progress(`✅ Found ${events.length} calendar event(s)`);
   return events;

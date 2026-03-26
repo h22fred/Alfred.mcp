@@ -58,18 +58,29 @@ export async function runHygieneSweep(opts: {
   progress(`📋 Checking ${opps.length} opportunities...`);
   const results: HygieneResult[] = [];
 
-  for (const opp of opps) {
-    const engagements = await fetchEngagementsByOpportunity(opp.opportunityid, progress);
-    const activeEngagements = engagements.filter(e => !e.statusName?.toLowerCase().includes("cancel"));
-    const typeNames = activeEngagements.map(e => e.engagementTypeName ?? "").filter(Boolean);
+  // Batch engagement fetches in groups of 8 for ~8x speedup over sequential
+  const BATCH_SIZE = 8;
+  for (let i = 0; i < opps.length; i += BATCH_SIZE) {
+    const batch = opps.slice(i, i + BATCH_SIZE);
+    const batchResults = await Promise.all(
+      batch.map(async (opp) => {
+        const engagements = await fetchEngagementsByOpportunity(opp.opportunityid, progress);
+        const activeEngagements = engagements.filter(e => !e.statusName?.toLowerCase().includes("cancel"));
+        const typeNames = activeEngagements.map(e => e.engagementTypeName ?? "").filter(Boolean);
 
-    const missingRequired = requiredTypes.filter(t => !typeNames.includes(t));
-    const missingOptional: string[] = []; // optional concept removed — all configured types are required
+        const missingRequired = requiredTypes.filter(t => !typeNames.includes(t));
+        const missingOptional: string[] = [];
 
-    const status: HygieneResult["status"] =
-      missingRequired.length > 0 ? "red" : "green";
+        const status: HygieneResult["status"] =
+          missingRequired.length > 0 ? "red" : "green";
 
-    results.push({ opportunity: opp, engagements, missingRequired, missingOptional, status });
+        return { opportunity: opp, engagements, missingRequired, missingOptional, status } as HygieneResult;
+      })
+    );
+    results.push(...batchResults);
+    if (i + BATCH_SIZE < opps.length) {
+      progress(`📋 Checked ${Math.min(i + BATCH_SIZE, opps.length)}/${opps.length} opportunities...`);
+    }
   }
 
   // Sort: red first, then green
@@ -96,28 +107,6 @@ function fmt(n?: number): string {
 /** Truncate to `max` characters including the trailing ellipsis. */
 function truncate(s: string, max: number): string {
   return s.length > max ? s.slice(0, max - 1) + "…" : s;  // result is exactly `max` chars
-}
-
-function oppRow(r: HygieneResult): Record<string, unknown> {
-  const missing = r.missingRequired.join(" · ");
-  return {
-    type: "ColumnSet",
-    spacing: "Small",
-    columns: [
-      {
-        type: "Column", width: "stretch",
-        items: [{ type: "TextBlock", text: truncate(r.opportunity.name, 40), wrap: false, size: "Small", weight: "Bolder" }],
-      },
-      {
-        type: "Column", width: "auto",
-        items: [{ type: "TextBlock", text: fmt(r.opportunity.totalamount), wrap: false, size: "Small", color: "Accent", horizontalAlignment: "Right" }],
-      },
-      {
-        type: "Column", width: "auto",
-        items: [{ type: "TextBlock", text: missing || "—", wrap: false, size: "Small", color: "Attention", horizontalAlignment: "Right" }],
-      },
-    ],
-  };
 }
 
 // Group results by account, sorted by worst status then total pipeline desc
@@ -214,16 +203,6 @@ function accountBlock(account: string, opps: HygieneResult[]): Record<string, un
     });
 
   return blocks;
-}
-
-function col(text: string, width: string, opts: Record<string, unknown> = {}): Record<string, unknown> {
-  return { type: "Column", width, items: [{ type: "TextBlock", text, size: "Small", wrap: false, ...opts }] };
-}
-
-function shortClose(date?: string): string {
-  if (!date) return "—";
-  const d = new Date(date);
-  return d.toLocaleDateString("en-GB", { month: "short", year: "2-digit" });
 }
 
 async function postHygieneToTeams(results: HygieneResult[], requiredTypes: string[], dynamicsUrl: string | undefined, progress: ProgressFn): Promise<void> {

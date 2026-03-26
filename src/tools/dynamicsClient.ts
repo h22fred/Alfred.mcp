@@ -1,6 +1,7 @@
 import { getAuthCookies, clearAuthCache, type ProgressFn } from "../auth/tokenExtractor.js";
 import { userInfo } from "os";
 import { DYNAMICS_HOST, ENGAGEMENT_TYPE_GUIDS, type EngagementType } from "../config.js";
+import { FORECAST_NAMES, requireGuid } from "../shared.js";
 
 const DYNAMICS_BASE = `${DYNAMICS_HOST}/api/data/v9.2`;
 
@@ -99,19 +100,25 @@ async function dynamicsFetch(path: string, options: RequestInit = {}, progress: 
   };
 
   const url = path.startsWith("http") ? path : `${DYNAMICS_BASE}${path}`;
-  const response = await fetch(url, { ...options, headers });
+  const response = await fetch(url, { ...options, headers, signal: AbortSignal.timeout(30_000) });
 
   if (response.status === 401) {
     // Session expired — clear cache and retry once with fresh cookies
     clearAuthCache();
     progress("🔄 Dynamics session expired — re-acquiring cookies...");
-    const freshCookie = await Promise.race([
-      getAuthCookies(progress),
-      new Promise<never>((_, reject) => setTimeout(() => reject(new Error("Auth refresh timed out after 30s — is Alfred running?")), 30_000)),
-    ]);
+    let freshCookie: string;
+    try {
+      freshCookie = await Promise.race([
+        getAuthCookies(progress),
+        new Promise<never>((_, reject) => setTimeout(() => reject(new Error("Auth refresh timed out after 30s — is Alfred running?")), 30_000)),
+      ]);
+    } catch (e) {
+      throw new Error(`Auth refresh failed: ${e instanceof Error ? e.message : String(e)}`);
+    }
     const retry = await fetch(url, {
       ...options,
       headers: { ...headers, Cookie: freshCookie },
+      signal: AbortSignal.timeout(30_000),
     });
     if (!retry.ok) {
       let msg = `Dynamics API error: ${retry.status} ${retry.statusText}`;
@@ -142,13 +149,6 @@ async function dynamicsFetch(path: string, options: RequestInit = {}, progress: 
 // ---------------------------------------------------------------------------
 // Opportunities
 // ---------------------------------------------------------------------------
-
-const FORECAST_NAMES: Record<number, string> = {
-  100000001: "Pipeline",
-  100000002: "Best Case",
-  100000003: "Committed",
-  100000004: "Omitted",
-};
 
 function mapOpportunity(r: Record<string, unknown>): Opportunity {
   const account = r.parentaccountid as { accountid?: string; name?: string } | null;
@@ -227,9 +227,10 @@ export async function fetchOpportunities(filter: OpportunityFilter = {}, progres
   }
   if (filter.myOpportunitiesOnly) {
     const { userId, territoryId } = await fetchCurrentUser(progress);
+    requireGuid(userId, "currentUserId");
     // Match opps where user is SC OR in the user's territory
     const scFilter = `_sn_solutionconsultant_value eq '${userId}'`;
-    const terrFilter = territoryId ? ` or _sn_fieldterritory_value eq '${territoryId}'` : "";
+    const terrFilter = territoryId ? (requireGuid(territoryId, "territoryId"), ` or _sn_fieldterritory_value eq '${territoryId}'`) : "";
     filterClause += ` and (${scFilter}${terrFilter})`;
   }
   if (filter.ownerSearch) {
@@ -237,7 +238,7 @@ export async function fetchOpportunities(filter: OpportunityFilter = {}, progres
     if (users.length === 0) {
       progress(`⚠️ No users found matching "${filter.ownerSearch}" — returning unfiltered results`);
     } else {
-      const ownerConditions = users.map(u => `_ownerid_value eq '${u.systemuserid}'`).join(" or ");
+      const ownerConditions = users.map(u => { requireGuid(u.systemuserid, "ownerUserId"); return `_ownerid_value eq '${u.systemuserid}'`; }).join(" or ");
       filterClause += ` and (${ownerConditions})`;
       progress(`👥 Filtering by ${users.length} owner(s): ${users.map(u => u.fullname).join(", ")}`);
     }
@@ -296,6 +297,7 @@ export async function getProductById(id: string, progress: ProgressFn = () => {}
 }
 
 export async function fetchEngagementsByOpportunity(opportunityId: string, progress: ProgressFn = () => {}): Promise<Engagement[]> {
+  requireGuid(opportunityId, "opportunityId");
   progress(`📡 Fetching engagements for opportunity ${opportunityId}...`);
   const path =
     `/sn_engagements` +
@@ -510,6 +512,14 @@ export async function updateEngagement(
     headers: { "If-Match": "*" },
   }, progress);
 
+  // Auto-create timeline notes on meaningful state changes
+  const today = new Date().toISOString().slice(0, 10);
+  if (patch.markComplete === true && !patch.timelineTitle) {
+    await createTimelineNote(id, `Completed – ${today}`, "Engagement marked as complete.", progress);
+  } else if (patch.markComplete === false && !patch.timelineTitle) {
+    await createTimelineNote(id, `Reopened – ${today}`, "Engagement reopened.", progress);
+  }
+
   if (patch.timelineTitle && patch.timelineText) {
     await createTimelineNote(id, patch.timelineTitle, patch.timelineText, progress);
   }
@@ -722,7 +732,6 @@ function mapAccount(r: Record<string, unknown>): Account {
 
 const ACCOUNT_SELECT =
   "accountid,name,industrycode,websiteurl,telephone1,numberofemployees,revenue,address1_city,address1_country,description,_ownerid_value,_sn_solutionconsultant_value";
-const ACCOUNT_EXPAND = "";
 
 export async function fetchAccountById(id: string, progress: ProgressFn = () => {}): Promise<Account> {
   progress(`🏢 Fetching account ${id}...`);
