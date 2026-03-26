@@ -24,6 +24,10 @@ import {
   searchAccounts,
   addAttendeesToEngagement,
   deleteEngagement,
+  fetchCollaborationTeam,
+  fetchMyCollaborationOpportunities,
+  fetchEngagementParticipants,
+  fetchMyEngagementAssignments,
   type EngagementType,
   type OpportunityFilter,
   type EngagementDescription,
@@ -675,6 +679,112 @@ server.tool(
     const progress = makeProgress(server);
     const engagement = await fetchEngagementById(engagement_id, progress);
     return { content: [{ type: "text", text: engagementListItem(engagement) }] };
+  }
+);
+
+// ---------------------------------------------------------------------------
+// Tool: search_my_engagements
+// ---------------------------------------------------------------------------
+server.tool(
+  "search_my_engagements",
+  `Find all engagements where the current user is listed as a participant (Active Participants / sn_engagementassignees).
+
+This is the primary search tool for SSCs and Specialists who are added to engagements
+but are not the engagement owner. Also useful for SCs to find engagements they collaborate on.
+
+Supports filtering by engagement type (e.g. "Demo", "Discovery"), status (open/complete/all),
+and free-text search on engagement name.`,
+  {
+    search: z.string().optional().describe("Filter by engagement name (partial match)"),
+    engagement_type: z.string().optional().describe("Filter by type, e.g. 'Demo', 'Discovery', 'POV'"),
+    status: z.enum(["open", "complete", "all"]).optional().describe("Filter by status (default: all)"),
+    top: z.number().optional().describe("Max results (default 50)"),
+  },
+  async ({ search, engagement_type, status, top }) => {
+    const progress = makeProgress(server);
+    const engagements = await fetchMyEngagementAssignments(
+      { search, engagementType: engagement_type, status, top },
+      progress
+    );
+    if (engagements.length === 0) {
+      return { content: [{ type: "text", text: "No engagements found where you are a participant." }] };
+    }
+    const lines = engagements.map(e => engagementListItem(e));
+    return { content: [{ type: "text", text: `Found ${engagements.length} engagement(s):\n\n${lines.join("\n\n---\n\n")}` }] };
+  }
+);
+
+// ---------------------------------------------------------------------------
+// Tool: search_my_collaboration_opportunities
+// ---------------------------------------------------------------------------
+server.tool(
+  "search_my_collaboration_opportunities",
+  `Find all open opportunities where the current user is on the Collaboration Team.
+
+This returns opportunities where you have been added as a collaborator (Solution Consultant,
+Specialist, Renewal AM, etc.) — even if you are not the primary SC or owner.
+Ideal for SSCs and Specialists to see their full pipeline.`,
+  {},
+  async () => {
+    const progress = makeProgress(server);
+    const opps = await fetchMyCollaborationOpportunities(progress);
+    if (opps.length === 0) {
+      return { content: [{ type: "text", text: "No open opportunities found where you are on the collaboration team." }] };
+    }
+    const lines = opps.map(o => {
+      const link = `${DYNAMICS_BASE_URL}/main.aspx?etn=opportunity&id=${o.opportunityid}&pagetype=entityrecord`;
+      return [
+        `**${o.name}** (${o.sn_number ?? "—"})`,
+        `Account: ${o.accountName} · Owner: ${o.ownerName ?? "—"} · SC: ${o.scName ?? "—"}`,
+        `Close: ${o.estimatedclosedate?.slice(0, 10) ?? "—"} · NNACV: ${o.totalamount != null ? `$${o.totalamount.toLocaleString()}` : "—"} · ${o.forecastCategoryName ?? "—"}`,
+        `🔗 ${link}`,
+      ].join("\n");
+    });
+    return { content: [{ type: "text", text: `Found ${opps.length} opportunity/ies:\n\n${lines.join("\n\n---\n\n")}` }] };
+  }
+);
+
+// ---------------------------------------------------------------------------
+// Tool: get_collaboration_team
+// ---------------------------------------------------------------------------
+server.tool(
+  "get_collaboration_team",
+  `View the full collaboration team on an opportunity — lists all SCs, Specialists,
+Renewal AMs, and other collaborators with their role, job role, primary status, and access level.`,
+  { opportunity_id: z.string().describe("Dynamics opportunity GUID") },
+  async ({ opportunity_id }) => {
+    const id = requireGuid(opportunity_id, "opportunity_id");
+    const progress = makeProgress(server);
+    const members = await fetchCollaborationTeam(id, progress);
+    if (members.length === 0) {
+      return { content: [{ type: "text", text: "No collaboration team members found on this opportunity." }] };
+    }
+    const lines = members.map(m =>
+      `• **${m.userName}** — ${m.collaborationRole}${m.jobRole ? ` (${m.jobRole})` : ""}${m.isPrimary ? " ⭐ Primary" : ""} · ${m.accessLevel}`
+    );
+    return { content: [{ type: "text", text: `Collaboration Team (${members.length} members):\n\n${lines.join("\n")}` }] };
+  }
+);
+
+// ---------------------------------------------------------------------------
+// Tool: get_engagement_participants
+// ---------------------------------------------------------------------------
+server.tool(
+  "get_engagement_participants",
+  `View the Active Participants on an engagement — lists all SCs/SSCs/Specialists
+assigned to a specific engagement record.`,
+  { engagement_id: z.string().describe("Dynamics sn_engagement GUID") },
+  async ({ engagement_id }) => {
+    const id = requireGuid(engagement_id, "engagement_id");
+    const progress = makeProgress(server);
+    const participants = await fetchEngagementParticipants(id, progress);
+    if (participants.length === 0) {
+      return { content: [{ type: "text", text: "No participants found on this engagement." }] };
+    }
+    const lines = participants.map(p =>
+      `• **${p.userName}**${p.title ? ` — ${p.title}` : ""}${p.isPrimary ? " ⭐ Primary" : ""}`
+    );
+    return { content: [{ type: "text", text: `Active Participants (${participants.length}):\n\n${lines.join("\n")}` }] };
   }
 );
 
