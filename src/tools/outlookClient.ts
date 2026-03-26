@@ -252,7 +252,8 @@ export async function getCalendarEvents(
     $top: "200",
     $orderby: "start/dateTime",
   });
-  if (search) params.set("$search", `"${search}"`);
+  if (search) params.set("$search", `"${search.replace(/"/g, "")}"`);
+
 
   const token = await acquireTeamsGraphToken(progress);
   const res = await fetch(`https://graph.microsoft.com/v1.0/me/calendarview?${params}`, {
@@ -344,7 +345,7 @@ export async function getEmails(opts: {
   let path: string;
   if (search) {
     const p = new URLSearchParams({
-      $search: `"${search}"`,
+      $search: `"${search.replace(/"/g, "")}"`,
       $select: selectFields,
       $top: String(top),
     });

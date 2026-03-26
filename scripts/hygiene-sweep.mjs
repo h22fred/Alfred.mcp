@@ -69,8 +69,10 @@ async function postTeamsRaw(webhookUrl, title, body) {
 
 function macosNotify(title, message) {
   try {
+    const safeTitle = String(title).replace(/["\n\r]/g, " ").slice(0, 80);
+    const safeMessage = String(message).replace(/["\n\r]/g, " ").slice(0, 200);
     execFileSync("osascript", ["-e",
-      `display notification "${message}" with title "${title}" sound name "Ping"`
+      `display notification "${safeMessage}" with title "${safeTitle}" sound name "Ping"`
     ]);
   } catch { /* non-fatal */ }
 }
