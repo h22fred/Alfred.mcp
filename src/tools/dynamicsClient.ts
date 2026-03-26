@@ -1,6 +1,6 @@
 import { getAuthCookies, clearAuthCache, type ProgressFn } from "../auth/tokenExtractor.js";
 import { userInfo } from "os";
-import { DYNAMICS_HOST } from "../config.js";
+import { DYNAMICS_HOST, ENGAGEMENT_TYPE_GUIDS, type EngagementType } from "../config.js";
 
 const DYNAMICS_BASE = `${DYNAMICS_HOST}/api/data/v9.2`;
 
@@ -26,6 +26,7 @@ function auditLog(action: string, details: Record<string, unknown> = {}): void {
     const entry = {
       timestamp: new Date().toISOString(),
       user: userInfo().username,
+      instance: DYNAMICS_HOST,
       action,
       ...details,
     };
@@ -33,31 +34,7 @@ function auditLog(action: string, details: Record<string, unknown> = {}): void {
   } catch { /* non-fatal */ }
 }
 
-export type EngagementType =
-  | "Business Case"
-  | "Customer Business Review"
-  | "Demo"
-  | "Discovery"
-  | "EBC"
-  | "Post Sale Engagement"
-  | "POV"
-  | "RFx"
-  | "Technical Win"
-  | "Workshop";
-
-// Hardcoded GUIDs from sn_engagementtypes lookup table
-const ENGAGEMENT_TYPE_GUIDS: Record<EngagementType, string> = {
-  "Business Case":            "e7cadf53-6e73-eb11-a812-000d3a1c68be",
-  "Customer Business Review": "e8cadf53-6e73-eb11-a812-000d3a1c68be",
-  "Demo":                     "e9cadf53-6e73-eb11-a812-000d3a1c68be",
-  "Discovery":                "43d14916-aa9c-ec11-b400-0022483026eb",
-  "EBC":                      "eacadf53-6e73-eb11-a812-000d3a1c68be",
-  "Post Sale Engagement":     "7a12ddba-aaba-eb11-8236-000d3a9d0356",
-  "POV":                      "ebcadf53-6e73-eb11-a812-000d3a1c68be",
-  "RFx":                      "eccadf53-6e73-eb11-a812-000d3a1c68be",
-  "Technical Win":            "edcadf53-6e73-eb11-a812-000d3a1c68be",
-  "Workshop":                 "eecadf53-6e73-eb11-a812-000d3a1c68be",
-};
+export type { EngagementType };
 
 export interface Opportunity {
   opportunityid: string;
@@ -128,7 +105,10 @@ async function dynamicsFetch(path: string, options: RequestInit = {}, progress: 
     // Session expired — clear cache and retry once with fresh cookies
     clearAuthCache();
     progress("🔄 Dynamics session expired — re-acquiring cookies...");
-    const freshCookie = await getAuthCookies(progress);
+    const freshCookie = await Promise.race([
+      getAuthCookies(progress),
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error("Auth refresh timed out after 30s — is Alfred running?")), 30_000)),
+    ]);
     const retry = await fetch(url, {
       ...options,
       headers: { ...headers, Cookie: freshCookie },
@@ -144,8 +124,14 @@ async function dynamicsFetch(path: string, options: RequestInit = {}, progress: 
   if (!response.ok) {
     let msg = `Dynamics API error: ${response.status} ${response.statusText}`;
     try {
-      const body = await response.json();
-      if (body?.error?.message) msg += ` — ${body.error.message}`;
+      const ct = response.headers.get("content-type") ?? "";
+      if (ct.includes("json")) {
+        const body = await response.json();
+        if (body?.error?.message) msg += ` — ${body.error.message}`;
+      } else {
+        const text = await response.text().catch(() => "");
+        if (text) msg += ` — ${text.slice(0, 200)}`;
+      }
     } catch { /* ignore */ }
     throw new Error(msg);
   }
@@ -396,9 +382,8 @@ export async function createEngagement(input: CreateEngagementInput, progress: P
   } else {
     const location = res.headers.get("OData-EntityId") ?? res.headers.get("Location");
     const match = location?.match(/sn_engagements\(([^)]+)\)/);
-    engagement = match?.[1]
-      ? await fetchEngagementById(match[1], progress)
-      : (payload as unknown as Engagement);
+    if (!match?.[1]) throw new Error("Engagement created but could not retrieve ID from response");
+    engagement = await fetchEngagementById(match[1], progress);
   }
 
   progress("✅ Engagement created successfully");

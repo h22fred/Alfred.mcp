@@ -41,6 +41,25 @@ function makeProgress(srv: McpServer) {
   };
 }
 
+/** Simple in-process write rate limiter — max N writes per rolling window. */
+class WriteRateLimiter {
+  private timestamps: number[] = [];
+  constructor(private readonly max: number, private readonly windowMs: number) {}
+  check(action: string): void {
+    const now = Date.now();
+    this.timestamps = this.timestamps.filter(t => now - t < this.windowMs);
+    if (this.timestamps.length >= this.max) {
+      throw new Error(
+        `Rate limit: no more than ${this.max} ${action} operations per ${this.windowMs / 60000} minutes. ` +
+        `Please review what you are doing before continuing.`
+      );
+    }
+    this.timestamps.push(now);
+  }
+}
+
+const opportunityWriteLimiter = new WriteRateLimiter(10, 10 * 60 * 1000); // 10 per 10 min
+
 const FORECAST_NAMES: Record<number, string> = {
   100000001: "Pipeline",
   100000002: "Best Case",
@@ -202,6 +221,8 @@ Workflow:
       }] };
     }
 
+    opportunityWriteLimiter.check("create_opportunity");
+
     // Default owner to current user if not provided
     let resolvedOwnerId = owner_id;
     if (!resolvedOwnerId) {
@@ -280,6 +301,8 @@ Always show the current values and the proposed changes, then confirm before cal
         `Call again with \`confirmed: true\` to apply.`
       }] };
     }
+
+    opportunityWriteLimiter.check("update_opportunity");
 
     const updated = await updateOpportunity({
       opportunityId: opportunity_id,

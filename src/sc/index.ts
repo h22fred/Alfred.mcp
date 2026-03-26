@@ -6,7 +6,7 @@ import { homedir } from "os";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
 import { execSync } from "child_process";
-import { DYNAMICS_HOST, alfredConfig as _baseConfig } from "../config.js";
+import { DYNAMICS_HOST, alfredConfig as _baseConfig, ALL_ENGAGEMENT_TYPES } from "../config.js";
 import {
   fetchOpportunities,
   fetchOpportunityById,
@@ -29,7 +29,7 @@ import {
   type EngagementDescription,
 } from "../tools/dynamicsClient.js";
 import { closeBrowser, setManualCookies, ensureAlfred, clearAuthCache } from "../auth/tokenExtractor.js";
-import { getCalendarEvents, getEmails, setOutlookCookies, clearGraphTokenCache } from "../tools/outlookClient.js";
+import { getCalendarEvents, getEmails, clearGraphTokenCache } from "../tools/outlookClient.js";
 import { setTeamsWebhook, postTeamsNotification, getTeamsTranscript, getTeamsChats } from "../tools/teamsClient.js";
 import { runHygieneSweep, formatHygieneReport } from "../tools/hygieneClient.js";
 import { detectPostMeetingEngagements } from "../tools/postMeetingClient.js";
@@ -90,10 +90,6 @@ const isSSC     = alfredConfig.role === "ssc";
 const isManager = alfredConfig.role === "manager";
 
 // Which engagement types this user has enabled (defaults to all if not configured)
-const ALL_ENGAGEMENT_TYPES = [
-  "Business Case", "Customer Business Review", "Demo", "Discovery", "EBC",
-  "Post Sale Engagement", "POV", "RFx", "Technical Win", "Workshop",
-] as const;
 const activeEngagementTypes: string[] = alfredConfig.engagementTypes?.length
   ? alfredConfig.engagementTypes
   : [...ALL_ENGAGEMENT_TYPES];
@@ -143,18 +139,7 @@ function makeProgress(srv: McpServer) {
   };
 }
 
-const ENGAGEMENT_TYPES = [
-  "Business Case",
-  "Customer Business Review",
-  "Demo",
-  "Discovery",
-  "EBC",
-  "Post Sale Engagement",
-  "POV",
-  "RFx",
-  "Technical Win",
-  "Workshop",
-] as const;
+const ENGAGEMENT_TYPES = ALL_ENGAGEMENT_TYPES;
 
 const server = new McpServer({
   name: "sc-engagement-mcp",
@@ -694,21 +679,6 @@ server.tool(
 );
 
 // ---------------------------------------------------------------------------
-// Tool: provide_outlook_cookie
-// ---------------------------------------------------------------------------
-server.tool(
-  "provide_outlook_cookie",
-  "Manually provide Outlook session cookies. Get them from Chrome DevTools: open outlook.office.com → F12 → Network tab → click any request → copy the Cookie header value.",
-  { cookie: z.string().describe("The full Cookie header value from an Outlook Web request") },
-  async ({ cookie }) => {
-    setOutlookCookies(cookie);
-    return {
-      content: [{ type: "text", text: "✅ Outlook session cookies accepted. You can now use get_calendar_events and search_emails." }],
-    };
-  }
-);
-
-// ---------------------------------------------------------------------------
 // Tool: get_calendar_events
 // ---------------------------------------------------------------------------
 server.tool(
@@ -783,7 +753,16 @@ server.tool(
       return { content: [{ type: "text", text: "❌ URL must be a *.webhook.office.com Teams incoming webhook." }] };
     }
     setTeamsWebhook(webhook_url);
-    return { content: [{ type: "text", text: "✅ Teams webhook configured. Notifications will post to that channel." }] };
+    // Persist to config so it's remembered across sessions
+    try {
+      const fs = await import("fs");
+      const os = await import("os");
+      const cfgPath = `${os.default.homedir()}/.alfred-config.json`;
+      const cfg = JSON.parse(fs.default.readFileSync(cfgPath, "utf-8").toString());
+      cfg.teamsWebhook = webhook_url;
+      fs.default.writeFileSync(cfgPath, JSON.stringify(cfg, null, 2));
+    } catch { /* non-fatal */ }
+    return { content: [{ type: "text", text: "✅ Teams webhook configured and saved. Notifications will post to that channel." }] };
   }
 );
 

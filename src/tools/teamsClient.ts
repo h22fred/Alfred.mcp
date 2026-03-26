@@ -6,10 +6,25 @@ const CDP_PORT = 9222;
 const TOKEN_CACHE_MS = 45 * 60 * 1000;
 
 // ---------------------------------------------------------------------------
-// Teams webhook config (set once via configure_teams_webhook tool)
+// Teams webhook config — loaded from ~/.alfred-config.json on startup,
+// can be overridden at runtime via configure_teams_webhook tool
 // ---------------------------------------------------------------------------
 
 let webhookUrl: string | null = null;
+
+// Auto-load webhook from persistent config
+try {
+  const fs = await import("fs");
+  const os = await import("os");
+  const cfgPath = `${os.default.homedir()}/.alfred-config.json`;
+  if (fs.default.existsSync(cfgPath)) {
+    const cfg = JSON.parse(fs.default.readFileSync(cfgPath, "utf-8"));
+    if (cfg.teamsWebhook) {
+      webhookUrl = cfg.teamsWebhook;
+      console.error("[teams] Webhook URL loaded from config");
+    }
+  }
+} catch { /* non-fatal — user can set it manually */ }
 
 export function setTeamsWebhook(url: string): void {
   webhookUrl = url;

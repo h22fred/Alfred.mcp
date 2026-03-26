@@ -93,8 +93,9 @@ function fmt(n?: number): string {
     : `$${Math.round(n / 1_000)}K`;
 }
 
+/** Truncate to `max` characters including the trailing ellipsis. */
 function truncate(s: string, max: number): string {
-  return s.length > max ? s.slice(0, max - 1) + "…" : s;
+  return s.length > max ? s.slice(0, max - 1) + "…" : s;  // result is exactly `max` chars
 }
 
 function oppRow(r: HygieneResult): Record<string, unknown> {
