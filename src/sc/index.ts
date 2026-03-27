@@ -370,6 +370,14 @@ Always populate the structured description fields for every engagement type:
 - use_case, key_points (label auto-adapts per type), next_actions, risks, stakeholders
 A timeline note is created automatically on creation.
 
+IMPORTANT — primary_product_id MUST match the linked opportunity's Business Unit / product. Never guess — use search_product_families and cross-check the opportunity's Business Unit List before selecting.
+
+FORMAT: All text fields must use bullet points (• item), never prose paragraphs. Keep each bullet to one line.
+
+STAKEHOLDERS: Internal ServiceNow people — names only, no titles. External customer contacts — include business title if known.
+
+Do NOT append internal SC attribution (e.g. "SC: Fredrik Holmstrom") to any text field — Dynamics captures the author automatically.
+
 When creating from a calendar event or meeting, always pass the attendees list — they are automatically linked as Active Participants (internal @servicenow.com colleagues) and Active Engagement Contacts (external customers).`,
   {
     opportunity_id: z.string().describe("Dynamics opportunity GUID"),
@@ -515,11 +523,16 @@ IMPORTANT: Always show the user exactly what will change (field by field) and ge
 To REOPEN a completed engagement, set mark_complete=false — this PATCHes statecode=0, statuscode=1.
 
 Always use the structured description fields to keep the description current (applies to all engagement types).
-A timeline_title + timeline_text should always be provided to log what changed.`,
+A timeline_title + timeline_text should always be provided to log what changed.
+
+IMPORTANT — primary_product_id MUST match the linked opportunity's Business Unit / product. Never guess — use search_product_families and cross-check against the opportunity before setting.
+
+FORMAT: timeline_text and all text fields must use bullet points (• item), never prose paragraphs. Keep each bullet to one line.`,
   {
     engagement_id: z.string().describe("Dynamics sn_engagement GUID"),
     name: z.string().optional().describe("Updated engagement name"),
     type: z.enum(ENGAGEMENT_TYPES).optional().describe("Updated engagement type"),
+    primary_product_id: z.string().optional().describe("Updated primary product GUID (sn_productfamilies) — use search_product_families to find the correct GUID"),
     completed_date: z.string().optional().describe("Updated completed date (ISO format e.g. 2026-03-16)"),
     mark_complete: z.boolean().optional().describe("Set to true to mark Complete. Set to false to REOPEN a completed engagement (sets statecode=0, statuscode=1)."),
     // Structured description fields (all types)
@@ -533,7 +546,7 @@ A timeline_title + timeline_text should always be provided to log what changed.`
     timeline_title: z.string().optional().describe("Title for the timeline note (e.g. 'Discovery update - requirements captured')"),
     timeline_text: z.string().optional().describe("Body text for the timeline note"),
   },
-  async ({ engagement_id, name, type, completed_date, mark_complete, use_case, key_points, next_actions, risks, stakeholders, notes, timeline_title, timeline_text }) => {
+  async ({ engagement_id, name, type, primary_product_id, completed_date, mark_complete, use_case, key_points, next_actions, risks, stakeholders, notes, timeline_title, timeline_text }) => {
     const id = requireGuid(engagement_id, "engagement_id");
     const progress = makeProgress(server);
     const desc: EngagementDescription = { engagementType: type as EngagementType | undefined, useCase: use_case, keyPoints: key_points, nextActions: next_actions, risks, stakeholders };
@@ -541,6 +554,7 @@ A timeline_title + timeline_text should always be provided to log what changed.`
     const updated = await updateEngagement(id, {
       name,
       type: type as EngagementType | undefined,
+      primaryProductId: primary_product_id,
       completedDate: completed_date,
       markComplete: mark_complete,
       description: hasStructured ? desc : undefined,
