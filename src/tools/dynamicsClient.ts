@@ -51,6 +51,17 @@ export interface Opportunity {
   ownerName?: string;
   scName?: string;
   totalamount?: number;
+  // Extended fields
+  opportunityType?: string;       // e.g. "Order Reset", "New Business"
+  salesStage?: string;            // e.g. "7 - Deal Imminent"
+  probability?: number;           // e.g. 90
+  businessUnitList?: string;      // e.g. "Customer Service, ITSM, AI Platform Foundations, Impact"
+  dealChampion?: string;
+  industrySolution?: string;
+  description?: string;           // opportunity description / notes
+  isCompetitive?: boolean;
+  winLossReason?: string;
+  winLossNotes?: string;
 }
 
 export interface Product {
@@ -184,10 +195,21 @@ function mapOpportunity(r: Record<string, unknown>): Opportunity {
     estimatedclosedate:  r.estimatedclosedate as string | undefined,
     msdyn_forecastcategory: forecastCode,
     forecastCategoryName: forecastCode ? (FORECAST_NAMES[forecastCode] ?? String(forecastCode)) : undefined,
-    // ownerid is a polymorphic principal — use formatted value annotation (free with odata.include-annotations=*)
     ownerName:           r["_ownerid_value@OData.Community.Display.V1.FormattedValue"] as string | undefined,
     scName:              r["_sn_solutionconsultant_value@OData.Community.Display.V1.FormattedValue"] as string | undefined,
     totalamount:         r.totalamount as number | undefined,
+    // Extended fields
+    opportunityType:     r["sn_opportunitytype@OData.Community.Display.V1.FormattedValue"] as string | undefined,
+    salesStage:          r["sn_salestage@OData.Community.Display.V1.FormattedValue"] as string | undefined
+                         ?? r["stepname"] as string | undefined,
+    probability:         r.closeprobability as number | undefined,
+    businessUnitList:    r.sn_businessunitlist as string | undefined,
+    dealChampion:        r["_sn_dealchampion_value@OData.Community.Display.V1.FormattedValue"] as string | undefined,
+    industrySolution:    r["sn_industrysolution@OData.Community.Display.V1.FormattedValue"] as string | undefined,
+    description:         r.description as string | undefined,
+    isCompetitive:       r.sn_iscompetitive as boolean | undefined,
+    winLossReason:       r["sn_winlossreason@OData.Community.Display.V1.FormattedValue"] as string | undefined,
+    winLossNotes:        r.sn_winlossnotes as string | undefined,
   };
 }
 
@@ -266,7 +288,7 @@ export async function fetchOpportunities(filter: OpportunityFilter = {}, progres
 
   const path =
     "/opportunities" +
-    `?$select=opportunityid,sn_number,name,_accountid_value,_ownerid_value,_sn_solutionconsultant_value,statuscode,estimatedclosedate,totalamount,msdyn_forecastcategory` +
+    `?$select=opportunityid,sn_number,name,_accountid_value,_ownerid_value,_sn_solutionconsultant_value,statuscode,estimatedclosedate,totalamount,msdyn_forecastcategory,sn_opportunitytype,sn_salestage,stepname,closeprobability,sn_businessunitlist` +
     `&$expand=parentaccountid($select=accountid,name)` +
     `&$filter=${encodeURIComponent(filterClause)}` +
     `&$orderby=estimatedclosedate asc` +
@@ -283,7 +305,7 @@ export async function fetchOpportunityById(id: string, progress: ProgressFn = ()
   progress(`📡 Fetching opportunity ${id}...`);
   const path =
     `/opportunities(${id})` +
-    "?$select=opportunityid,sn_number,name,_accountid_value,_ownerid_value,_sn_solutionconsultant_value,statuscode,estimatedclosedate,totalamount,msdyn_forecastcategory" +
+    "?$select=opportunityid,sn_number,name,_accountid_value,_ownerid_value,_sn_solutionconsultant_value,statuscode,estimatedclosedate,totalamount,msdyn_forecastcategory,sn_opportunitytype,sn_salestage,stepname,closeprobability,sn_businessunitlist,_sn_dealchampion_value,sn_industrysolution,description,sn_iscompetitive,sn_winlossreason,sn_winlossnotes" +
     "&$expand=parentaccountid($select=accountid,name)";
 
   const res = await dynamicsFetch(path, {}, progress);
@@ -961,7 +983,7 @@ export async function fetchMyCollaborationOpportunities(
     const idFilter = batch.map(id => `opportunityid eq ${id}`).join(" or ");
     const path =
       `/opportunities` +
-      `?$select=opportunityid,sn_number,name,_accountid_value,_ownerid_value,_sn_solutionconsultant_value,statuscode,estimatedclosedate,totalamount,msdyn_forecastcategory` +
+      `?$select=opportunityid,sn_number,name,_accountid_value,_ownerid_value,_sn_solutionconsultant_value,statuscode,estimatedclosedate,totalamount,msdyn_forecastcategory,sn_opportunitytype,sn_salestage,stepname,closeprobability,sn_businessunitlist` +
       `&$expand=parentaccountid($select=accountid,name)` +
       `&$filter=statecode eq 0 and (${idFilter})` +
       `&$orderby=estimatedclosedate asc` +
