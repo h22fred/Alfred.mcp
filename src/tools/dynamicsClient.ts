@@ -515,6 +515,7 @@ export async function updateEngagement(
   patch: {
     name?: string;
     type?: EngagementType;
+    primaryProductId?: string;            // sn_productfamilies GUID
     completedDate?: string;
     markComplete?: boolean;               // sets statecode=1, statuscode=2
     description?: EngagementDescription; // structured — replaces full description
@@ -538,6 +539,9 @@ export async function updateEngagement(
     if (!typeGuid) throw new Error(`Unknown engagement type: ${patch.type}`);
     payload["sn_engagementtypeid@odata.bind"] = `/sn_engagementtypes(${typeGuid})`;
   }
+  if (patch.primaryProductId) {
+    payload["sn_primaryproductid@odata.bind"] = `/sn_productfamilies(${requireGuid(patch.primaryProductId, "primaryProductId")})`;
+  }
 
   await dynamicsFetch(`/sn_engagements(${id})`, {
     method: "PATCH",
@@ -554,6 +558,15 @@ export async function updateEngagement(
   }
 
   if (patch.timelineTitle && patch.timelineText) {
+    // Update-in-place: if a note with the same title exists, delete it first
+    try {
+      const existing = await listTimelineNotes(id, () => {});
+      const match = existing.find(n => n.subject === patch.timelineTitle);
+      if (match) {
+        progress(`♻️ Replacing existing timeline note "${patch.timelineTitle}"...`);
+        await deleteTimelineNote(match.annotationid, progress);
+      }
+    } catch { /* non-fatal — create new if lookup fails */ }
     await createTimelineNote(id, patch.timelineTitle, patch.timelineText, progress);
   }
 
