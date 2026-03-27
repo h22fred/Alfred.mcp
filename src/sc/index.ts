@@ -1178,6 +1178,39 @@ server.tool(
 );
 
 // ---------------------------------------------------------------------------
+// Startup version check — run before server connect so prompt is ready
+// ---------------------------------------------------------------------------
+let versionStatus = "";
+try {
+  const __fn = fileURLToPath(import.meta.url);
+  const installDir = join(dirname(__fn), "..", "..");
+  const localSha = execFileSync("git", ["-C", installDir, "rev-parse", "--short", "HEAD"], { encoding: "utf8", timeout: 5_000 }).trim();
+  execFileSync("git", ["-C", installDir, "fetch", "--quiet"], { timeout: 15_000 });
+  const remoteSha = execFileSync("git", ["-C", installDir, "rev-parse", "--short", "origin/main"], { encoding: "utf8", timeout: 5_000 }).trim();
+  if (localSha !== remoteSha) {
+    const behind = execFileSync("git", ["-C", installDir, "rev-list", "--count", `${localSha}..origin/main`], { encoding: "utf8", timeout: 5_000 }).trim();
+    versionStatus = `⚠️ Alfred update available — you are ${behind} commit(s) behind (${localSha} → ${remoteSha}). Tell the user to run update_alfred to get the latest version.`;
+    console.error(`[alfred] ${versionStatus}`);
+  } else {
+    console.error(`[alfred] ✅ Up to date (${localSha})`);
+  }
+} catch { /* non-fatal — skip version check if offline or git fails */ }
+
+// Register prompt so Claude sees the update warning at session start
+if (versionStatus) {
+  server.prompt(
+    "alfred_update_available",
+    "IMPORTANT: Alfred has a pending update — inform the user immediately",
+    () => ({
+      messages: [{
+        role: "user",
+        content: { type: "text", text: versionStatus },
+      }],
+    })
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Start server
 // ---------------------------------------------------------------------------
 const transport = new StdioServerTransport();
