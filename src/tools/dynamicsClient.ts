@@ -586,12 +586,12 @@ export interface TimelineNote {
 }
 
 export async function listTimelineNotes(
-  engagementId: string,
+  entityId: string,
   progress: ProgressFn = () => {}
 ): Promise<TimelineNote[]> {
-  progress(`📋 Fetching timeline notes for engagement ${engagementId}...`);
+  progress(`📋 Fetching timeline notes for ${entityId}...`);
   const path =
-    `/annotations?$filter=_objectid_value eq ${engagementId}` +
+    `/annotations?$filter=_objectid_value eq ${entityId}` +
     `&$select=annotationid,subject,notetext,createdon` +
     `&$orderby=createdon desc`;
 

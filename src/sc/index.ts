@@ -258,8 +258,23 @@ Example output: "SITA has CSM Pro — 600/1400 seats used (43%). This TPSM oppor
     const id = requireGuid(opportunity_id, "opportunity_id");
     const progress = makeProgress(server);
     const opp = await fetchOpportunityById(id, progress);
+
+    // Also fetch opportunity timeline notes — critical context for engagement creation
+    let timelineSection = "";
+    try {
+      const notes = await listTimelineNotes(id, progress);
+      if (notes.length > 0) {
+        timelineSection = "\n\n--- Opportunity Timeline Notes ---\n" +
+          notes.map(n =>
+            `[${n.createdon?.slice(0, 10) ?? "—"}] ${n.subject ?? "(no subject)"}\n${n.notetext ?? ""}`
+          ).join("\n\n");
+      } else {
+        timelineSection = "\n\n--- No timeline notes on this opportunity ---";
+      }
+    } catch { timelineSection = "\n\n--- Could not fetch opportunity timeline notes ---"; }
+
     return {
-      content: [{ type: "text", text: JSON.stringify(opp, null, 2) }],
+      content: [{ type: "text", text: JSON.stringify(opp, null, 2) + timelineSection }],
     };
   }
 );
@@ -377,6 +392,8 @@ FORMAT: All text fields must use bullet points (• item), never prose paragraph
 STAKEHOLDERS: Internal ServiceNow people — names only, no titles. External customer contacts — include business title if known.
 
 Do NOT append internal SC attribution (e.g. "SC: Fredrik Holmstrom") to any text field — Dynamics captures the author automatically.
+
+BEFORE generating any content: call list_engagements on the opportunity to read existing engagement content, and get_opportunity to read the opportunity timeline. Only write what is genuinely NEW — never duplicate what is already logged.
 
 When creating from a calendar event or meeting, always pass the attendees list — they are automatically linked as Active Participants (internal @servicenow.com colleagues) and Active Engagement Contacts (external customers).`,
   {
@@ -527,7 +544,9 @@ A timeline_title + timeline_text should always be provided to log what changed.
 
 IMPORTANT — primary_product_id MUST match the linked opportunity's Business Unit / product. Never guess — use search_product_families and cross-check against the opportunity before setting.
 
-FORMAT: timeline_text and all text fields must use bullet points (• item), never prose paragraphs. Keep each bullet to one line.`,
+FORMAT: timeline_text and all text fields must use bullet points (• item), never prose paragraphs. Keep each bullet to one line.
+
+BEFORE generating any content: read the existing engagement (get_engagement), list_engagements on the opportunity, and get_opportunity timeline. Only write what is genuinely NEW — never duplicate what is already logged.`,
   {
     engagement_id: z.string().describe("Dynamics sn_engagement GUID"),
     name: z.string().optional().describe("Updated engagement name"),
