@@ -448,11 +448,24 @@ const KEY_POINTS_LABEL: Record<EngagementType, string> = {
 export interface EngagementDescription {
   engagementType?: EngagementType;
   useCase?: string;
-  keyPoints?: string[];    // bullet list — label varies by type
-  nextActions?: string[];  // bullet list
+  keyPoints?: string[];       // bullet list — label varies by type
+  secondaryPoints?: string[]; // type-specific secondary list (e.g. "Customer feedback" for Demo, "Key questions" for Discovery)
+  nextActions?: string[];     // bullet list
   risks?: string;
   stakeholders?: string;
+  submissionDate?: string;    // RFx-specific
 }
+
+// Per-type label for the secondary bullet list (if applicable)
+const SECONDARY_POINTS_LABEL: Partial<Record<EngagementType, string>> = {
+  "Discovery":                "Key questions / requirements uncovered",
+  "Demo":                     "Customer reactions / feedback",
+  "Business Case":            "Quantified benefits",
+  "Workshop":                 "Customer reactions / feedback",
+  "POV":                      "Customer reactions / results",
+  "EBC":                      "Customer reactions / feedback",
+  "Customer Business Review": "Action items agreed",
+};
 
 export function buildDescription(d: EngagementDescription): string {
   const lines: string[] = [];
@@ -461,6 +474,14 @@ export function buildDescription(d: EngagementDescription): string {
     const label = d.engagementType ? (KEY_POINTS_LABEL[d.engagementType] ?? "Key points") : "Key points";
     lines.push(`${label}:`);
     d.keyPoints.forEach(p => lines.push(`• ${p}`));
+  }
+  if (d.secondaryPoints?.length && d.engagementType) {
+    const label = SECONDARY_POINTS_LABEL[d.engagementType] ?? "Additional notes";
+    lines.push(`${label}:`);
+    d.secondaryPoints.forEach(p => lines.push(`• ${p}`));
+  }
+  if (d.submissionDate && d.engagementType === "RFx") {
+    lines.push(`Submission date: ${d.submissionDate}`);
   }
   if (d.nextActions?.length) {
     lines.push("Next actions:");
@@ -802,6 +823,51 @@ export async function searchAccounts(name: string, progress: ProgressFn = () => 
   const data = await res.json();
   const results = (data.value ?? []).map(mapAccount);
   progress(`✅ Found ${results.length} account(s)`);
+  return results;
+}
+
+// ---------------------------------------------------------------------------
+// Contacts (CRM contacts — for external stakeholder enrichment)
+// ---------------------------------------------------------------------------
+
+export interface Contact {
+  contactid: string;
+  fullname: string;
+  emailaddress1?: string;
+  jobtitle?: string;
+  telephone1?: string;
+  accountName?: string;
+}
+
+export async function searchContacts(
+  query: string,
+  opts: { accountId?: string } = {},
+  progress: ProgressFn = () => {}
+): Promise<Contact[]> {
+  const safe = sanitizeODataSearch(query);
+  progress(`🔍 Searching contacts for "${safe}"...`);
+  let filter = `(contains(fullname,'${safe}') or contains(emailaddress1,'${safe}'))`;
+  if (opts.accountId) {
+    requireGuid(opts.accountId, "accountId");
+    filter += ` and _parentcustomerid_value eq '${opts.accountId}'`;
+  }
+  const path =
+    `/contacts?$select=contactid,fullname,emailaddress1,jobtitle,telephone1,_parentcustomerid_value` +
+    `&$expand=parentcustomerid_account($select=name)` +
+    `&$filter=${encodeURIComponent(filter)}` +
+    `&$orderby=fullname asc&$top=20`;
+
+  const res = await dynamicsFetch(path, {}, progress);
+  const data = await res.json() as { value: Record<string, unknown>[] };
+  const results = (data.value ?? []).map(r => ({
+    contactid:     r.contactid as string,
+    fullname:      r.fullname as string,
+    emailaddress1: r.emailaddress1 as string | undefined,
+    jobtitle:      r.jobtitle as string | undefined,
+    telephone1:    r.telephone1 as string | undefined,
+    accountName:   (r.parentcustomerid_account as Record<string, unknown> | undefined)?.name as string | undefined,
+  }));
+  progress(`✅ Found ${results.length} contact(s)`);
   return results;
 }
 

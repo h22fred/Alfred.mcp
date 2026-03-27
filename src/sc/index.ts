@@ -29,6 +29,7 @@ import {
   fetchMyCollaborationOpportunities,
   fetchEngagementParticipants,
   fetchMyEngagementAssignments,
+  searchContacts,
   type EngagementType,
   type OpportunityFilter,
   type EngagementDescription,
@@ -370,6 +371,36 @@ server.tool(
 );
 
 // ---------------------------------------------------------------------------
+// Tool: search_contacts
+// ---------------------------------------------------------------------------
+server.tool(
+  "search_contacts",
+  `Search Dynamics 365 contacts by name or email. Returns job title, email, phone, and account.
+
+Use this to enrich the stakeholders field with external customer titles (e.g. "Carlo Tamburrini, VP IT Operations").
+Optionally filter by account_id to scope results to a specific customer.`,
+  {
+    query: z.string().describe("Contact name or email to search for"),
+    account_id: z.string().optional().describe("Optional account GUID to scope results to a specific customer"),
+  },
+  async ({ query, account_id }) => {
+    if (account_id) requireGuid(account_id, "account_id");
+    const progress = makeProgress(server);
+    const contacts = await searchContacts(query, { accountId: account_id }, progress);
+    if (contacts.length === 0) {
+      return { content: [{ type: "text", text: "No contacts found." }] };
+    }
+    const text = contacts.map(c =>
+      `**${c.fullname}**${c.jobtitle ? ` — ${c.jobtitle}` : ""}` +
+      `${c.emailaddress1 ? `\n  Email: ${c.emailaddress1}` : ""}` +
+      `${c.telephone1 ? `\n  Phone: ${c.telephone1}` : ""}` +
+      `${c.accountName ? `\n  Account: ${c.accountName}` : ""}`
+    ).join("\n\n");
+    return { content: [{ type: "text", text }] };
+  }
+);
+
+// ---------------------------------------------------------------------------
 // Tool: create_engagement
 // ---------------------------------------------------------------------------
 server.tool(
@@ -405,9 +436,11 @@ When creating from a calendar event or meeting, always pass the attendees list �
     // Structured description (applies to all engagement types)
     use_case: z.string().optional().describe("Use case name (e.g. ICW, ITSM)"),
     key_points: z.array(z.string()).optional().describe("Key points — label auto-adapts per type (e.g. 'Milestones achieved' for Tech Win, 'Objectives identified' for Discovery, 'Demo delivered' for Demo)"),
+    secondary_points: z.array(z.string()).optional().describe("Type-specific secondary bullets — auto-labelled per type: Discovery='Key questions uncovered', Demo/Workshop/EBC='Customer reactions/feedback', Business Case='Quantified benefits', POV='Customer results', CBR='Action items agreed'"),
+    submission_date: z.string().optional().describe("RFx only — submission/due date for the RFP/RFI"),
     next_actions: z.array(z.string()).optional().describe("List of next actions to complete"),
     risks: z.string().optional().describe("Risks or help required (use '-' if none)"),
-    stakeholders: z.string().optional().describe("Stakeholders (e.g. 'Brent Harrison and Lucio')"),
+    stakeholders: z.string().optional().describe("Stakeholders — use search_contacts to look up external customer titles. Internal SN people: names only, no titles."),
     // Plain text fallback
     notes: z.string().optional().describe("Plain text description (used only if structured fields are not provided)"),
     // Attendees — pass from the calendar event, linked automatically after creation
@@ -417,7 +450,7 @@ When creating from a calendar event or meeting, always pass the attendees list �
     })).optional().describe("Meeting attendees from the calendar event. Always pass these when creating from a meeting — internal (@servicenow.com/@now.com) become Active Participants, external become Active Engagement Contacts."),
     confirmed: z.boolean().optional().describe("MUST be true to actually create. Omit or set false to get a dry-run preview first. Always preview before creating."),
   },
-  async ({ opportunity_id, primary_product_id, name, type, completed_date, use_case, key_points, next_actions, risks, stakeholders, notes, attendees, confirmed }) => {
+  async ({ opportunity_id, primary_product_id, name, type, completed_date, use_case, key_points, secondary_points, submission_date, next_actions, risks, stakeholders, notes, attendees, confirmed }) => {
     requireGuid(opportunity_id, "opportunity_id");
     requireGuid(primary_product_id, "primary_product_id");
 
@@ -445,8 +478,8 @@ When creating from a calendar event or meeting, always pass the attendees list �
     const opp = await fetchOpportunityById(opportunity_id, progress);
     progress(`🏢 Account resolved: ${opp.accountName}`);
 
-    const desc: EngagementDescription = { engagementType: type as EngagementType, useCase: use_case, keyPoints: key_points, nextActions: next_actions, risks, stakeholders };
-    const hasStructured = use_case || key_points?.length || next_actions?.length || stakeholders;
+    const desc: EngagementDescription = { engagementType: type as EngagementType, useCase: use_case, keyPoints: key_points, secondaryPoints: secondary_points, submissionDate: submission_date, nextActions: next_actions, risks, stakeholders };
+    const hasStructured = use_case || key_points?.length || secondary_points?.length || next_actions?.length || stakeholders;
     const finalNotes = hasStructured ? buildDescription(desc) : notes;
 
     const engagement = await createEngagement({
@@ -557,19 +590,21 @@ BEFORE generating any content: read the existing engagement (get_engagement), li
     // Structured description fields (all types)
     use_case: z.string().optional().describe("Use case name"),
     key_points: z.array(z.string()).optional().describe("Full updated key points list — label auto-adapts per engagement type"),
+    secondary_points: z.array(z.string()).optional().describe("Type-specific secondary bullets — Discovery='Key questions uncovered', Demo/Workshop/EBC='Customer reactions/feedback', Business Case='Quantified benefits', POV='Customer results', CBR='Action items agreed'"),
+    submission_date: z.string().optional().describe("RFx only — submission/due date"),
     next_actions: z.array(z.string()).optional().describe("Full updated list of next actions"),
     risks: z.string().optional().describe("Risks or help required"),
-    stakeholders: z.string().optional().describe("Stakeholders"),
+    stakeholders: z.string().optional().describe("Stakeholders — use search_contacts for external titles. Internal SN: names only."),
     notes: z.string().optional().describe("Plain text description (only if structured fields not used)"),
     // Timeline note
     timeline_title: z.string().optional().describe("Title for the timeline note (e.g. 'Discovery update - requirements captured')"),
     timeline_text: z.string().optional().describe("Body text for the timeline note"),
   },
-  async ({ engagement_id, name, type, primary_product_id, completed_date, mark_complete, use_case, key_points, next_actions, risks, stakeholders, notes, timeline_title, timeline_text }) => {
+  async ({ engagement_id, name, type, primary_product_id, completed_date, mark_complete, use_case, key_points, secondary_points, submission_date, next_actions, risks, stakeholders, notes, timeline_title, timeline_text }) => {
     const id = requireGuid(engagement_id, "engagement_id");
     const progress = makeProgress(server);
-    const desc: EngagementDescription = { engagementType: type as EngagementType | undefined, useCase: use_case, keyPoints: key_points, nextActions: next_actions, risks, stakeholders };
-    const hasStructured = use_case || key_points?.length || next_actions?.length || stakeholders;
+    const desc: EngagementDescription = { engagementType: type as EngagementType | undefined, useCase: use_case, keyPoints: key_points, secondaryPoints: secondary_points, submissionDate: submission_date, nextActions: next_actions, risks, stakeholders };
+    const hasStructured = use_case || key_points?.length || secondary_points?.length || next_actions?.length || stakeholders;
     const updated = await updateEngagement(id, {
       name,
       type: type as EngagementType | undefined,
