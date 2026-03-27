@@ -1,6 +1,7 @@
 import { connectWithRetry } from "../auth/tokenExtractor.js";
 import { acquireTeamsGraphToken } from "./teamsClient.js";
 import type { ProgressFn } from "../auth/tokenExtractor.js";
+import { stripHtml } from "../shared.js";
 
 const CDP_PORT = 9222;
 const OUTLOOK_ORIGIN = "https://outlook.office.com";
@@ -326,6 +327,12 @@ export async function getCalendarEvents(
     }
   }
 
+  // Warn if we hit the $top limit — results may be truncated
+  const rawCount = (data.value ?? []).length;
+  if (rawCount >= top) {
+    progress(`⚠️ Returned ${rawCount} events (hit limit) — narrow the date range or add a search filter for complete results`);
+  }
+
   progress(`✅ Found ${events.length} calendar event(s)`);
   return events;
 }
@@ -333,28 +340,6 @@ export async function getCalendarEvents(
 // ---------------------------------------------------------------------------
 // Email / messages
 // ---------------------------------------------------------------------------
-
-// Strip HTML to readable plain text
-function stripHtml(html: string): string {
-  return html
-    .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, "")
-    .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, "")
-    .replace(/<br\s*\/?>/gi, "\n")
-    .replace(/<\/p>/gi, "\n\n")
-    .replace(/<\/div>/gi, "\n")
-    .replace(/<\/tr>/gi, "\n")
-    .replace(/<\/th>/gi, " | ")
-    .replace(/<\/td>/gi, " | ")
-    .replace(/<[^>]+>/g, "")
-    .replace(/&amp;/g, "&")
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&nbsp;/g, " ")
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
-    .replace(/\n{3,}/g, "\n\n")
-    .trim();
-}
 
 export interface EmailMessage {
   id: string;
