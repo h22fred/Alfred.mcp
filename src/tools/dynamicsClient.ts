@@ -86,7 +86,7 @@ export interface Engagement {
   modifiedon?: string;
 }
 
-async function dynamicsFetch(path: string, options: RequestInit = {}, progress: ProgressFn = () => {}): Promise<Response> {
+async function dynamicsFetch(path: string, options: RequestInit = {}, progress: ProgressFn = () => {}, _retryCount = 0): Promise<Response> {
   const cookieHeader = await getAuthCookies(progress);
 
   const headers: Record<string, string> = {
@@ -101,6 +101,15 @@ async function dynamicsFetch(path: string, options: RequestInit = {}, progress: 
 
   const url = path.startsWith("http") ? path : `${DYNAMICS_BASE}${path}`;
   const response = await fetch(url, { ...options, headers, signal: AbortSignal.timeout(30_000) });
+
+  // Handle 429 throttling with exponential backoff
+  if (response.status === 429 && _retryCount < 3) {
+    const retryAfter = parseInt(response.headers.get("Retry-After") ?? "", 10);
+    const delayMs = (retryAfter > 0 ? retryAfter * 1000 : 1000 * Math.pow(2, _retryCount));
+    progress(`⏳ Throttled by Dynamics (429) — retrying in ${(delayMs / 1000).toFixed(0)}s (attempt ${_retryCount + 1}/3)...`);
+    await new Promise(r => setTimeout(r, delayMs));
+    return dynamicsFetch(path, options, progress, _retryCount + 1);
+  }
 
   if (response.status === 401) {
     // Session expired — clear cache and retry once with fresh cookies
@@ -141,6 +150,17 @@ async function dynamicsFetch(path: string, options: RequestInit = {}, progress: 
       }
     } catch { /* ignore */ }
     throw new Error(msg);
+  }
+
+  // Guard against HTML responses on success (e.g. auth redirects returning 200)
+  const ct = response.headers.get("content-type") ?? "";
+  if (ct && !ct.includes("json") && !ct.includes("octet") && options.method !== "DELETE" && response.status !== 204) {
+    const snippet = await response.text().catch(() => "").then(t => t.slice(0, 150));
+    throw new Error(
+      `Dynamics returned ${ct} instead of JSON — likely a session redirect.\n` +
+      `Open Alfred and confirm you are logged into Dynamics.\n` +
+      `Response preview: ${snippet}`
+    );
   }
 
   return response;
@@ -461,6 +481,19 @@ export async function createTimelineNote(
   text: string,
   progress: ProgressFn = () => {}
 ): Promise<void> {
+  // Dedup guard: skip if a note with the same title was created in the last 60s
+  try {
+    const recentNotes = await listTimelineNotes(engagementId, () => {});
+    const now = Date.now();
+    const isDuplicate = recentNotes.some(n =>
+      n.subject === title && n.createdon && (now - new Date(n.createdon).getTime()) < 60_000
+    );
+    if (isDuplicate) {
+      progress(`⏭️ Timeline note "${title}" already exists (dedup) — skipping`);
+      return;
+    }
+  } catch { /* non-fatal — proceed with creation */ }
+
   progress(`📋 Adding timeline note: "${title}"...`);
   await dynamicsFetch("/annotations", {
     method: "POST",
@@ -941,8 +974,12 @@ export async function fetchMyEngagementAssignments(
     const idFilter = batch.map(id => `sn_engagementid eq ${id}`).join(" or ");
 
     let statusFilter = "";
-    if (filter.status === "open") statusFilter = " and statecode eq 0";
-    else if (filter.status === "complete") statusFilter = " and statecode eq 1";
+    const normStatus = filter.status?.toLowerCase();
+    if (normStatus === "open") statusFilter = " and statecode eq 0";
+    else if (normStatus === "complete") statusFilter = " and statecode eq 1";
+    else if (normStatus && normStatus !== "all") {
+      progress(`⚠️ Unknown status filter "${filter.status}" — expected open|complete|all, returning all`);
+    }
 
     let searchFilter = "";
     if (filter.search) {
@@ -994,9 +1031,22 @@ export async function addAttendeesToEngagement(
 ): Promise<AttendeeResult[]> {
   const results: AttendeeResult[] = [];
   const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-  auditLog("add_attendees", { engagementId, count: attendees.length });
 
-  for (const attendee of attendees) {
+  // Dedup by email (case-insensitive) — keep first occurrence
+  const seen = new Set<string>();
+  const dedupedAttendees = attendees.filter(a => {
+    const key = a.email.toLowerCase();
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+  if (dedupedAttendees.length < attendees.length) {
+    progress(`ℹ️ Deduped ${attendees.length} → ${dedupedAttendees.length} unique attendees`);
+  }
+
+  auditLog("add_attendees", { engagementId, count: dedupedAttendees.length });
+
+  for (const attendee of dedupedAttendees) {
     if (!EMAIL_RE.test(attendee.email)) {
       progress(`⚠️ Skipping invalid email: ${attendee.email}`);
       results.push({ email: attendee.email, name: attendee.name, type: "not_found" });

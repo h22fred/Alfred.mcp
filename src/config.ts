@@ -16,7 +16,9 @@ if (existsSync(configPath)) {
   try {
     raw = JSON.parse(readFileSync(configPath, "utf8")) as AlfredConfig;
   } catch (e) {
-    process.stderr.write(`[alfred] Failed to parse ${configPath}: ${e}\n`);
+    const msg = `[alfred] FATAL: ${configPath} exists but is not valid JSON: ${e instanceof Error ? e.message : String(e)}`;
+    process.stderr.write(msg + "\n");
+    throw new Error(msg + `\nFix or delete the file and restart Alfred.`);
   }
 }
 

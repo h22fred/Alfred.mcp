@@ -89,10 +89,13 @@ export async function detectPostMeetingEngagements(opts: {
   // 2. Fetch all transcripts for the week in one call, then match per meeting
   progress("📋 Fetching this week's transcripts...");
   let allTranscripts: Awaited<ReturnType<typeof getTeamsTranscript>> = [];
+  let transcriptError: string | undefined;
   try {
     allTranscripts = await getTeamsTranscript({ startDate, endDate }, progress);
-  } catch {
-    // Non-fatal — continue without transcripts
+  } catch (e) {
+    transcriptError = e instanceof Error ? e.message : String(e);
+    process.stderr.write(`[alfred:warn] Transcript fetch failed: ${transcriptError}\n`);
+    progress(`⚠️ Could not fetch transcripts: ${transcriptError} — continuing without them`);
   }
 
   const candidates: PostMeetingCandidate[] = [];

@@ -1,6 +1,7 @@
 import { execFileSync } from "child_process";
 import { connectWithRetry } from "../auth/tokenExtractor.js";
 import type { ProgressFn } from "../auth/tokenExtractor.js";
+import { stripHtml } from "../shared.js";
 
 const CDP_PORT = 9222;
 const TOKEN_CACHE_MS = 45 * 60 * 1000;
@@ -16,9 +17,7 @@ function isValidWebhookUrl(url: string): boolean {
   try {
     const parsed = new URL(url);
     return parsed.protocol === "https:" &&
-      (parsed.hostname.endsWith(".webhook.office.com") ||
-       parsed.hostname.endsWith(".office.com") ||
-       parsed.hostname.endsWith(".microsoft.com"));
+      parsed.hostname.endsWith(".webhook.office.com");
   } catch { return false; }
 }
 
@@ -42,7 +41,7 @@ try {
 
 export function setTeamsWebhook(url: string): void {
   if (!isValidWebhookUrl(url)) {
-    throw new Error("Invalid webhook URL. Must be an HTTPS URL on *.webhook.office.com, *.office.com, or *.microsoft.com");
+    throw new Error("Invalid webhook URL. Must be an HTTPS URL on *.webhook.office.com");
   }
   webhookUrl = url;
   console.error("[teams] Webhook URL configured");
@@ -258,11 +257,20 @@ export async function acquireTeamsGraphToken(progress: ProgressFn): Promise<stri
   }
 }
 
-async function graphFetch(path: string, token: string): Promise<Record<string, unknown>> {
+async function graphFetch(path: string, token: string, _retryCount = 0): Promise<Record<string, unknown>> {
   const res = await fetch(`https://graph.microsoft.com/v1.0${path}`, {
     headers: { Authorization: `Bearer ${token}`, Accept: "application/json" },
     signal: AbortSignal.timeout(30_000),
   });
+
+  // Handle 429 throttling with exponential backoff
+  if (res.status === 429 && _retryCount < 3) {
+    const retryAfter = parseInt(res.headers.get("Retry-After") ?? "", 10);
+    const delayMs = (retryAfter > 0 ? retryAfter * 1000 : 1000 * Math.pow(2, _retryCount));
+    await new Promise(r => setTimeout(r, delayMs));
+    return graphFetch(path, token, _retryCount + 1);
+  }
+
   if (!res.ok) {
     const body = await res.text().catch(() => "");
     // Only clear cache for auth failures on non-transcript endpoints (transcript 401 = scope issue, not bad token)
@@ -452,7 +460,7 @@ async function fetchChatMessages(
     return ((data.value as Record<string, unknown>[]) ?? []).map(m => ({
       id:              m.id as string,
       from:            ((m.from as Record<string, unknown>)?.user as Record<string, unknown>)?.displayName as string ?? "Unknown",
-      body:            ((m.body as Record<string, unknown>)?.content as string ?? "").replace(/<[^>]+>/g, "").trim(),
+      body:            stripHtml((m.body as Record<string, unknown>)?.content as string ?? ""),
       createdDateTime: m.createdDateTime as string,
     })).filter(m => m.body);
   } catch {

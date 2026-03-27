@@ -192,22 +192,31 @@ export async function getAuthCookies(progress: ProgressFn = () => {}): Promise<s
   // Dedup: if another caller is already refreshing, wait for that result
   if (inflightDynamics) return inflightDynamics;
 
-  inflightDynamics = (async () => {
-    progress("🔐 Acquiring Dynamics session cookies...");
-    await ensureAlfred(progress);
+  const promise = (async () => {
+    try {
+      progress("🔐 Acquiring Dynamics session cookies...");
+      await ensureAlfred(progress);
 
-    const auth = await getAuthCookiesViaCDP(progress);
-    cachedAuth = auth;
+      const auth = await getAuthCookiesViaCDP(progress);
+      cachedAuth = auth;
 
-    const expiresIn = Math.round((auth.expiresAt - Date.now()) / 60000);
-    progress(`✅ Session cookies acquired — valid for ~${expiresIn} minutes`);
-    return auth.cookieHeader;
+      const expiresIn = Math.round((auth.expiresAt - Date.now()) / 60000);
+      progress(`✅ Session cookies acquired — valid for ~${expiresIn} minutes`);
+      return auth.cookieHeader;
+    } catch (e) {
+      // Clear inflight so the next caller retries fresh instead of getting this rejection
+      inflightDynamics = null;
+      throw e;
+    }
   })();
 
+  inflightDynamics = promise;
+
   try {
-    return await inflightDynamics;
+    return await promise;
   } finally {
-    inflightDynamics = null;
+    // Only clear if we're still the current inflight (could have been cleared by catch above)
+    if (inflightDynamics === promise) inflightDynamics = null;
   }
 }
 
@@ -221,37 +230,44 @@ export async function getOutlookCookies(progress: ProgressFn = () => {}): Promis
   // Dedup: if another caller is already refreshing, wait for that result
   if (inflightOutlook) return inflightOutlook;
 
-  inflightOutlook = (async () => {
-    progress("🔐 Extracting Outlook cookies via CDP...");
+  const promise = (async () => {
+    try {
+      progress("🔐 Extracting Outlook cookies via CDP...");
 
-    if (!isAlfredgable()) {
-      throw new Error("Chrome debug port not available. Open Alfred.app first.");
-    }
+      if (!isAlfredgable()) {
+        throw new Error("Chrome debug port not available. Open Alfred.app first.");
+      }
 
-    const allCookies = await getCookiesViaRawCDP([OUTLOOK_URL]);
-    if (allCookies.length === 0) {
-      process.stderr.write("[alfred] CDP auth: no Outlook cookies found — user not logged in\n");
-      throw new Error(
-        "Not logged into Outlook in the Alfred window.\n" +
-        "Log into Outlook in the Alfred Chrome window, then retry."
+      const allCookies = await getCookiesViaRawCDP([OUTLOOK_URL]);
+      if (allCookies.length === 0) {
+        process.stderr.write("[alfred] CDP auth: no Outlook cookies found — user not logged in\n");
+        throw new Error(
+          "Not logged into Outlook in the Alfred window.\n" +
+          "Log into Outlook in the Alfred Chrome window, then retry."
+        );
+      }
+
+      const cookieHeader = allCookies.map(c => `${c.name}=${c.value}`).join("; ");
+      const expiresAt = Math.min(
+        ...allCookies.map(c => c.expires > 0 ? c.expires * 1000 : Date.now() + 8 * 60 * 60 * 1000)
       );
+
+      cachedOutlookAuth = { cookieHeader, expiresAt };
+      const minsLeft = Math.round((expiresAt - Date.now()) / 60000);
+      progress(`✅ Outlook cookies acquired — valid for ~${minsLeft} minutes`);
+      return cookieHeader;
+    } catch (e) {
+      inflightOutlook = null;
+      throw e;
     }
-
-    const cookieHeader = allCookies.map(c => `${c.name}=${c.value}`).join("; ");
-    const expiresAt = Math.min(
-      ...allCookies.map(c => c.expires > 0 ? c.expires * 1000 : Date.now() + 8 * 60 * 60 * 1000)
-    );
-
-    cachedOutlookAuth = { cookieHeader, expiresAt };
-    const minsLeft = Math.round((expiresAt - Date.now()) / 60000);
-    progress(`✅ Outlook cookies acquired — valid for ~${minsLeft} minutes`);
-    return cookieHeader;
   })();
 
+  inflightOutlook = promise;
+
   try {
-    return await inflightOutlook;
+    return await promise;
   } finally {
-    inflightOutlook = null;
+    if (inflightOutlook === promise) inflightOutlook = null;
   }
 }
 
