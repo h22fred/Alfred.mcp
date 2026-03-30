@@ -190,7 +190,9 @@ This user is an SSC (Sales Support Consultant) — they do not have an assigned 
 
 IMPORTANT: Before calling this tool, always ask:
 1. "Which account or opportunity are you looking for?"
-2. "100K+ NNACV only, or all sizes?" (default: 100K+ only)`
+2. "100K+ NNACV only, or all sizes?" (default: 100K+ only)
+
+NOTE: $0 NNACV opportunities are excluded by default (noise). If the user explicitly asks for $0 deals, set include_zero_value=true.`
     : isManager
     ? `List open opportunities from Dynamics 365.
 
@@ -199,7 +201,9 @@ This user is an SC Manager — they want to see their team's pipeline, not just 
 IMPORTANT: Before calling this tool, always ask:
 1. "Your whole team's pipeline, a specific SC, or a specific account?"
    — If a specific SC or account is named, pass it as the search field
-2. "100K+ NNACV only, or all sizes?" (default: 100K+ only)`
+2. "100K+ NNACV only, or all sizes?" (default: 100K+ only)
+
+NOTE: $0 NNACV opportunities are excluded by default (noise). If the user explicitly asks for $0 deals, set include_zero_value=true.`
     : `List open opportunities from Dynamics 365.
 
 Defaults to the current user's pipeline only (SC or territory). Only set my_opportunities_only=false if the user explicitly asks for all opportunities, a colleague's pipeline, a region, or a manager view.
@@ -208,11 +212,13 @@ IMPORTANT: Before calling this tool, always ask the user these two questions if 
 1. "100K+ NNACV only, or all sizes?" (default: 100K+ only)
 2. "All your accounts, or a specific account?" (default: all — if they name one, pass it as search)
 
-Ask both together in one message. Only call this tool once you have their answers.`,
+Ask both together in one message. Only call this tool once you have their answers.
+
+NOTE: $0 NNACV opportunities are excluded by default (noise). If the user explicitly asks for $0 deals, set include_zero_value=true.`,
   {
     top: z.number().optional().describe("Max number of results (default 50)"),
     search: z.string().optional().describe("Filter by opportunity or account name (partial match)"),
-    min_nnacv: z.number().optional().describe("Minimum NNACV in USD — default 100000 ($100K+). Set to 0 for no filter."),
+    min_nnacv: z.number().optional().describe("Minimum NNACV in USD — default 100000 ($100K+). Set to 0 for no filter. Negative NNACV deals are always included."),
     my_opportunities_only: z.boolean().optional().describe(
       isSSC
         ? "SSC mode — default false (search all accounts). Set true only if explicitly asked to show a specific SC's pipeline."
@@ -221,8 +227,9 @@ Ask both together in one message. Only call this tool once you have their answer
         : "Filter to current user's owned opportunities only — default true."
     ),
     include_closed: z.boolean().optional().describe("Include won/lost/closed opportunities — default false (open only). Set true when user asks about a specific opp by OPTY number or explicitly wants closed deals."),
+    include_zero_value: z.boolean().optional().describe("Include $0 NNACV opportunities — default false (excluded as noise). Set true only if user explicitly asks for $0 deals."),
   },
-  async ({ top, search, min_nnacv, my_opportunities_only, include_closed }) => {
+  async ({ top, search, min_nnacv, my_opportunities_only, include_closed, include_zero_value }) => {
     const progress = makeProgress(server);
     const filter: OpportunityFilter = {
       top,
@@ -230,6 +237,7 @@ Ask both together in one message. Only call this tool once you have their answer
       minNnacv: min_nnacv ?? 100000,
       myOpportunitiesOnly: my_opportunities_only ?? (isSSC || isManager ? false : true),
       includeClosed: include_closed ?? false,
+      includeZeroValue: include_zero_value ?? false,
     };
     const opportunities = await fetchOpportunities(filter, progress);
     return {
