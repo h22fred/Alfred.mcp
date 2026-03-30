@@ -97,10 +97,11 @@ NOTE: $0 NNACV opportunities are excluded by default (noise). If the user explic
   {
     search:   z.string().optional().describe("Filter by account or opportunity name"),
     min_value: z.number().optional().describe("Minimum total value in USD"),
+    top: z.number().optional().describe("Max results (default 50)"),
     include_closed: z.boolean().optional().describe("Include won/lost opportunities (default false)"),
     include_zero_value: z.boolean().optional().describe("Include $0 NNACV opportunities — default false (excluded as noise). Set true only if user explicitly asks for $0 deals."),
   },
-  async ({ search, min_value, include_closed, include_zero_value }) => {
+  async ({ search, min_value, top, include_closed, include_zero_value }) => {
     const progress = makeProgress(server);
     const opps = await fetchOpportunities({
       search,
@@ -108,7 +109,7 @@ NOTE: $0 NNACV opportunities are excluded by default (noise). If the user explic
       myOpportunitiesOnly: true,
       includeClosed: include_closed ?? false,
       includeZeroValue: include_zero_value ?? false,
-      top: 50,
+      top: top ?? 50,
     }, progress);
     return { content: [{ type: "text", text: JSON.stringify(opps, null, 2) }] };
   }

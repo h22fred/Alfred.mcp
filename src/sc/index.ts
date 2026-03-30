@@ -885,7 +885,7 @@ No Azure registration needed — the request runs inside the already-authenticat
 Can search across all mail by keyword, or list a folder (inbox, sentitems, drafts).`,
   {
     search:      z.string().optional().describe("Full-text search query across all mail (e.g. 'PMI renewal', 'budget')"),
-    folder:      z.string().optional().describe("Mail folder to list: 'inbox' (default), 'sentitems', 'drafts'"),
+    folder:      z.enum(["inbox", "sentitems", "drafts"]).optional().describe("Mail folder to list (default: inbox)"),
     top:         z.number().optional().describe("Max number of messages to return (default 25)"),
     unread_only: z.boolean().optional().describe("If true, return only unread messages (only applies when not searching)"),
     full_body:   z.boolean().optional().describe("If true, fetch the full email body (HTML stripped to clean plain text). Default false — returns preview only."),
