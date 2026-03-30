@@ -368,8 +368,11 @@ export async function getEmails(opts: {
   unreadOnly?: boolean;
   fullBody?: boolean;
 }, progress: ProgressFn = () => {}): Promise<EmailMessage[]> {
-  const { search, folder = "inbox", top = 25, unreadOnly, fullBody } = opts;
+  const { search, folder: rawFolder = "inbox", top = 25, unreadOnly, fullBody } = opts;
   progress("📧 Fetching emails...");
+
+  // Resolve custom folder names (e.g. "SITA", "PMI") to Graph folder IDs
+  const folder = await resolveMailFolder(rawFolder, progress);
 
   const selectFields = fullBody
     ? "Id,Subject,From,ReceivedDateTime,BodyPreview,IsRead,HasAttachments,Body"
@@ -382,7 +385,8 @@ export async function getEmails(opts: {
       $select: selectFields,
       $top: String(top),
     });
-    path = `/messages?${p}`;
+    // Search within the specified folder, not across all mail
+    path = `/mailfolders/${folder}/messages?${p}`;
   } else {
     const filters: string[] = [];
     if (unreadOnly) filters.push("IsRead eq false");
@@ -420,5 +424,79 @@ export async function getEmails(opts: {
 
   progress(`✅ Found ${messages.length} message(s)`);
   return messages;
+}
+
+// ---------------------------------------------------------------------------
+// Mail folders — list all folders so users can browse custom client folders
+// ---------------------------------------------------------------------------
+
+export interface MailFolder {
+  id: string;
+  displayName: string;
+  parentFolderId: string;
+  childFolderCount: number;
+  totalItemCount: number;
+  unreadItemCount: number;
+}
+
+export async function listMailFolders(progress: ProgressFn = () => {}): Promise<MailFolder[]> {
+  progress("📁 Fetching mail folders...");
+  const token = await acquireGraphToken(progress);
+  const data = await outlookApiFetch(
+    "/mailfolders?$select=id,displayName,parentFolderId,childFolderCount,totalItemCount,unreadItemCount&$top=100",
+    token, progress
+  );
+  const folders = (data.value as Record<string, unknown>[] ?? []).map(f => ({
+    id:               f.id as string,
+    displayName:      f.displayName as string,
+    parentFolderId:   f.parentFolderId as string,
+    childFolderCount: f.childFolderCount as number,
+    totalItemCount:   f.totalItemCount as number,
+    unreadItemCount:  f.unreadItemCount as number,
+  }));
+
+  // Also fetch child folders for any folder that has children
+  const withChildren = folders.filter(f => f.childFolderCount > 0);
+  for (const parent of withChildren) {
+    try {
+      const childData = await outlookApiFetch(
+        `/mailfolders/${parent.id}/childfolders?$select=id,displayName,parentFolderId,childFolderCount,totalItemCount,unreadItemCount&$top=100`,
+        token, progress
+      );
+      const children = (childData.value as Record<string, unknown>[] ?? []).map(f => ({
+        id:               f.id as string,
+        displayName:      f.displayName as string,
+        parentFolderId:   f.parentFolderId as string,
+        childFolderCount: f.childFolderCount as number,
+        totalItemCount:   f.totalItemCount as number,
+        unreadItemCount:  f.unreadItemCount as number,
+      }));
+      folders.push(...children);
+    } catch { /* non-fatal */ }
+  }
+
+  progress(`✅ Found ${folders.length} mail folder(s)`);
+  return folders;
+}
+
+/** Resolve a folder name to its Graph ID. Tries well-known names first, then searches user folders. */
+export async function resolveMailFolder(folder: string, progress: ProgressFn = () => {}): Promise<string> {
+  const wellKnown = ["inbox", "sentitems", "drafts", "deleteditems", "junkemail", "archive"];
+  if (wellKnown.includes(folder.toLowerCase())) return folder.toLowerCase();
+
+  // Search by display name (case-insensitive)
+  const folders = await listMailFolders(progress);
+  const match = folders.find(f => f.displayName.toLowerCase() === folder.toLowerCase());
+  if (match) return match.id;
+
+  // Partial match fallback
+  const partial = folders.find(f => f.displayName.toLowerCase().includes(folder.toLowerCase()));
+  if (partial) {
+    progress(`📁 Matched folder: "${partial.displayName}"`);
+    return partial.id;
+  }
+
+  // Return as-is — let Graph API error if invalid
+  return folder;
 }
 

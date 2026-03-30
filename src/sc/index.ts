@@ -35,7 +35,7 @@ import {
   type EngagementDescription,
 } from "../tools/dynamicsClient.js";
 import { closeBrowser, setManualCookies, ensureAlfred, clearAuthCache } from "../auth/tokenExtractor.js";
-import { getCalendarEvents, getEmails, clearGraphTokenCache } from "../tools/outlookClient.js";
+import { getCalendarEvents, getEmails, listMailFolders, clearGraphTokenCache } from "../tools/outlookClient.js";
 import { setTeamsWebhook, postTeamsNotification, getTeamsTranscript, getTeamsChats } from "../tools/teamsClient.js";
 import { runHygieneSweep, formatHygieneReport } from "../tools/hygieneClient.js";
 import { detectPostMeetingEngagements, notifyPostMeetingCandidates } from "../tools/postMeetingClient.js";
@@ -882,10 +882,12 @@ server.tool(
 Requires the user to be logged into https://outlook.office.com in the Alfred Chrome window.
 No Azure registration needed — the request runs inside the already-authenticated browser tab.
 
-Can search across all mail by keyword, or list a folder (inbox, sentitems, drafts).`,
+Can search across all mail by keyword, or browse a specific folder by name.
+Supports custom folders (e.g. client name folders like "SITA", "PMI") — not just inbox/sent.
+Use list_mail_folders first if you need to see available folder names.`,
   {
-    search:      z.string().optional().describe("Full-text search query across all mail (e.g. 'PMI renewal', 'budget')"),
-    folder:      z.enum(["inbox", "sentitems", "drafts"]).optional().describe("Mail folder to list (default: inbox)"),
+    search:      z.string().optional().describe("Full-text search query (e.g. 'PMI renewal', 'budget'). Searches within the specified folder."),
+    folder:      z.string().optional().describe("Folder name: 'inbox' (default), 'sentitems', 'drafts', or any custom folder name (e.g. 'SITA', 'PMI'). Resolved by display name."),
     top:         z.number().optional().describe("Max number of messages to return (default 25)"),
     unread_only: z.boolean().optional().describe("If true, return only unread messages (only applies when not searching)"),
     full_body:   z.boolean().optional().describe("If true, fetch the full email body (HTML stripped to clean plain text). Default false — returns preview only."),
@@ -898,6 +900,26 @@ Can search across all mail by keyword, or list a folder (inbox, sentitems, draft
     );
     return {
       content: [{ type: "text", text: externalData("Outlook emails", messages) }],
+    };
+  }
+);
+
+// ---------------------------------------------------------------------------
+// Tool: list_mail_folders
+// ---------------------------------------------------------------------------
+server.tool(
+  "list_mail_folders",
+  "List all mail folders in the user's Outlook mailbox, including custom client folders. Use this to discover folder names before searching emails in a specific folder.",
+  {},
+  async () => {
+    const progress = makeProgress(server);
+    const folders = await listMailFolders(progress);
+    const lines = folders.map(f => {
+      const unread = f.unreadItemCount > 0 ? ` (${f.unreadItemCount} unread)` : "";
+      return `• **${f.displayName}** — ${f.totalItemCount} items${unread}`;
+    });
+    return {
+      content: [{ type: "text", text: lines.length ? lines.join("\n") : "No mail folders found." }],
     };
   }
 );
