@@ -56,6 +56,21 @@ function ConvertTo-DayOfWeek {
     }
 }
 
+# --- Helper: day name to schtasks 3-letter abbreviation ---
+function ConvertTo-SchtasksDay {
+    param([string]$Day)
+    switch ($Day) {
+        "Monday"    { return "MON" }
+        "Tuesday"   { return "TUE" }
+        "Wednesday" { return "WED" }
+        "Thursday"  { return "THU" }
+        "Friday"    { return "FRI" }
+        "Saturday"  { return "SAT" }
+        "Sunday"    { return "SUN" }
+        default     { return "MON" }
+    }
+}
+
 Write-Host ""
 Write-Host "=================================================="
 Write-Host "  SC Engagement MCP - Setup"
@@ -122,7 +137,7 @@ if (($CurrentHash -eq $StoredHash) -and (Test-Path $NodeModulesLock)) {
     Write-Host "   Dependencies up to date - skipping reinstall"
 } else {
     Write-Host "   Installing dependencies..."
-    & npm ci --prefix "$ScriptDir" --no-fund
+    & npm --prefix "$ScriptDir" ci --no-fund
     if ($LASTEXITCODE -ne 0) { throw "npm ci failed with exit code $LASTEXITCODE" }
 
     $Config = Read-AlfredConfig
@@ -134,7 +149,7 @@ if (($CurrentHash -eq $StoredHash) -and (Test-Path $NodeModulesLock)) {
 
 Write-Host ""
 Write-Host "[>] Building MCP server..."
-& npm run build --prefix "$ScriptDir"
+& npm --prefix "$ScriptDir" run build
 if ($LASTEXITCODE -ne 0) { throw "npm run build failed with exit code $LASTEXITCODE" }
 Write-Host "   Build complete"
 
@@ -482,6 +497,7 @@ if ($InstallHygiene -notmatch "^[nN]") {
     $HygieneMin  = [int]$HygieneParts[1]
 
     $HygieneScheduleDesc = "$HygieneDay at $HygieneTime"
+    $HygieneTimeStr = "{0:D2}:{1:D2}" -f $HygieneHour, $HygieneMin
     $HygieneLogFile = Join-Path $env:USERPROFILE ".alfred-hygiene.log"
     $HygieneScript = Join-Path $ScriptDir "scripts\hygiene-sweep.mjs"
 
@@ -491,7 +507,7 @@ if ($InstallHygiene -notmatch "^[nN]") {
         -Argument "`"$HygieneScript`"" `
         -WorkingDirectory $ScriptDir
 
-    $HygieneTrigger = New-ScheduledTaskTrigger -Weekly -DaysOfWeek $HygieneDow -At ("{0:D2}:{1:D2}" -f $HygieneHour, $HygieneMin)
+    $HygieneTrigger = New-ScheduledTaskTrigger -Weekly -DaysOfWeek $HygieneDow -At $HygieneTimeStr
     $HygieneSettings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable
 
     # Remove existing task if present, then register
@@ -505,7 +521,8 @@ if ($InstallHygiene -notmatch "^[nN]") {
             -Description "Alfred CRM hygiene sweep - flags missing engagements" | Out-Null
     } catch {
         Write-Host "   Note: Using schtasks.exe (no admin required)"
-        schtasks /create /tn "Alfred-HygieneSweep" /tr "\`"$NodePath\`" \`"$HygieneScript\`"" /sc weekly /d $HygieneDow /st ("{0:D2}:{1:D2}" -f $HygieneHour, $HygieneMin) /f 2>$null
+        $SchtasksDow = ConvertTo-SchtasksDay $HygieneDow
+        schtasks /create /tn "Alfred-HygieneSweep" /tr "`"$NodePath`" `"$HygieneScript`"" /sc weekly /d $SchtasksDow /st $HygieneTimeStr /f 2>$null
     }
 
     Write-Host "   Hygiene sweep scheduled: $HygieneScheduleDesc"
@@ -533,6 +550,7 @@ if ($InstallMeeting -notmatch "^[nN]") {
     $MeetingMin  = [int]$MeetingParts[1]
 
     $MeetingScheduleDesc = "$MeetingDay at $MeetingTime"
+    $MeetingTimeStr = "{0:D2}:{1:D2}" -f $MeetingHour, $MeetingMin
     $MeetingScript = Join-Path $ScriptDir "scripts\post-meeting-sweep.mjs"
 
     $MeetingAction = New-ScheduledTaskAction `
@@ -540,7 +558,7 @@ if ($InstallMeeting -notmatch "^[nN]") {
         -Argument "`"$MeetingScript`"" `
         -WorkingDirectory $ScriptDir
 
-    $MeetingTrigger = New-ScheduledTaskTrigger -Weekly -DaysOfWeek $MeetingDow -At ("{0:D2}:{1:D2}" -f $MeetingHour, $MeetingMin)
+    $MeetingTrigger = New-ScheduledTaskTrigger -Weekly -DaysOfWeek $MeetingDow -At $MeetingTimeStr
     $MeetingSettings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable
 
     Unregister-ScheduledTask -TaskName "Alfred-MeetingReview" -Confirm:$false -ErrorAction SilentlyContinue
@@ -553,7 +571,8 @@ if ($InstallMeeting -notmatch "^[nN]") {
             -Description "Alfred weekly meeting review - matches meetings to open opportunities" | Out-Null
     } catch {
         Write-Host "   Note: Using schtasks.exe (no admin required)"
-        schtasks /create /tn "Alfred-MeetingReview" /tr "\`"$NodePath\`" \`"$MeetingScript\`"" /sc weekly /d $MeetingDow /st ("{0:D2}:{1:D2}" -f $MeetingHour, $MeetingMin) /f 2>$null
+        $SchtasksDow = ConvertTo-SchtasksDay $MeetingDow
+        schtasks /create /tn "Alfred-MeetingReview" /tr "`"$NodePath`" `"$MeetingScript`"" /sc weekly /d $SchtasksDow /st $MeetingTimeStr /f 2>$null
     }
 
     Write-Host "   Meeting review scheduled: $MeetingScheduleDesc"
