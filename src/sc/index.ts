@@ -884,7 +884,9 @@ No Azure registration needed — the request runs inside the already-authenticat
 
 Can search across all mail by keyword, or browse a specific folder by name.
 Supports custom folders (e.g. client name folders like "Acme Corp", "Fabrikam") — not just inbox/sent.
-Use list_mail_folders first if you need to see available folder names.`,
+Use list_mail_folders first if you need to see available folder names.
+
+IMPORTANT: This user organises emails into folders named after clients/accounts. When they ask about emails related to a customer (e.g. "emails about Acme Corp"), ALWAYS set the folder param to the customer name — the user's client folder is the best source. You can also combine folder + search to search within a client folder.`,
   {
     search:      z.string().optional().describe("Full-text search query (e.g. 'Fabrikam renewal', 'budget'). Searches within the specified folder."),
     folder:      z.string().optional().describe("Folder name: 'inbox' (default), 'sentitems', 'drafts', or any custom folder name (e.g. 'Acme Corp', 'Fabrikam'). Resolved by display name."),
