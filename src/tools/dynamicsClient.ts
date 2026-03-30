@@ -217,7 +217,7 @@ export interface OpportunityFilter {
   top?: number;        // max results (default 50)
   search?: string;     // filter by account/opportunity name (contains)
   minNnacv?: number;   // minimum totalamount (NNACV) in USD
-  excludeZeroValue?: boolean; // exclude totalamount == 0 (App Store renewals etc.)
+  includeZeroValue?: boolean; // include totalamount == 0 (default: excluded — too much noise)
   myOpportunitiesOnly?: boolean; // filter to current user's owned opportunities
   includeClosed?: boolean; // include won/lost/closed opps — default false (open only)
   ownerSearch?: string; // filter by owner (AE) name — resolves to user IDs
@@ -265,7 +265,7 @@ export async function fetchOpportunities(filter: OpportunityFilter = {}, progres
     const safe = sanitizeODataSearch(filter.search);
     filterClause += ` and (contains(name,'${safe}') or contains(sn_number,'${safe}'))`;
   }
-  if (filter.excludeZeroValue) {
+  if (!filter.includeZeroValue) {
     filterClause += ` and totalamount ne 0`;
   }
   if (filter.minNnacv) {

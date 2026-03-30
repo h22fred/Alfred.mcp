@@ -56,7 +56,7 @@ export async function runHygieneSweep(opts: {
 
   const opps = await fetchOpportunities({
     myOpportunitiesOnly: true,
-    excludeZeroValue: true,  // always exclude $0 opportunities
+    // includeZeroValue defaults to false — $0 noise excluded automatically
     minNnacv: opts.minNnacv ?? 100_000,
     top: 200,
   }, progress);
