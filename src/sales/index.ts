@@ -1,7 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-import { DYNAMICS_HOST, alfredConfig as _baseConfig } from "../config.js";
+import { DYNAMICS_HOST } from "../config.js";
 import { requireGuid, makeProgress, WriteRateLimiter, FORECAST_NAMES } from "../shared.js";
 import {
   fetchOpportunities,
@@ -14,6 +14,9 @@ import {
   fetchCurrentUserId,
   createTimelineNote,
   listTimelineNotes,
+  searchProducts,
+  searchContacts,
+  fetchCollaborationTeam,
 } from "../tools/dynamicsClient.js";
 import { closeBrowser, ensureAlfred } from "../auth/tokenExtractor.js";
 import { execFileSync } from "child_process";
@@ -413,6 +416,66 @@ Sales Manager: use owner_name to filter by one of your reps (e.g. "John"), or le
     }
 
     return { content: [{ type: "text", text: lines.join("\n") }] };
+  }
+);
+
+// ---------------------------------------------------------------------------
+// Tool: search_products
+// ---------------------------------------------------------------------------
+server.tool(
+  "search_products",
+  "Search Dynamics 365 product families by name — useful for identifying products on opportunities.",
+  { name: z.string().describe("Product name or partial name to search for") },
+  async ({ name }) => {
+    const progress = makeProgress(server);
+    const products = await searchProducts(name, progress);
+    if (products.length === 0) return { content: [{ type: "text", text: "No products found." }] };
+    const text = products.map(p => `**${p.name}** (${p.productid})`).join("\n");
+    return { content: [{ type: "text", text }] };
+  }
+);
+
+// ---------------------------------------------------------------------------
+// Tool: search_contacts
+// ---------------------------------------------------------------------------
+server.tool(
+  "search_contacts",
+  "Search Dynamics 365 contacts by name or email. Returns job title, email, phone, and account.",
+  {
+    query: z.string().describe("Contact name or email to search for"),
+    account_id: z.string().optional().describe("Optional account GUID to scope results"),
+  },
+  async ({ query, account_id }) => {
+    if (account_id) requireGuid(account_id, "account_id");
+    const progress = makeProgress(server);
+    const contacts = await searchContacts(query, { accountId: account_id }, progress);
+    if (contacts.length === 0) return { content: [{ type: "text", text: "No contacts found." }] };
+    const text = contacts.map(c =>
+      `**${c.fullname}**${c.jobtitle ? ` — ${c.jobtitle}` : ""}` +
+      `${c.emailaddress1 ? `\n  Email: ${c.emailaddress1}` : ""}` +
+      `${c.telephone1 ? `\n  Phone: ${c.telephone1}` : ""}` +
+      `${c.accountName ? `\n  Account: ${c.accountName}` : ""}`
+    ).join("\n\n");
+    return { content: [{ type: "text", text }] };
+  }
+);
+
+// ---------------------------------------------------------------------------
+// Tool: get_collaboration_team
+// ---------------------------------------------------------------------------
+server.tool(
+  "get_collaboration_team",
+  "View all team members (SCs, Specialists, AEs) assigned to an opportunity. Useful to verify team composition before meetings.",
+  { opportunity_id: z.string().describe("Dynamics opportunity GUID") },
+  async ({ opportunity_id }) => {
+    const id = requireGuid(opportunity_id, "opportunity_id");
+    const progress = makeProgress(server);
+    const team = await fetchCollaborationTeam(id, progress);
+    if (team.length === 0) return { content: [{ type: "text", text: "No collaboration team members found." }] };
+    const text = team.map(m =>
+      `• **${m.userName}** — ${m.collaborationRole}${m.isPrimary ? " (Primary)" : ""}${m.accessLevel ? ` [${m.accessLevel}]` : ""}`
+    ).join("\n");
+    return { content: [{ type: "text", text }] };
   }
 );
 

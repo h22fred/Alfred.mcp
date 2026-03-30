@@ -1,7 +1,7 @@
 import { getAuthCookies, clearAuthCache, type ProgressFn } from "../auth/tokenExtractor.js";
 import { userInfo } from "os";
 import { DYNAMICS_HOST, ENGAGEMENT_TYPE_GUIDS, type EngagementType } from "../config.js";
-import { FORECAST_NAMES, requireGuid } from "../shared.js";
+import { FORECAST_NAMES, requireGuid, SN_INTERNAL_DOMAINS } from "../shared.js";
 
 const DYNAMICS_BASE = `${DYNAMICS_HOST}/api/data/v9.2`;
 
@@ -217,6 +217,7 @@ export interface OpportunityFilter {
   top?: number;        // max results (default 50)
   search?: string;     // filter by account/opportunity name (contains)
   minNnacv?: number;   // minimum totalamount (NNACV) in USD
+  excludeZeroValue?: boolean; // exclude totalamount == 0 (App Store renewals etc.)
   myOpportunitiesOnly?: boolean; // filter to current user's owned opportunities
   includeClosed?: boolean; // include won/lost/closed opps — default false (open only)
   ownerSearch?: string; // filter by owner (AE) name — resolves to user IDs
@@ -263,6 +264,9 @@ export async function fetchOpportunities(filter: OpportunityFilter = {}, progres
   if (filter.search) {
     const safe = sanitizeODataSearch(filter.search);
     filterClause += ` and (contains(name,'${safe}') or contains(sn_number,'${safe}'))`;
+  }
+  if (filter.excludeZeroValue) {
+    filterClause += ` and totalamount ne 0`;
   }
   if (filter.minNnacv) {
     filterClause += ` and totalamount ge ${filter.minNnacv}`;
@@ -766,6 +770,7 @@ export async function deleteEngagement(
   engagementId: string,
   progress: ProgressFn = () => {}
 ): Promise<void> {
+  requireGuid(engagementId, "engagementId");
   auditLog("delete_engagement", { engagementId });
   progress(`🗑️ Deleting engagement ${engagementId}...`);
   await dynamicsFetch(`/sn_engagements(${engagementId})`, { method: "DELETE" }, progress);
@@ -776,6 +781,7 @@ export async function deleteTimelineNote(
   annotationId: string,
   progress: ProgressFn = () => {}
 ): Promise<void> {
+  requireGuid(annotationId, "annotationId");
   auditLog("delete_timeline_note", { annotationId });
   progress(`🗑️ Deleting timeline note ${annotationId}...`);
   await dynamicsFetch(`/annotations(${annotationId})`, { method: "DELETE" }, progress);
@@ -1116,7 +1122,7 @@ export async function fetchMyEngagementAssignments(
 // Engagement attendees — Active Participants (internal) + Engagement Contacts (external)
 // ---------------------------------------------------------------------------
 
-const INTERNAL_ATTENDEE_DOMAINS = new Set(["servicenow.com", "now.com"]);
+// imported from shared.ts — SN_INTERNAL_DOMAINS
 
 export interface AttendeeResult {
   email: string;
@@ -1154,7 +1160,7 @@ export async function addAttendeesToEngagement(
       continue;
     }
     const domain = attendee.email.split("@")[1]!.toLowerCase();
-    const isInternal = INTERNAL_ATTENDEE_DOMAINS.has(domain);
+    const isInternal = SN_INTERNAL_DOMAINS.has(domain);
 
     try {
       if (isInternal) {

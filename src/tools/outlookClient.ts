@@ -193,11 +193,19 @@ const OUTLOOK_API = "https://outlook.office.com/api/v2.0/me";
 // Outlook REST v2 fetch using Bearer token (kept for Teams Graph API usage)
 // ---------------------------------------------------------------------------
 
-async function outlookApiFetch(path: string, token: string, progress?: ProgressFn): Promise<Record<string, unknown>> {
+async function outlookApiFetch(path: string, token: string, progress?: ProgressFn, _retryCount = 0): Promise<Record<string, unknown>> {
   const res = await fetch(`${OUTLOOK_API}${path}`, {
     headers: { Authorization: `Bearer ${token}`, Accept: "application/json" },
     signal: AbortSignal.timeout(30_000),
   });
+
+  if (res.status === 429 && _retryCount < 3) {
+    const retryAfter = parseInt(res.headers.get("Retry-After") ?? "", 10);
+    const delayMs = retryAfter > 0 ? retryAfter * 1000 : 1000 * Math.pow(2, _retryCount);
+    progress?.(`⏳ Outlook API throttled (429) — retrying in ${(delayMs / 1000).toFixed(0)}s...`);
+    await new Promise(r => setTimeout(r, delayMs));
+    return outlookApiFetch(path, token, progress, _retryCount + 1);
+  }
 
   if (res.status === 401) {
     tokenCache = null;

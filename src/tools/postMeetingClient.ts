@@ -27,16 +27,11 @@ export interface PostMeetingCandidate {
   calendarEvent: Record<string, unknown>;
 }
 
-// Internal domains to exclude from attendee domain matching
-const INTERNAL_DOMAINS = new Set([
-  "servicenow.com", "now.com",
-  "gmail.com", "outlook.com", "hotmail.com", "yahoo.com", "live.com",
-  "microsoft.com", "google.com",
-]);
+import { NON_CUSTOMER_DOMAINS } from "../shared.js";
 
 function attendeeDomainWord(email: string): string | null {
   const domain = email.split("@")[1]?.toLowerCase();
-  if (!domain || INTERNAL_DOMAINS.has(domain)) return null;
+  if (!domain || NON_CUSTOMER_DOMAINS.has(domain)) return null;
   return domain.split(".")[0]; // e.g. "pmi" from "pmi.org"
 }
 
