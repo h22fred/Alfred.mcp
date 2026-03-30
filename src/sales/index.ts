@@ -91,19 +91,23 @@ server.tool(
 // ---------------------------------------------------------------------------
 server.tool(
   "get_my_opportunities",
-  "List your open opportunities in Dynamics 365, optionally filtered by account name or minimum value.",
+  `List your open opportunities in Dynamics 365, optionally filtered by account name or minimum value.
+
+NOTE: $0 NNACV opportunities are excluded by default (noise). If the user explicitly asks for $0 deals, set include_zero_value=true. Negative NNACV deals are always included.`,
   {
     search:   z.string().optional().describe("Filter by account or opportunity name"),
     min_value: z.number().optional().describe("Minimum total value in USD"),
     include_closed: z.boolean().optional().describe("Include won/lost opportunities (default false)"),
+    include_zero_value: z.boolean().optional().describe("Include $0 NNACV opportunities — default false (excluded as noise). Set true only if user explicitly asks for $0 deals."),
   },
-  async ({ search, min_value, include_closed }) => {
+  async ({ search, min_value, include_closed, include_zero_value }) => {
     const progress = makeProgress(server);
     const opps = await fetchOpportunities({
       search,
       minNnacv: min_value,
       myOpportunitiesOnly: true,
       includeClosed: include_closed ?? false,
+      includeZeroValue: include_zero_value ?? false,
       top: 50,
     }, progress);
     return { content: [{ type: "text", text: JSON.stringify(opps, null, 2) }] };
