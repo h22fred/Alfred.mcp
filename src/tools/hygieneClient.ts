@@ -39,29 +39,44 @@ export interface HygieneResult {
   status: "red" | "yellow" | "green";
 }
 
+/** Patterns that indicate noise opportunities (back-office auto-renewals, App Store, etc.) */
+const NOISE_PATTERNS = [/app\s*store\s*renewal/i];
+
 export async function runHygieneSweep(opts: {
   postToTeams?: boolean;
   minNnacv?: number;
+  excludeAppStore?: boolean;
   engagementTypes?: string[];
   dynamicsUrl?: string;
 }, progress: ProgressFn = () => {}): Promise<HygieneResult[]> {
   progress("🔍 Starting CRM hygiene sweep...");
 
   const requiredTypes = opts.engagementTypes?.length ? opts.engagementTypes : DEFAULT_REQUIRED;
+  const excludeAppStore = opts.excludeAppStore ?? true; // default: skip noise
 
   const opps = await fetchOpportunities({
     myOpportunitiesOnly: true,
+    excludeZeroValue: true,  // always exclude $0 opportunities
     minNnacv: opts.minNnacv ?? 100_000,
     top: 200,
   }, progress);
 
-  progress(`📋 Checking ${opps.length} opportunities...`);
+  // Client-side filter for noise patterns (App Store renewals, etc.)
+  const filtered = excludeAppStore
+    ? opps.filter(o => !NOISE_PATTERNS.some(p => p.test(o.name)))
+    : opps;
+
+  if (filtered.length < opps.length) {
+    progress(`🧹 Filtered ${opps.length - filtered.length} noise opportunities (App Store renewals etc.)`);
+  }
+
+  progress(`📋 Checking ${filtered.length} opportunities...`);
   const results: HygieneResult[] = [];
 
   // Batch engagement fetches in groups of 8 for ~8x speedup over sequential
   const BATCH_SIZE = 8;
-  for (let i = 0; i < opps.length; i += BATCH_SIZE) {
-    const batch = opps.slice(i, i + BATCH_SIZE);
+  for (let i = 0; i < filtered.length; i += BATCH_SIZE) {
+    const batch = filtered.slice(i, i + BATCH_SIZE);
     const batchResults = await Promise.all(
       batch.map(async (opp) => {
         const engagements = await fetchEngagementsByOpportunity(opp.opportunityid, progress);
@@ -78,8 +93,8 @@ export async function runHygieneSweep(opts: {
       })
     );
     results.push(...batchResults);
-    if (i + BATCH_SIZE < opps.length) {
-      progress(`📋 Checked ${Math.min(i + BATCH_SIZE, opps.length)}/${opps.length} opportunities...`);
+    if (i + BATCH_SIZE < filtered.length) {
+      progress(`📋 Checked ${Math.min(i + BATCH_SIZE, filtered.length)}/${filtered.length} opportunities...`);
     }
   }
 

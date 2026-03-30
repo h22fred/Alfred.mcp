@@ -416,7 +416,7 @@ Always populate the structured description fields for every engagement type:
 - use_case, key_points (label auto-adapts per type), next_actions, risks, stakeholders
 A timeline note is created automatically on creation.
 
-IMPORTANT — primary_product_id MUST match the linked opportunity's Business Unit / product. Never guess — use search_product_families and cross-check the opportunity's Business Unit List before selecting.
+IMPORTANT — primary_product_id MUST match the linked opportunity's Business Unit / product. Never guess — use search_products and cross-check the opportunity's Business Unit List before selecting.
 
 FORMAT: All text fields must use bullet points (• item), never prose paragraphs. Keep each bullet to one line.
 
@@ -575,7 +575,7 @@ To REOPEN a completed engagement, set mark_complete=false — this PATCHes state
 Always use the structured description fields to keep the description current (applies to all engagement types).
 A timeline_title + timeline_text should always be provided to log what changed.
 
-IMPORTANT — primary_product_id MUST match the linked opportunity's Business Unit / product. Never guess — use search_product_families and cross-check against the opportunity before setting.
+IMPORTANT — primary_product_id MUST match the linked opportunity's Business Unit / product. Never guess — use search_products and cross-check against the opportunity before setting.
 
 FORMAT: timeline_text and all text fields must use bullet points (• item), never prose paragraphs. Keep each bullet to one line.
 
@@ -584,7 +584,7 @@ BEFORE generating any content: read the existing engagement (get_engagement), li
     engagement_id: z.string().describe("Dynamics sn_engagement GUID"),
     name: z.string().optional().describe("Updated engagement name"),
     type: z.enum(ENGAGEMENT_TYPES).optional().describe("Updated engagement type"),
-    primary_product_id: z.string().optional().describe("Updated primary product GUID (sn_productfamilies) — use search_product_families to find the correct GUID"),
+    primary_product_id: z.string().optional().describe("Updated primary product GUID (sn_productfamilies) — use search_products to find the correct GUID"),
     completed_date: z.string().optional().describe("Updated completed date (ISO format e.g. 2026-03-16)"),
     mark_complete: z.boolean().optional().describe("Set to true to mark Complete. Set to false to REOPEN a completed engagement (sets statecode=0, statuscode=1)."),
     // Structured description fields (all types)
@@ -1040,13 +1040,15 @@ Optional SC milestones: RFx, Business Case, Workshop, POV, EBC
 Always runs for the current user's pipeline only. Optionally posts results to Teams.`,
   {
     post_to_teams: z.boolean().optional().describe("Post the report to Teams (requires configure_teams_webhook)"),
-    min_nnacv:     z.number().optional().describe("Minimum NNACV filter in USD (default $100K)"),
+    min_nnacv:     z.number().optional().describe("Minimum NNACV filter in USD (default $100K). $0 opportunities are always excluded."),
+    exclude_app_store: z.boolean().optional().describe("Exclude App Store Renewal noise opportunities (default true)"),
   },
-  async ({ post_to_teams, min_nnacv }) => {
+  async ({ post_to_teams, min_nnacv, exclude_app_store }) => {
     const progress = makeProgress(server);
     const results = await runHygieneSweep({
       postToTeams: post_to_teams ?? false,
       minNnacv: min_nnacv ?? 100_000,
+      excludeAppStore: exclude_app_store,
     }, progress);
     return { content: [{ type: "text", text: formatHygieneReport(results) }] };
   }

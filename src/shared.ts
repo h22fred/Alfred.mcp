@@ -55,6 +55,18 @@ export function stripHtml(html: string): string {
     .trim();
 }
 
+/** ServiceNow internal email domains — used to classify attendees as internal vs external. */
+export const SN_INTERNAL_DOMAINS = new Set(["servicenow.com", "now.com"]);
+
+/** Personal/generic email domains to skip when matching attendees to customer accounts. */
+export const PERSONAL_EMAIL_DOMAINS = new Set([
+  "gmail.com", "outlook.com", "hotmail.com", "yahoo.com", "live.com",
+  "microsoft.com", "google.com",
+]);
+
+/** Combined set: all domains that are NOT customer-specific. */
+export const NON_CUSTOMER_DOMAINS = new Set([...SN_INTERNAL_DOMAINS, ...PERSONAL_EMAIL_DOMAINS]);
+
 export const FORECAST_NAMES: Record<number, string> = {
   100000001: "Pipeline",
   100000002: "Best Case",
