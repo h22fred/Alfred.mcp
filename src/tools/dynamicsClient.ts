@@ -269,7 +269,8 @@ export async function fetchOpportunities(filter: OpportunityFilter = {}, progres
     filterClause += ` and totalamount ne 0`;
   }
   if (filter.minNnacv) {
-    filterClause += ` and totalamount ge ${filter.minNnacv}`;
+    // Include opps >= threshold OR negative (negative NNACV is always important)
+    filterClause += ` and (totalamount ge ${filter.minNnacv} or totalamount lt 0)`;
   }
   if (filter.myOpportunitiesOnly) {
     const { userId, territoryId } = await fetchCurrentUser(progress);
