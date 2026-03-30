@@ -494,25 +494,30 @@ const SECONDARY_POINTS_LABEL: Partial<Record<EngagementType, string>> = {
   "Customer Business Review": "Action items agreed",
 };
 
+/** Strip leading bullet characters (•, -, *) so the tool can add its own consistently. */
+function stripBullet(s: string): string {
+  return s.replace(/^[\s]*[•\-*]\s*/, "");
+}
+
 export function buildDescription(d: EngagementDescription): string {
   const lines: string[] = [];
   if (d.useCase) lines.push(`Use Case: ${d.useCase}`);
   if (d.keyPoints?.length) {
     const label = d.engagementType ? (KEY_POINTS_LABEL[d.engagementType] ?? "Key points") : "Key points";
     lines.push(`${label}:`);
-    d.keyPoints.forEach(p => lines.push(`• ${p}`));
+    d.keyPoints.forEach(p => lines.push(`• ${stripBullet(p)}`));
   }
   if (d.secondaryPoints?.length && d.engagementType) {
     const label = SECONDARY_POINTS_LABEL[d.engagementType] ?? "Additional notes";
     lines.push(`${label}:`);
-    d.secondaryPoints.forEach(p => lines.push(`• ${p}`));
+    d.secondaryPoints.forEach(p => lines.push(`• ${stripBullet(p)}`));
   }
   if (d.submissionDate && d.engagementType === "RFx") {
     lines.push(`Submission date: ${d.submissionDate}`);
   }
   if (d.nextActions?.length) {
     lines.push("Next actions:");
-    d.nextActions.forEach(a => lines.push(`• ${a}`));
+    d.nextActions.forEach(a => lines.push(`• ${stripBullet(a)}`));
   }
   lines.push(`Risks/Help Required: ${d.risks ?? "-"}`);
   if (d.stakeholders) lines.push(`Stakeholders: ${d.stakeholders}`);
