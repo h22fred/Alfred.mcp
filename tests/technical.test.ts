@@ -242,4 +242,96 @@ describe("audit logging", () => {
     expect(dynamicsSrc).toContain("timestamp:");
     expect(dynamicsSrc).toContain("userInfo().username");
   });
+
+  it("fetch_opportunities audit logged", () => {
+    expect(dynamicsSrc).toMatch(/auditLog\("fetch_opportunities"/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Timeline note dedup guard
+// ---------------------------------------------------------------------------
+describe("timeline note dedup", () => {
+  const dynamicsSrc = readSource("src/tools/dynamicsClient.ts");
+
+  it("createTimelineNote checks for recent duplicate by title", () => {
+    expect(dynamicsSrc).toContain("listTimelineNotes");
+    expect(dynamicsSrc).toMatch(/subject.*===|===.*subject/);
+  });
+
+  it("dedup window is 60 seconds", () => {
+    expect(dynamicsSrc).toContain("60");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Hygiene sweep noise filtering
+// ---------------------------------------------------------------------------
+describe("hygiene sweep filtering", () => {
+  const hygieneSrc = readSource("src/tools/hygieneClient.ts");
+
+  it("filters App Store renewal noise by default", () => {
+    expect(hygieneSrc).toContain("NOISE_PATTERNS");
+    expect(hygieneSrc).toMatch(/app\s*store\s*renewal/i);
+  });
+
+  it("allows disabling noise filter via excludeAppStore", () => {
+    expect(hygieneSrc).toContain("excludeAppStore");
+  });
+
+  it("hygiene sweep applies NNACV threshold filtering", () => {
+    // After switching to collaboration team, client-side NNACV filter must be present
+    expect(hygieneSrc).toContain("nnacv");
+    expect(hygieneSrc).toMatch(/nnacv.*>=.*minNnacv|minNnacv.*<=.*nnacv|o\.nnacv >= minNnacv/);
+  });
+
+  it("hygiene sweep filters to open opportunities only", () => {
+    expect(hygieneSrc).toContain("statuscode === 1");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Engagement link construction
+// ---------------------------------------------------------------------------
+describe("engagement link construction", () => {
+  const scSrc = readSource("src/sc/index.ts");
+  const salesSrc = readSource("src/sales/index.ts");
+
+  it("both servers construct Dynamics deep-link with correct entity", () => {
+    for (const src of [scSrc, salesSrc]) {
+      expect(src).toContain("etn=sn_engagement");
+      expect(src).toContain("pagetype=entityrecord");
+    }
+  });
+
+  it("engagementSummary includes link in both servers", () => {
+    for (const src of [scSrc, salesSrc]) {
+      expect(src).toContain("engagementLink(e)");
+      expect(src).toContain("Open in Dynamics");
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Token extraction — CDP and Playwright fallbacks
+// ---------------------------------------------------------------------------
+describe("token extraction fallbacks", () => {
+  const outlookSrc = readSource("src/tools/outlookClient.ts");
+  const teamsSrc = readSource("src/tools/teamsClient.ts");
+
+  it("Outlook CDP extraction tries multiple tab types", () => {
+    // Should try Outlook tab, then Teams tab, then any tab
+    expect(outlookSrc).toContain("outlook.office.com");
+  });
+
+  it("Teams MSAL extraction decodes JWT to check scopes", () => {
+    expect(teamsSrc).toContain("decodeToken");
+    expect(teamsSrc).toContain("isGraphToken");
+    expect(teamsSrc).toContain("hasScope");
+  });
+
+  it("Playwright fallback handles case where no existing tabs match", () => {
+    // Should fall back to newPage() when no existing tab works
+    expect(outlookSrc).toContain("await ctx.newPage()");
+  });
 });

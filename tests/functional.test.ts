@@ -5,7 +5,7 @@
 import { describe, it, expect } from "vitest";
 import { buildDescription, stripBullet, sanitizeODataSearch } from "../src/tools/dynamicsClient.js";
 import { formatHygieneReport, type HygieneResult } from "../src/tools/hygieneClient.js";
-import { requireGuid, WriteRateLimiter, stripHtml, FORECAST_NAMES } from "../src/shared.js";
+import { requireGuid, WriteRateLimiter, stripHtml, FORECAST_NAMES, SN_INTERNAL_DOMAINS, PERSONAL_EMAIL_DOMAINS, NON_CUSTOMER_DOMAINS } from "../src/shared.js";
 import { ALL_ENGAGEMENT_TYPES, ENGAGEMENT_TYPE_GUIDS } from "../src/config.js";
 
 // ---------------------------------------------------------------------------
@@ -62,6 +62,18 @@ describe("stripBullet", () => {
 
   it("handles bullet without space", () => {
     expect(stripBullet("•text")).toBe("text");
+  });
+
+  it("strips tab + bullet", () => {
+    expect(stripBullet("\t• tabbed")).toBe("tabbed");
+  });
+
+  it("strips mixed bullet styles (• then -)", () => {
+    expect(stripBullet("• - mixed")).toBe("mixed");
+  });
+
+  it("strips mixed bullet styles (- then •)", () => {
+    expect(stripBullet("- • mixed")).toBe("mixed");
   });
 });
 
@@ -149,6 +161,35 @@ describe("buildDescription", () => {
     const result = buildDescription({ keyPoints: ["item"] });
     expect(result).toContain("Key points:");
   });
+
+  it("produces minimal output with no fields", () => {
+    const result = buildDescription({});
+    expect(result).toContain("Risks/Help Required: -");
+    // Should not crash or produce empty string
+    expect(result.length).toBeGreaterThan(0);
+  });
+
+  it("handles all engagement types without crashing", () => {
+    for (const type of ALL_ENGAGEMENT_TYPES) {
+      const result = buildDescription({
+        engagementType: type,
+        keyPoints: ["test point"],
+        nextActions: ["test action"],
+      });
+      expect(result).toContain("test point");
+      expect(result).toContain("test action");
+    }
+  });
+
+  it("handles unicode and special characters in key points", () => {
+    const result = buildDescription({
+      keyPoints: ["Zürich meeting — confirmed ✓", "日本語テスト"],
+      stakeholders: "Müller (CTO), O'Brien (VP)",
+    });
+    expect(result).toContain("Zürich meeting — confirmed ✓");
+    expect(result).toContain("日本語テスト");
+    expect(result).toContain("Müller (CTO), O'Brien (VP)");
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -179,6 +220,20 @@ describe("sanitizeODataSearch", () => {
 
   it("handles empty string", () => {
     expect(sanitizeODataSearch("")).toBe("");
+  });
+
+  it("strips unicode characters (only ASCII allowed)", () => {
+    // sanitizeODataSearch allows only [a-zA-Z0-9 \-\.@_#]
+    expect(sanitizeODataSearch("Zürich")).toBe("Zrich");
+    expect(sanitizeODataSearch("Straße")).toBe("Strae");
+  });
+
+  it("preserves email addresses", () => {
+    expect(sanitizeODataSearch("user@servicenow.com")).toBe("user@servicenow.com");
+  });
+
+  it("preserves hashes and numbers", () => {
+    expect(sanitizeODataSearch("OPTY#5299816")).toBe("OPTY#5299816");
   });
 });
 
@@ -241,6 +296,32 @@ describe("formatHygieneReport", () => {
     const report = formatHygieneReport(results);
     expect(report).toContain("missing: Discovery, Demo");
   });
+
+  it("handles empty results array", () => {
+    const report = formatHygieneReport([]);
+    expect(report).toBeDefined();
+    expect(report.length).toBeGreaterThan(0);
+  });
+
+  it("formats NNACV correctly: millions and thousands", () => {
+    const results = [
+      makeResult({ opportunity: { ...makeResult().opportunity, nnacv: 2500000 } }),
+      makeResult({ opportunity: { ...makeResult().opportunity, name: "Small Opp", nnacv: 150000 } }),
+    ];
+    const report = formatHygieneReport(results);
+    expect(report).toContain("$2.5M");
+    expect(report).toContain("$150K");
+  });
+
+  it("handles zero and null NNACV gracefully", () => {
+    const results = [
+      makeResult({ opportunity: { ...makeResult().opportunity, nnacv: 0 } }),
+      makeResult({ opportunity: { ...makeResult().opportunity, nnacv: undefined as unknown as number } }),
+    ];
+    // Should not throw
+    const report = formatHygieneReport(results);
+    expect(report).toBeDefined();
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -278,5 +359,62 @@ describe("forecast categories", () => {
     expect(FORECAST_NAMES[100000002]).toBe("Best Case");
     expect(FORECAST_NAMES[100000003]).toBe("Committed");
     expect(FORECAST_NAMES[100000004]).toBe("Omitted");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Email domain classification
+// ---------------------------------------------------------------------------
+describe("email domain classification", () => {
+  it("SN_INTERNAL_DOMAINS includes servicenow.com and now.com", () => {
+    expect(SN_INTERNAL_DOMAINS.has("servicenow.com")).toBe(true);
+    expect(SN_INTERNAL_DOMAINS.has("now.com")).toBe(true);
+  });
+
+  it("PERSONAL_EMAIL_DOMAINS excludes servicenow.com", () => {
+    expect(PERSONAL_EMAIL_DOMAINS.has("servicenow.com")).toBe(false);
+  });
+
+  it("PERSONAL_EMAIL_DOMAINS includes common providers", () => {
+    expect(PERSONAL_EMAIL_DOMAINS.has("gmail.com")).toBe(true);
+    expect(PERSONAL_EMAIL_DOMAINS.has("outlook.com")).toBe(true);
+    expect(PERSONAL_EMAIL_DOMAINS.has("hotmail.com")).toBe(true);
+  });
+
+  it("NON_CUSTOMER_DOMAINS is union of internal + personal", () => {
+    for (const d of SN_INTERNAL_DOMAINS) expect(NON_CUSTOMER_DOMAINS.has(d)).toBe(true);
+    for (const d of PERSONAL_EMAIL_DOMAINS) expect(NON_CUSTOMER_DOMAINS.has(d)).toBe(true);
+    expect(NON_CUSTOMER_DOMAINS.size).toBe(SN_INTERNAL_DOMAINS.size + PERSONAL_EMAIL_DOMAINS.size);
+  });
+
+  it("customer domains are not in NON_CUSTOMER_DOMAINS", () => {
+    expect(NON_CUSTOMER_DOMAINS.has("sita.aero")).toBe(false);
+    expect(NON_CUSTOMER_DOMAINS.has("pmi.com")).toBe(false);
+    expect(NON_CUSTOMER_DOMAINS.has("straumann.com")).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// WriteRateLimiter edge cases
+// ---------------------------------------------------------------------------
+describe("WriteRateLimiter edge cases", () => {
+  it("resets after window expires", () => {
+    const limiter = new WriteRateLimiter(1, 50); // 50ms window
+    limiter.check("test");
+    expect(() => limiter.check("test")).toThrow("Rate limit");
+    // Wait for window to expire
+    return new Promise<void>((resolve) => {
+      setTimeout(() => {
+        expect(() => limiter.check("test")).not.toThrow();
+        resolve();
+      }, 60);
+    });
+  });
+
+  it("different limiters are independent", () => {
+    const a = new WriteRateLimiter(1, 60_000);
+    const b = new WriteRateLimiter(1, 60_000);
+    a.check("a");
+    expect(() => b.check("b")).not.toThrow();
   });
 });

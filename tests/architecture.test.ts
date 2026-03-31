@@ -45,6 +45,7 @@ describe("SC / Sales tool parity", () => {
     "add_engagement_attendees",
     "get_engagement_participants",
     "search_my_engagements",
+    "search_my_collaboration_opportunities",
     "get_calendar_events",
     "search_emails",
     "list_mail_folders",
@@ -56,9 +57,11 @@ describe("SC / Sales tool parity", () => {
     "detect_post_meeting_engagements",
     "search_accounts",
     "get_account",
+    "get_product",
     "search_products",
     "search_contacts",
     "get_collaboration_team",
+    "open_chrome_debug",
     "update_alfred",
   ];
 
@@ -73,7 +76,11 @@ describe("SC / Sales tool parity", () => {
   }
 
   // Sales-specific tools
-  const SALES_ONLY = ["create_opportunity", "update_opportunity", "get_territory_pipeline", "search_users"];
+  const SALES_ONLY = [
+    "create_opportunity", "update_opportunity", "get_territory_pipeline",
+    "search_users", "get_my_opportunities", "add_opportunity_note",
+    "list_opportunity_notes", "ensure_alfred",
+  ];
   for (const tool of SALES_ONLY) {
     it(`sales-only tool "${tool}" exists in Sales server`, () => {
       expect(salesTools).toContain(tool);
@@ -81,12 +88,28 @@ describe("SC / Sales tool parity", () => {
   }
 
   // SC-specific tools
-  const SC_ONLY = ["assess_tech_win"];
+  const SC_ONLY = ["assess_tech_win", "list_opportunities", "provide_cookie"];
   for (const tool of SC_ONLY) {
     it(`SC-only tool "${tool}" exists in SC server`, () => {
       expect(scTools).toContain(tool);
     });
   }
+
+  // No unknown tools: every tool in each server must be in one of the lists above
+  const allKnownSc = [...REQUIRED_SHARED, ...SC_ONLY];
+  const allKnownSales = [...REQUIRED_SHARED, ...SALES_ONLY];
+
+  it("SC server has no untracked tools", () => {
+    for (const tool of scTools) {
+      expect(allKnownSc).toContain(tool);
+    }
+  });
+
+  it("Sales server has no untracked tools", () => {
+    for (const tool of salesTools) {
+      expect(allKnownSales).toContain(tool);
+    }
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -236,10 +259,35 @@ describe("tool description safety", () => {
   it("external data sources use externalData wrapper", () => {
     // Calendar, email, transcript, chats should all use externalData()
     for (const src of [scSrc, salesSrc]) {
-      const calendarHandler = src.includes('externalData("Outlook calendar"');
-      const emailHandler = src.includes('externalData("Outlook emails"');
-      if (src.includes("get_calendar_events")) expect(calendarHandler).toBe(true);
-      if (src.includes("search_emails")) expect(emailHandler).toBe(true);
+      expect(src).toContain('externalData("Outlook calendar"');
+      expect(src).toContain('externalData("Outlook emails"');
+      expect(src).toContain('externalData("Teams transcripts"');
+      expect(src).toContain('externalData("Teams chats"');
+    }
+  });
+
+  it("read-before-write instruction in create_engagement", () => {
+    for (const src of [scSrc, salesSrc]) {
+      expect(src).toContain("BEFORE generating any content");
+      expect(src).toContain("list_engagements");
+    }
+  });
+
+  it("product must match opportunity BU instruction in create_engagement", () => {
+    for (const src of [scSrc, salesSrc]) {
+      expect(src).toContain("primary_product_id MUST match");
+    }
+  });
+
+  it("no SC attribution instruction in create_engagement", () => {
+    for (const src of [scSrc, salesSrc]) {
+      expect(src).toContain("Do NOT append internal SC attribution");
+    }
+  });
+
+  it("bullet format instruction in create_engagement", () => {
+    for (const src of [scSrc, salesSrc]) {
+      expect(src).toContain("must use bullet points");
     }
   });
 });
