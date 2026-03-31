@@ -150,81 +150,6 @@ function groupByAccount(results: HygieneResult[]): Map<string, HygieneResult[]> 
   return sorted;
 }
 
-function accountBlock(account: string, opps: HygieneResult[]): Record<string, unknown>[] {
-  const blocks: Record<string, unknown>[] = [];
-  const accountTotal = opps.reduce((s, r) => s + (r.opportunity.nnacv ?? 0), 0);
-  const worstStatus = opps.some(r => r.status === "red") ? "red"
-    : opps.some(r => r.status === "yellow") ? "yellow" : "green";
-  const icon = worstStatus === "red" ? "🔴" : worstStatus === "yellow" ? "🟡" : "✅";
-
-  // Account header row
-  blocks.push({
-    type: "ColumnSet", spacing: "Medium",
-    columns: [
-      {
-        type: "Column", width: "stretch",
-        items: [{ type: "TextBlock", text: `${icon}  **${account.toUpperCase()}**`, size: "Small", weight: "Bolder", wrap: false }],
-      },
-      {
-        type: "Column", width: "auto",
-        items: [{ type: "TextBlock", text: fmt(accountTotal), size: "Small", weight: "Bolder", color: "Accent", horizontalAlignment: "Right" }],
-      },
-    ],
-  });
-
-  // One row per opportunity — red sorted by close date asc (urgency), others by NNACV desc
-  opps
-    .sort((a, b) => {
-      const statusOrder = { red: 0, yellow: 1, green: 2 };
-      if (a.status !== b.status) return statusOrder[a.status] - statusOrder[b.status];
-      if (a.status === "red") {
-        const da = a.opportunity.estimatedclosedate ?? "9999";
-        const db = b.opportunity.estimatedclosedate ?? "9999";
-        return da < db ? -1 : da > db ? 1 : 0;
-      }
-      return (b.opportunity.nnacv ?? 0) - (a.opportunity.nnacv ?? 0);
-    })
-    .forEach(r => {
-      const oppIcon = r.status === "red" ? "🔴" : r.status === "yellow" ? "🟡" : "✅";
-      const missing = r.missingRequired.length
-        ? r.missingRequired.join(" · ")
-        : r.missingOptional.length
-          ? `optional: ${r.missingOptional.slice(0, 3).join(", ")}${r.missingOptional.length > 3 ? "…" : ""}`
-          : "complete ✓";
-      const closeLabel = r.opportunity.estimatedclosedate
-        ? r.opportunity.estimatedclosedate.slice(0, 10)
-        : "—";
-      blocks.push({
-        type: "ColumnSet", spacing: "Small",
-        columns: [
-          {
-            type: "Column", width: "stretch",
-            items: [{ type: "TextBlock", text: `${oppIcon}  ${truncate(r.opportunity.name, 38)}`, size: "Small", wrap: false, isSubtle: true }],
-          },
-          {
-            type: "Column", width: "auto",
-            items: [{ type: "TextBlock", text: fmt(r.opportunity.nnacv), size: "Small", isSubtle: true, horizontalAlignment: "Right" }],
-          },
-          {
-            type: "Column", width: "auto",
-            items: [{ type: "TextBlock", text: closeLabel, size: "Small", isSubtle: true,
-              color: r.status === "red" ? "Attention" : "Default", horizontalAlignment: "Right" }],
-          },
-          {
-            type: "Column", width: "auto",
-            items: [{
-              type: "TextBlock", text: missing, size: "Small", wrap: false,
-              color: r.status === "red" ? "Attention" : r.status === "yellow" ? "Warning" : "Good",
-              horizontalAlignment: "Right",
-            }],
-          },
-        ],
-      });
-    });
-
-  return blocks;
-}
-
 async function postHygieneToTeams(results: HygieneResult[], requiredTypes: string[], dynamicsUrl: string | undefined, progress: ProgressFn): Promise<void> {
   const today = new Date().toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
 
@@ -233,38 +158,92 @@ async function postHygieneToTeams(results: HygieneResult[], requiredTypes: strin
   const green  = results.filter(r => r.status === "green").length;
   const totalPipeline = results.reduce((s, r) => s + (r.opportunity.nnacv ?? 0), 0);
 
-  // Only show red/yellow — green opps need no action. Cap at 20 rows.
-  const actionable = results.filter(r => r.status !== "green");
-  const displayResults = actionable.slice(0, 20);
-  const hiddenOverCap = actionable.length - displayResults.length;
-
   const body: Record<string, unknown>[] = [
-    { type: "TextBlock", text: `📋 My CRM Hygiene — ${today}`, weight: "Bolder", size: "Large", wrap: true },
-    { type: "TextBlock", text: `🔴 ${red} critical  ·  🟡 ${yellow} on track  ·  ✅ ${green} complete  ·  ${fmt(totalPipeline)} pipeline`, size: "Small", wrap: true, spacing: "Small" },
-    { type: "TextBlock", text: `_Columns: ${requiredTypes.map(abbrev).join(" · ")}_`, size: "Small", isSubtle: true, wrap: true, spacing: "None" },
+    { type: "TextBlock", text: `📋 CRM Hygiene Sweep — ${today}`, weight: "Bolder", size: "Large", wrap: true },
+    {
+      type: "ColumnSet", spacing: "Small",
+      columns: [
+        { type: "Column", width: "auto", items: [{ type: "TextBlock", text: `🔴 **${red}** critical`, size: "Small" }] },
+        { type: "Column", width: "auto", items: [{ type: "TextBlock", text: `🟡 **${yellow}** on track`, size: "Small" }] },
+        { type: "Column", width: "auto", items: [{ type: "TextBlock", text: `✅ **${green}** complete`, size: "Small" }] },
+        { type: "Column", width: "auto", items: [{ type: "TextBlock", text: `NNACV: **${fmt(totalPipeline)}**`, size: "Small", color: "Accent" }] },
+      ],
+    },
   ];
 
-  for (const r of displayResults) {
-    const icon = r.status === "red" ? "🔴" : "🟡";
-    const typeNames = r.engagements.map(e => e.engagementTypeName ?? "");
-    const checks = requiredTypes.map(t => `${abbrev(t)} ${typeNames.includes(t) ? "✅" : "❌"}`).join("  ");
-    const close = closeDateLabel(r.opportunity.estimatedclosedate);
-    const oppLink = dynamicsUrl
-      ? `[↗ Dynamics](${dynamicsUrl}/main.aspx?etn=opportunity&pagetype=entityrecord&id=${r.opportunity.opportunityid})`
-      : "";
-    body.push(
-      { type: "TextBlock", text: `${icon} **${truncate(r.opportunity.name, 40)}** — ${fmt(r.opportunity.nnacv)} · ${close}${oppLink ? `  ${oppLink}` : ""}`, size: "Small", wrap: true, spacing: "Small" },
-      { type: "TextBlock", text: checks, size: "Small", isSubtle: true, wrap: true, spacing: "None" },
-    );
+  // Group by account — only show actionable (red/yellow), cap total rows at 25
+  const actionable = results.filter(r => r.status !== "green");
+  const grouped = groupByAccount(actionable);
+  let rowCount = 0;
+  const MAX_ROWS = 25;
+
+  for (const [account, opps] of grouped) {
+    if (rowCount >= MAX_ROWS) break;
+
+    // Cap opps within this account
+    const cappedOpps = opps.slice(0, MAX_ROWS - rowCount);
+
+    const accountTotal = cappedOpps.reduce((s, r) => s + (r.opportunity.nnacv ?? 0), 0);
+    const worstIcon = cappedOpps.some(r => r.status === "red") ? "🔴" : "🟡";
+
+    // Account header
+    body.push({
+      type: "Container", separator: true, spacing: "Medium",
+      items: [{
+        type: "ColumnSet",
+        columns: [
+          { type: "Column", width: "stretch", items: [{ type: "TextBlock", text: `${worstIcon}  **${account}**`, size: "Small", weight: "Bolder", wrap: false }] },
+          { type: "Column", width: "auto", items: [{ type: "TextBlock", text: fmt(accountTotal), size: "Small", weight: "Bolder", color: "Accent", horizontalAlignment: "Right" }] },
+        ],
+      }],
+    });
+
+    // Opportunity rows within the account
+    cappedOpps
+      .sort((a, b) => {
+        const so = { red: 0, yellow: 1, green: 2 };
+        if (a.status !== b.status) return so[a.status] - so[b.status];
+        if (a.status === "red") {
+          const da = a.opportunity.estimatedclosedate ?? "9999";
+          const db = b.opportunity.estimatedclosedate ?? "9999";
+          return da < db ? -1 : da > db ? 1 : 0;
+        }
+        return (b.opportunity.nnacv ?? 0) - (a.opportunity.nnacv ?? 0);
+      })
+      .forEach(r => {
+        const oppIcon = r.status === "red" ? "🔴" : "🟡";
+        const missing = r.missingRequired.length
+          ? r.missingRequired.map(abbrev).join(" · ")
+          : "on track ✓";
+        const close = closeDateLabel(r.opportunity.estimatedclosedate);
+        const oppName = truncate(r.opportunity.name, 36);
+        const oppLink = dynamicsUrl
+          ? `[${oppName}](${dynamicsUrl}/main.aspx?etn=opportunity&pagetype=entityrecord&id=${r.opportunity.opportunityid})`
+          : oppName;
+
+        body.push({
+          type: "ColumnSet", spacing: "Small",
+          columns: [
+            { type: "Column", width: "stretch", items: [{ type: "TextBlock", text: `${oppIcon}  ${oppLink}`, size: "Small", wrap: false }] },
+            { type: "Column", width: "auto", items: [{ type: "TextBlock", text: fmt(r.opportunity.nnacv), size: "Small", horizontalAlignment: "Right" }] },
+            { type: "Column", width: "auto", items: [{ type: "TextBlock", text: close, size: "Small", horizontalAlignment: "Right", color: r.status === "red" ? "Attention" : "Default" }] },
+            { type: "Column", width: "auto", items: [{ type: "TextBlock", text: missing, size: "Small", wrap: false, color: r.status === "red" ? "Attention" : "Good", horizontalAlignment: "Right" }] },
+          ],
+        });
+        rowCount++;
+      });
   }
 
+  // Footer
   const footerParts: string[] = [];
-  if (green > 0) footerParts.push(`✅ ${green} complete hidden.`);
-  if (hiddenOverCap > 0) footerParts.push(`+${hiddenOverCap} more not shown.`);
-  body.push({ type: "TextBlock", text: footerParts.join("  ") || "\u200B", size: "Small", isSubtle: true, separator: true, spacing: "Medium", wrap: true });
+  if (green > 0) footerParts.push(`✅ ${green} complete (not shown)`);
+  if (rowCount < actionable.length) footerParts.push(`+${actionable.length - rowCount} more not shown`);
+  if (footerParts.length > 0) {
+    body.push({ type: "TextBlock", text: footerParts.join("  ·  "), size: "Small", isSubtle: true, separator: true, spacing: "Medium", wrap: true });
+  }
 
   if (actionable.length > 0) {
-    body.push({ type: "TextBlock", text: `Ask Claude: _"Create missing engagements for my red opportunities"_`, size: "Small", isSubtle: true, wrap: true, spacing: "Small" });
+    body.push({ type: "TextBlock", text: `💡 Ask Claude: _"Create missing engagements for my red opportunities"_`, size: "Small", isSubtle: true, wrap: true, spacing: "Small" });
   }
 
   await postAdaptiveCard({
@@ -272,9 +251,6 @@ async function postHygieneToTeams(results: HygieneResult[], requiredTypes: strin
     type: "AdaptiveCard",
     version: "1.4",
     body,
-    actions: [
-      { type: "Action.OpenUrl", title: "Open Claude", url: "https://claude.ai" },
-    ],
   }, progress);
 }
 

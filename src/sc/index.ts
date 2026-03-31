@@ -253,23 +253,47 @@ DISPLAY: Show both values clearly labelled — "NNACV: $X | ACV: $Y". NNACV (nna
     const id = requireGuid(opportunity_id, "opportunity_id");
     const progress = makeProgress(server);
     const opp = await fetchOpportunityById(id, progress);
+    const link = `${DYNAMICS_BASE_URL}/main.aspx?etn=opportunity&pagetype=entityrecord&id=${opp.opportunityid}`;
 
-    // Also fetch opportunity timeline notes — critical context for engagement creation
-    let timelineSection = "";
-    try {
-      const notes = await listTimelineNotes(id, progress);
-      if (notes.length > 0) {
-        timelineSection = "\n\n--- Opportunity Timeline Notes ---\n" +
-          notes.map(n =>
-            `[${n.createdon?.slice(0, 10) ?? "—"}] ${n.subject ?? "(no subject)"}\n${n.notetext ?? ""}`
-          ).join("\n\n");
-      } else {
-        timelineSection = "\n\n--- No timeline notes on this opportunity ---";
-      }
-    } catch { timelineSection = "\n\n--- Could not fetch opportunity timeline notes ---"; }
+    // Fetch collaboration team, engagements, and timeline notes in parallel
+    const [collabTeam, engagements, notes] = await Promise.all([
+      fetchCollaborationTeam(id, progress).catch(() => []),
+      fetchEngagementsByOpportunity(id, progress).catch(() => []),
+      listTimelineNotes(id, progress).catch(() => []),
+    ]);
+
+    let extraSections = "";
+
+    // Collaboration team
+    if (collabTeam.length > 0) {
+      extraSections += "\n\n--- Collaboration Team ---\n" +
+        collabTeam.map(m =>
+          `${m.isPrimary ? "⭐ " : ""}${m.userName} — ${m.collaborationRole}${m.jobRole ? ` (${m.jobRole})` : ""}`
+        ).join("\n");
+    }
+
+    // Engagements summary
+    if (engagements.length > 0) {
+      extraSections += "\n\n--- Engagements ---\n" +
+        engagements.map(e =>
+          `${e.statusName === "Active" ? "🟢" : e.statusName === "Completed" ? "✅" : "⬜"} ${e.engagementTypeName ?? "?"} — ${e.statusName ?? "?"}${e.sn_completeddate ? ` (${e.sn_completeddate.slice(0, 10)})` : ""}`
+        ).join("\n");
+    } else {
+      extraSections += "\n\n--- No engagements on this opportunity ---";
+    }
+
+    // Timeline notes
+    if (notes.length > 0) {
+      extraSections += "\n\n--- Opportunity Timeline Notes ---\n" +
+        notes.map(n =>
+          `[${n.createdon?.slice(0, 10) ?? "—"}] ${n.subject ?? "(no subject)"}\n${n.notetext ?? ""}`
+        ).join("\n\n");
+    } else {
+      extraSections += "\n\n--- No timeline notes on this opportunity ---";
+    }
 
     return {
-      content: [{ type: "text", text: JSON.stringify(opp, null, 2) + timelineSection }],
+      content: [{ type: "text", text: JSON.stringify({ ...opp, dynamicsLink: link }, null, 2) + extraSections }],
     };
   }
 );
