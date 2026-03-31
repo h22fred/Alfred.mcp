@@ -434,7 +434,11 @@ Do NOT append internal SC attribution (e.g. "SC: Fredrik Holmstrom") to any text
 
 BEFORE generating any content: call list_engagements on the opportunity to read existing engagement content, and get_opportunity to read the opportunity timeline. Only write what is genuinely NEW — never duplicate what is already logged.
 
-When creating from a calendar event or meeting, always pass the attendees list — they are automatically linked as Active Participants (internal @servicenow.com colleagues) and Active Engagement Contacts (external customers).`,
+When creating from a calendar event or meeting, always pass the attendees list — they are automatically linked as Active Participants (internal @servicenow.com colleagues) and Active Engagement Contacts (external customers).
+
+AFTER EVERY SUCCESSFUL CREATE: Always present the result to the user as:
+✅ [Engagement Name] (ENG#) — [Open in Dynamics](link)
+The Dynamics link is in the tool response. This applies to EVERY engagement created, including bulk runs. Never omit the link.`,
   {
     opportunity_id: z.string().describe("Dynamics opportunity GUID"),
     primary_product_id: z.string().describe("Dynamics product GUID (use search_products to find it)"),
@@ -791,7 +795,7 @@ Ideal for SSCs and Specialists to see their full pipeline.`,
       return [
         `**${o.name}** (${o.sn_number ?? "—"})`,
         `Account: ${o.accountName} · Owner: ${o.ownerName ?? "—"} · SC: ${o.scName ?? "—"}`,
-        `Close: ${o.estimatedclosedate?.slice(0, 10) ?? "—"} · NNACV: ${o.totalamount != null ? `$${o.totalamount.toLocaleString()}` : "—"} · ${o.forecastCategoryName ?? "—"}`,
+        `Close: ${o.estimatedclosedate?.slice(0, 10) ?? "—"} · NNACV: ${o.nnacv != null ? `$${o.nnacv.toLocaleString()}` : "—"} · ${o.forecastCategoryName ?? "—"}`,
         `🔗 ${link}`,
       ].join("\n");
     });

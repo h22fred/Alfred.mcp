@@ -140,25 +140,35 @@ export async function postTeamsNotification(
 // ---------------------------------------------------------------------------
 
 // Reads a graph.microsoft.com-scoped token from MSAL localStorage/sessionStorage
-// Decodes the JWT aud claim directly — more reliable than checking the target field
+// Decodes the JWT aud claim and checks for Chat.Read scope — Teams endpoints need
+// a token with chat scopes, not just any Graph token (Outlook tokens lack these).
 const GRAPH_MSAL_EXTRACT_JS = `(function() {
-  const isGraphToken = (secret) => {
+  const decodeToken = (secret) => {
     try {
-      const payload = JSON.parse(atob(secret.split('.')[1].replace(/-/g,'+').replace(/_/g,'/')));
-      return String(payload.aud || '').includes('graph.microsoft.com');
-    } catch { return false; }
+      return JSON.parse(atob(secret.split('.')[1].replace(/-/g,'+').replace(/_/g,'/')));
+    } catch { return null; }
   };
+  const isGraphToken = (payload) => String(payload.aud || '').includes('graph.microsoft.com');
+  const hasScope = (payload, scope) => String(payload.scp || '').toLowerCase().includes(scope.toLowerCase());
   const tryStorage = (s) => {
     try {
+      // Two passes: first look for tokens with Chat.Read (broad Teams scopes),
+      // then fall back to any Graph token (still useful for calendar/mail).
+      let bestToken = null;
       for (const key of Object.keys(s)) {
         try {
           const val = JSON.parse(s.getItem(key));
-          if (val && val.credentialType === 'AccessToken' && val.secret && isGraphToken(val.secret)) {
+          if (val && val.credentialType === 'AccessToken' && val.secret) {
+            const payload = decodeToken(val.secret);
+            if (!payload || !isGraphToken(payload)) continue;
             const exp = Number(val.expiresOn || val.extended_expires_on || 0);
-            if (!exp || exp * 1000 > Date.now()) return val.secret;
+            if (exp && exp * 1000 < Date.now()) continue;
+            if (hasScope(payload, 'Chat.Read')) return val.secret;  // best: has chat scopes
+            if (!bestToken) bestToken = val.secret;                  // fallback: any graph token
           }
         } catch {}
       }
+      return bestToken;
     } catch {}
     return null;
   };
@@ -223,16 +233,27 @@ export async function acquireTeamsGraphToken(progress: ProgressFn): Promise<stri
     }
   }
 
-  // Step 2: MSAL miss — use Playwright to open a new Teams page and intercept Graph requests
+  // Step 2: MSAL miss — use Playwright to capture token from existing Teams tab
+  // (avoids opening a new browser window)
   const browser = await connectWithRetry();
 
   try {
     const ctx = browser.contexts()[0];
     if (!ctx) throw new Error("No browser context found");
 
-    // Step 2: no existing tab yielded a token — open a new page on Outlook
-    // (Outlook makes Graph API calls on load, giving us a graph.microsoft.com-scoped token)
-    const page = await ctx.newPage();
+    // Prefer reusing an existing Teams tab — avoids opening new windows
+    const existingPages = ctx.pages();
+    let page = existingPages.find(p => p.url().includes("teams.microsoft.com"));
+
+    let isNewPage = false;
+    if (!page) {
+      // No Teams tab — try Outlook tab (it may have broad scopes), else reuse any tab
+      page = existingPages.find(p => p.url().includes("outlook.office.com"))
+          ?? existingPages.find(p => p.url().startsWith("http"))
+          ?? await ctx.newPage();
+      isNewPage = !existingPages.includes(page);
+    }
+
     let capturedToken: string | null = null;
     await page.route("**/graph.microsoft.com/**", async (route) => {
       const auth = route.request().headers()["authorization"] ?? "";
@@ -241,11 +262,18 @@ export async function acquireTeamsGraphToken(progress: ProgressFn): Promise<stri
     });
 
     progress("📡 Loading Teams to capture Graph token (broad scopes)...");
-    await page.goto("https://teams.microsoft.com/v2/", { waitUntil: "domcontentloaded", timeout: 20_000 }).catch(() => {});
+    if (!page.url().includes("teams.microsoft.com")) {
+      await page.goto("https://teams.microsoft.com/v2/", { waitUntil: "domcontentloaded", timeout: 20_000 }).catch(() => {});
+    } else {
+      await page.reload({ waitUntil: "domcontentloaded", timeout: 20_000 }).catch(() => {});
+    }
+
     const deadline = Date.now() + 10_000;
     while (!capturedToken && Date.now() < deadline) await page.waitForTimeout(500);
 
-    await page.close();
+    // Clean up route interceptor and only close pages we created
+    await page.unroute("**/graph.microsoft.com/**").catch(() => {});
+    if (isNewPage) await page.close();
 
     if (!capturedToken) throw new Error("Could not capture Graph token. Make sure Teams or Outlook is loaded in Alfred.");
 
@@ -275,6 +303,17 @@ async function graphFetch(path: string, token: string, _retryCount = 0): Promise
     const body = await res.text().catch(() => "");
     // Only clear cache for auth failures on non-transcript endpoints (transcript 401 = scope issue, not bad token)
     if (res.status === 401 && !path.includes("transcript")) teamsTokenCache = null;
+    // Detect scope permission errors and give actionable guidance
+    if (res.status === 403 && body.includes("Missing scope permissions")) {
+      const match = body.match(/API requires one of '([^']+)'/);
+      const needed = match?.[1] ?? "unknown scopes";
+      teamsTokenCache = null;  // force re-acquire — current token lacks scopes
+      throw new Error(
+        `Graph 403: Token is missing required scope (${needed}).\n` +
+        `This usually means the token was captured from Outlook (which lacks Chat scopes).\n` +
+        `Fix: Open the Teams tab in Alfred and retry — Teams tokens have broader scopes.`
+      );
+    }
     throw new Error(`Graph ${res.status} ${res.statusText}${body ? `: ${body.slice(0, 300)}` : ""}`);
   }
   return res.json() as Promise<Record<string, unknown>>;

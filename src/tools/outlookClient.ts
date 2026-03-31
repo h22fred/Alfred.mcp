@@ -55,21 +55,18 @@ async function acquireGraphTokenRawCDP(progress: ProgressFn): Promise<string> {
   const listRes = await fetch(`http://localhost:${CDP_PORT}/json/list`);
   const targets = await listRes.json() as Array<{ webSocketDebuggerUrl?: string; type?: string; url?: string }>;
 
-  // Prefer Outlook tab, fall back to any page
+  // Prefer Outlook tab, but also try Teams or any tab that might have a mail-scoped MSAL token
   const outlookTarget = targets.find(t => t.type === "page" && t.url?.includes("outlook.office.com") && t.webSocketDebuggerUrl);
+  const teamsTarget   = targets.find(t => t.type === "page" && t.url?.includes("teams.microsoft.com") && t.webSocketDebuggerUrl);
   const anyTarget     = targets.find(t => t.type === "page" && t.webSocketDebuggerUrl);
-  const target        = outlookTarget ?? anyTarget;
+  const target        = outlookTarget ?? teamsTarget ?? anyTarget;
 
   if (!target?.webSocketDebuggerUrl) {
     throw new Error("No page targets found in Alfred. Open Alfred.app and log into Outlook.");
   }
 
   if (!outlookTarget) {
-    process.stderr.write("[alfred] CDP: no Outlook tab found in Alfred Chrome window\n");
-    throw new Error(
-      "No Outlook tab found in Alfred.\n" +
-      "Please open Outlook in the Alfred window and log in, then retry."
-    );
+    process.stderr.write(`[alfred] CDP: no Outlook tab found — trying ${teamsTarget ? "Teams" : "other"} tab for MSAL cache\n`);
   }
 
   // Step 1: try reading token directly from MSAL storage — fast, no network interception
@@ -160,23 +157,47 @@ async function acquireGraphToken(progress: ProgressFn): Promise<string> {
   try {
     return await acquireGraphTokenRawCDP(progress);
   } catch {
-    // Raw CDP failed — use Playwright to navigate a fresh Outlook page and capture token
+    // Raw CDP failed — use Playwright to capture token from an existing Outlook tab
+    // (or navigate an existing tab to Outlook — avoids opening a new window)
     progress("📡 Falling back to Playwright token capture via Outlook...");
     const browser = await connectWithRetry();
     try {
       const ctx = browser.contexts()[0];
       if (!ctx) throw new Error("No browser context found in Alfred");
-      const page = await ctx.newPage();
+
+      // Try to find an existing Outlook tab instead of opening a new one
+      const existingPages = ctx.pages();
+      let page = existingPages.find(p => p.url().includes("outlook.office.com"));
+
+      let isNewPage = false;
+      if (!page) {
+        // No Outlook tab — reuse any existing tab or open one as last resort
+        page = existingPages.find(p => p.url().startsWith("http")) ?? await ctx.newPage();
+        isNewPage = !existingPages.includes(page);
+      }
+
       let capturedToken: string | null = null;
       await page.route("**/*", async (route) => {
         const auth = route.request().headers()["authorization"] ?? "";
         if (!capturedToken && auth.startsWith("Bearer ")) capturedToken = auth.slice(7);
         await route.continue();
       });
-      await page.goto("https://outlook.office.com/mail/", { waitUntil: "domcontentloaded", timeout: 20_000 }).catch(() => {});
+
+      // Navigate/reload to trigger Graph API calls
+      if (!page.url().includes("outlook.office.com")) {
+        await page.goto("https://outlook.office.com/mail/", { waitUntil: "domcontentloaded", timeout: 20_000 }).catch(() => {});
+      } else {
+        await page.reload({ waitUntil: "domcontentloaded", timeout: 20_000 }).catch(() => {});
+      }
+
       const deadline = Date.now() + 10_000;
       while (!capturedToken && Date.now() < deadline) await page.waitForTimeout(500);
-      await page.close();
+
+      // Clean up route interceptor
+      await page.unroute("**/*").catch(() => {});
+      // Only close pages we created
+      if (isNewPage) await page.close();
+
       if (!capturedToken) throw new Error("Could not capture Graph token from Outlook.\nMake sure you are logged into Outlook in the Alfred window.");
       tokenCache = { token: capturedToken, expiresAt: Date.now() + TOKEN_CACHE_MS };
       progress("✅ Graph token acquired via Playwright");
