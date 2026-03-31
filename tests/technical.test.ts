@@ -171,6 +171,20 @@ describe("rate limiting", () => {
     expect(salesSrc).toContain("opportunityWriteLimiter");
     expect(salesSrc).toContain("opportunityWriteLimiter.check");
   });
+
+  it("update_engagement is rate-limited in both servers", () => {
+    expect(scSrc).toMatch(/engagementWriteLimiter\.check\("update_engagement"\)/);
+    expect(salesSrc).toMatch(/engagementWriteLimiter\.check\("update_engagement"\)/);
+  });
+
+  it("add_engagement_attendees is rate-limited in both servers", () => {
+    expect(scSrc).toMatch(/engagementWriteLimiter\.check\("add_engagement_attendees"\)/);
+    expect(salesSrc).toMatch(/engagementWriteLimiter\.check\("add_engagement_attendees"\)/);
+  });
+
+  it("add_opportunity_note is rate-limited in Sales server", () => {
+    expect(salesSrc).toMatch(/opportunityWriteLimiter\.check\("add_opportunity_note"\)/);
+  });
 });
 
 // ---------------------------------------------------------------------------

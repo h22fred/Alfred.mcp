@@ -530,6 +530,7 @@ Use this after creating or updating an engagement when you have a list of meetin
     })).describe("List of meeting attendees — split automatically into internal participants and external contacts"),
   },
   async ({ engagement_id, attendees }) => {
+    engagementWriteLimiter.check("add_engagement_attendees");
     const id = requireGuid(engagement_id, "engagement_id");
     const progress = makeProgress(server);
     progress(`👥 Adding ${attendees.length} attendee(s) to engagement ${id}...`);
@@ -591,6 +592,7 @@ BEFORE generating any content: read the existing engagement (get_engagement), li
     timeline_text: z.string().optional().describe("Body text for the timeline note"),
   },
   async ({ engagement_id, name, type, primary_product_id, completed_date, mark_complete, use_case, key_points, secondary_points, submission_date, next_actions, risks, stakeholders, notes, timeline_title, timeline_text }) => {
+    engagementWriteLimiter.check("update_engagement");
     const id = requireGuid(engagement_id, "engagement_id");
     const progress = makeProgress(server);
     const desc: EngagementDescription = { engagementType: type as EngagementType | undefined, useCase: use_case, keyPoints: key_points, secondaryPoints: secondary_points, submissionDate: submission_date, nextActions: next_actions, risks, stakeholders };
