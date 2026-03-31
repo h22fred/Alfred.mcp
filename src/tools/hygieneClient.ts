@@ -85,7 +85,9 @@ export async function runHygieneSweep(opts: {
     const batchResults = await Promise.all(
       batch.map(async (opp) => {
         const engagements = await fetchEngagementsByOpportunity(opp.opportunityid, progress);
+        // Exclude cancelled engagements entirely
         const activeEngagements = engagements.filter(e => !e.statusName?.toLowerCase().includes("cancel"));
+        // For "type present?" check, count both open and completed — a completed Discovery still counts
         const typeNames = activeEngagements.map(e => e.engagementTypeName ?? "").filter(Boolean);
 
         const missingRequired = requiredTypes.filter(t => !typeNames.includes(t));
@@ -94,7 +96,10 @@ export async function runHygieneSweep(opts: {
         const status: HygieneResult["status"] =
           missingRequired.length > 0 ? "red" : "green";
 
-        return { opportunity: opp, engagements, missingRequired, missingOptional, status } as HygieneResult;
+        // Return only non-cancelled engagements. Completed engagements are included
+        // (they count as "type present") but must never be flagged for staleness —
+        // only open engagements (statecode=0) should be evaluated for recency.
+        return { opportunity: opp, engagements: activeEngagements, missingRequired, missingOptional, status } as HygieneResult;
       })
     );
     results.push(...batchResults);
@@ -243,7 +248,7 @@ async function postHygieneToTeams(results: HygieneResult[], requiredTypes: strin
   }
 
   if (actionable.length > 0) {
-    body.push({ type: "TextBlock", text: `💡 Ask Claude: _"Create missing engagements for my red opportunities"_`, size: "Small", isSubtle: true, wrap: true, spacing: "Small" });
+    body.push({ type: "TextBlock", text: `💡 Open Claude Desktop — Ask Claude: _"Create missing engagements for my red opportunities"_`, size: "Small", isSubtle: true, wrap: true, spacing: "Small" });
   }
 
   await postAdaptiveCard({
@@ -251,9 +256,6 @@ async function postHygieneToTeams(results: HygieneResult[], requiredTypes: strin
     type: "AdaptiveCard",
     version: "1.4",
     body,
-    actions: [
-      { type: "Action.OpenUrl", title: "Open Claude Desktop", url: "claude://" },
-    ],
   }, progress);
 }
 
