@@ -291,15 +291,25 @@ export async function fetchOpportunities(filter: OpportunityFilter = {}, progres
     }
   }
 
-  const path =
-    "/opportunities" +
-    `?$select=opportunityid,sn_number,name,_accountid_value,_ownerid_value,_sn_solutionconsultant_value,statuscode,estimatedclosedate,totalamount,msdyn_forecastcategory,sn_opportunitytype,sn_salestage,stepname,closeprobability,sn_businessunitlist` +
+  // Core fields that exist in all Dynamics instances
+  const coreFields = "opportunityid,sn_number,name,_accountid_value,_ownerid_value,_sn_solutionconsultant_value,statuscode,estimatedclosedate,totalamount,msdyn_forecastcategory,stepname,closeprobability";
+  // Extended SN-custom fields — may not exist in all instances
+  const extendedFields = ",sn_opportunitytype,sn_businessunitlist";
+
+  const queryTail =
     `&$expand=parentaccountid($select=accountid,name)` +
     `&$filter=${encodeURIComponent(filterClause)}` +
     `&$orderby=estimatedclosedate asc` +
     `&$top=${top}`;
 
-  const res = await dynamicsFetch(path, {}, progress);
+  // Try with extended fields first, fall back to core-only if schema error
+  let res: Response;
+  try {
+    res = await dynamicsFetch(`/opportunities?$select=${coreFields}${extendedFields}${queryTail}`, {}, progress);
+  } catch {
+    progress("⚠️ Extended fields not available in this Dynamics instance — using core fields only");
+    res = await dynamicsFetch(`/opportunities?$select=${coreFields}${queryTail}`, {}, progress);
+  }
   const data = await res.json();
   const results = (data.value ?? []).map(mapOpportunity);
   progress(`✅ Found ${results.length} opportunities`);
@@ -308,12 +318,17 @@ export async function fetchOpportunities(filter: OpportunityFilter = {}, progres
 
 export async function fetchOpportunityById(id: string, progress: ProgressFn = () => {}): Promise<Opportunity> {
   progress(`📡 Fetching opportunity ${id}...`);
-  const path =
-    `/opportunities(${id})` +
-    "?$select=opportunityid,sn_number,name,_accountid_value,_ownerid_value,_sn_solutionconsultant_value,statuscode,estimatedclosedate,totalamount,msdyn_forecastcategory,sn_opportunitytype,sn_salestage,stepname,closeprobability,sn_businessunitlist,_sn_dealchampion_value,sn_industrysolution,description,sn_iscompetitive,sn_winlossreason,sn_winlossnotes" +
-    "&$expand=parentaccountid($select=accountid,name)";
+  const coreSelect = "opportunityid,sn_number,name,_accountid_value,_ownerid_value,_sn_solutionconsultant_value,statuscode,estimatedclosedate,totalamount,msdyn_forecastcategory,stepname,closeprobability";
+  const extSelect = ",sn_opportunitytype,sn_businessunitlist,_sn_dealchampion_value,sn_industrysolution,description,sn_iscompetitive,sn_winlossreason,sn_winlossnotes";
+  const expand = "&$expand=parentaccountid($select=accountid,name)";
 
-  const res = await dynamicsFetch(path, {}, progress);
+  let res: Response;
+  try {
+    res = await dynamicsFetch(`/opportunities(${id})?$select=${coreSelect}${extSelect}${expand}`, {}, progress);
+  } catch {
+    progress("⚠️ Extended fields not available — using core fields only");
+    res = await dynamicsFetch(`/opportunities(${id})?$select=${coreSelect}${expand}`, {}, progress);
+  }
   return mapOpportunity(await res.json() as Record<string, unknown>);
 }
 
@@ -993,15 +1008,16 @@ export async function fetchMyCollaborationOpportunities(
   for (let i = 0; i < oppIds.length; i += 15) {
     const batch = oppIds.slice(i, i + 15);
     const idFilter = batch.map(id => `opportunityid eq ${id}`).join(" or ");
-    const path =
-      `/opportunities` +
-      `?$select=opportunityid,sn_number,name,_accountid_value,_ownerid_value,_sn_solutionconsultant_value,statuscode,estimatedclosedate,totalamount,msdyn_forecastcategory,sn_opportunitytype,sn_salestage,stepname,closeprobability,sn_businessunitlist` +
-      `&$expand=parentaccountid($select=accountid,name)` +
-      `&$filter=statecode eq 0 and (${idFilter})` +
-      `&$orderby=estimatedclosedate asc` +
-      `&$top=50`;
+    const coreFields = "opportunityid,sn_number,name,_accountid_value,_ownerid_value,_sn_solutionconsultant_value,statuscode,estimatedclosedate,totalamount,msdyn_forecastcategory,stepname,closeprobability";
+    const extFields = ",sn_opportunitytype,sn_businessunitlist";
+    const tail = `&$expand=parentaccountid($select=accountid,name)&$filter=statecode eq 0 and (${idFilter})&$orderby=estimatedclosedate asc&$top=50`;
 
-    const res = await dynamicsFetch(path, {}, progress);
+    let res: Response;
+    try {
+      res = await dynamicsFetch(`/opportunities?$select=${coreFields}${extFields}${tail}`, {}, progress);
+    } catch {
+      res = await dynamicsFetch(`/opportunities?$select=${coreFields}${tail}`, {}, progress);
+    }
     const data = await res.json();
     allOpps.push(...(data.value ?? []).map(mapOpportunity));
   }
