@@ -189,6 +189,22 @@ describe("NNACV display consistency", () => {
     }
   });
 
+  it("tool descriptions instruct Claude to show NNACV as primary metric", () => {
+    const scSrc = readSource("src/sc/index.ts");
+    const salesSrc = readSource("src/sales/index.ts");
+    // list_opportunities / get_my_opportunities must have DISPLAY instruction
+    expect(scSrc).toContain("Always show the nnacv field as the primary deal value");
+    expect(salesSrc).toContain("Always show the nnacv field as the primary deal value");
+    // get_opportunity must instruct NNACV: $X | ACV: $Y
+    expect(scSrc).toContain('NNACV: $X | ACV: $Y');
+    expect(salesSrc).toContain('NNACV: $X | ACV: $Y');
+  });
+
+  it("hygiene report header shows NNACV Pipeline label", () => {
+    const hygieneSrc = readSource("src/tools/hygieneClient.ts");
+    expect(hygieneSrc).toContain("NNACV Pipeline:");
+  });
+
   it("hygieneClient.ts uses nnacv not totalamount", () => {
     const hygieneSrc = readSource("src/tools/hygieneClient.ts");
     // All opportunity value references should be nnacv

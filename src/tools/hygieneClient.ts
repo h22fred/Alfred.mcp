@@ -287,7 +287,7 @@ export function formatHygieneReport(results: HygieneResult[]): string {
 
   const lines = [
     `**CRM Hygiene — ${today}**`,
-    `🔴 ${red} critical · 🟡 ${yellow} on track · ✅ ${green} complete · Pipeline: ${fmt(totalPipeline)}`,
+    `🔴 ${red} critical · 🟡 ${yellow} on track · ✅ ${green} complete · NNACV Pipeline: ${fmt(totalPipeline)}`,
     "",
   ];
 

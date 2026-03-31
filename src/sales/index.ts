@@ -157,21 +157,23 @@ server.tool(
 // ---------------------------------------------------------------------------
 server.tool(
   "get_my_opportunities",
-  `List your open opportunities in Dynamics 365, optionally filtered by account name or minimum value.
+  `List your open opportunities in Dynamics 365, optionally filtered by account name or minimum NNACV.
 
-NOTE: $0 NNACV opportunities are excluded by default (noise). If the user explicitly asks for $0 deals, set include_zero_value=true. Negative NNACV deals are always included.`,
+NOTE: $0 NNACV opportunities are excluded by default (noise). If the user explicitly asks for $0 deals, set include_zero_value=true. Negative NNACV deals are always included.
+
+DISPLAY: Always show the nnacv field as the primary deal value (labelled "NNACV"). Never show totalamount as the deal size — it is ACV (full contract value including renewals) and inflates pipeline figures. If the user asks about ACV specifically, show totalamount labelled as "ACV" alongside NNACV.`,
   {
     search:   z.string().optional().describe("Filter by account or opportunity name"),
-    min_value: z.number().optional().describe("Minimum total value in USD"),
+    min_nnacv: z.number().optional().describe("Minimum NNACV in USD — default 100000 ($100K+). Set to 0 for no filter. Negative NNACV deals are always included."),
     top: z.number().optional().describe("Max results (default 50)"),
     include_closed: z.boolean().optional().describe("Include won/lost opportunities (default false)"),
     include_zero_value: z.boolean().optional().describe("Include $0 NNACV opportunities — default false (excluded as noise). Set true only if user explicitly asks for $0 deals."),
   },
-  async ({ search, min_value, top, include_closed, include_zero_value }) => {
+  async ({ search, min_nnacv, top, include_closed, include_zero_value }) => {
     const progress = makeProgress(server);
     const opps = await fetchOpportunities({
       search,
-      minNnacv: min_value,
+      minNnacv: min_nnacv,
       myOpportunitiesOnly: true,
       includeClosed: include_closed ?? false,
       includeZeroValue: include_zero_value ?? false,
@@ -188,7 +190,9 @@ server.tool(
   "get_opportunity",
   `Get a single opportunity by its Dynamics ID.
 
-Also fetches timeline notes attached to the opportunity — essential context for engagement creation and updates.`,
+Also fetches timeline notes attached to the opportunity — essential context for engagement creation and updates.
+
+DISPLAY: Show both values clearly labelled — "NNACV: $X | ACV: $Y". NNACV (nnacv field) is the primary metric. ACV (totalamount) is the full contract value and should always be secondary. Never present totalamount as "deal value" without the ACV label.`,
   { opportunity_id: z.string().describe("Dynamics opportunity GUID") },
   async ({ opportunity_id }) => {
     const id = requireGuid(opportunity_id, "opportunity_id");
