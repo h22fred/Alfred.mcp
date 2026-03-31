@@ -42,7 +42,7 @@ if ! command -v git &>/dev/null; then
   echo "   A popup will appear asking you to install the Command Line Tools."
   echo "   Click Install, wait for it to finish, then re-run this script:"
   echo ""
-  echo "   bash ~/Downloads/Setup.command"
+  echo "   bash ~/Downloads/Setup_macOS.command"
   echo ""
   echo "   (Full instructions and download: https://github.com/h22fred/Alfred.mcp)"
   echo ""
@@ -69,7 +69,7 @@ fi
 # 3. Run setup
 # ------------------------------------------------------------
 echo ""
-bash "$INSTALL_DIR/setup.sh"
+bash "$INSTALL_DIR/setup/setup.sh"
 
 echo ""
 echo "Press any key to close this window..."

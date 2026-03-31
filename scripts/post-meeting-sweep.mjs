@@ -29,7 +29,7 @@ const err = (msg) => console.error(`[post-meeting] ${msg}`);
 // ---------------------------------------------------------------------------
 const configPath = join(homedir(), ".alfred-config.json");
 if (!existsSync(configPath)) {
-  err("No config at ~/.alfred-config.json — run Setup.command first.");
+  err("No config at ~/.alfred-config.json — run the installer first.");
   process.exit(1);
 }
 const config = JSON.parse(readFileSync(configPath, "utf8"));

@@ -74,7 +74,7 @@ if exist "!INSTALL_DIR!\.git" (
 :: 3. Run setup
 :: ------------------------------------------------------------
 echo.
-powershell -ExecutionPolicy Bypass -File "!INSTALL_DIR!\setup.ps1"
+powershell -ExecutionPolicy Bypass -File "!INSTALL_DIR!\setup\setup.ps1"
 
 echo.
 pause

@@ -1,1 +1,2 @@
-7893f3be7960c75acf8ff6fb1ff105a0cd21682a824f8246a6f38151b35e90c2  Setup.command
+45c9b0a109422269d8da292d4d0485b47c48af6bba3ea689c1392c17c4ee45e6  /Users/fredrik.holmstrom/Documents/Coding/ClaudeCode/alfred.mcp/Setup_macOS.command
+93d53b61f0a4f641fe5b19e704081bf16c91843dc148394c2062ec556774fcce  /Users/fredrik.holmstrom/Documents/Coding/ClaudeCode/alfred.mcp/Setup_Windows.bat

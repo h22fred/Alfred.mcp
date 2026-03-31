@@ -51,15 +51,15 @@ Two flavours — one installer:
 ## Setup
 
 **Option A — Download and run** _(recommended)_
-1. **[⬇️ Download Setup.command](https://raw.githubusercontent.com/h22fred/Alfred.mcp/refs/heads/main/Setup.command)**
+1. **[⬇️ Download Setup_macOS.command](https://raw.githubusercontent.com/h22fred/Alfred.mcp/refs/heads/main/Setup_macOS.command)**
 2. Open Terminal and run:
 ```bash
-bash ~/Downloads/Setup.command
+bash ~/Downloads/Setup_macOS.command
 ```
 
 **Option B — One-liner** _(for the terminal-comfortable)_
 ```bash
-curl -fsSL https://raw.githubusercontent.com/h22fred/Alfred.mcp/refs/heads/main/Setup.command | bash
+curl -fsSL https://raw.githubusercontent.com/h22fred/Alfred.mcp/refs/heads/main/Setup_macOS.command | bash
 ```
 
 > If a popup appears asking to install Command Line Tools, click **Install**, wait for it to finish, then run the same command again.
@@ -212,10 +212,10 @@ Automated audit run via [Ruflo](https://github.com/h22fred/ruflo) on 2026-03-25:
 
 ### Installer verification
 
-The installer runs as your own user — no sudo, no admin rights required. SHA256 checksums are published in [CHECKSUMS.txt](CHECKSUMS.txt).
+The installer runs as your own user — no sudo, no admin rights required. SHA256 checksums are published in [setup/CHECKSUMS.txt](setup/CHECKSUMS.txt).
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/h22fred/Alfred.mcp/refs/heads/main/Setup.command -o ~/Downloads/Setup.command
-shasum -a 256 ~/Downloads/Setup.command  # compare to CHECKSUMS.txt
-bash ~/Downloads/Setup.command
+curl -fsSL https://raw.githubusercontent.com/h22fred/Alfred.mcp/refs/heads/main/Setup_macOS.command -o ~/Downloads/Setup_macOS.command
+shasum -a 256 ~/Downloads/Setup_macOS.command  # compare to setup/CHECKSUMS.txt
+bash ~/Downloads/Setup_macOS.command
 ```
