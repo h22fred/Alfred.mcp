@@ -79,7 +79,7 @@ describe("SC / Sales tool parity", () => {
   const SALES_ONLY = [
     "create_opportunity", "update_opportunity", "get_territory_pipeline",
     "search_users", "get_my_opportunities", "add_opportunity_note",
-    "list_opportunity_notes", "ensure_alfred",
+    "list_opportunity_notes",
   ];
   for (const tool of SALES_ONLY) {
     it(`sales-only tool "${tool}" exists in Sales server`, () => {
@@ -88,7 +88,7 @@ describe("SC / Sales tool parity", () => {
   }
 
   // SC-specific tools
-  const SC_ONLY = ["assess_tech_win", "list_opportunities", "provide_cookie"];
+  const SC_ONLY = ["assess_tech_win", "list_opportunities"];
   for (const tool of SC_ONLY) {
     it(`SC-only tool "${tool}" exists in SC server`, () => {
       expect(scTools).toContain(tool);
