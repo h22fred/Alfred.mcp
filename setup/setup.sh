@@ -8,6 +8,7 @@ set -e
 # Requirements: macOS, Google Chrome, Claude Desktop
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+REPO_DIR="$(dirname "$SCRIPT_DIR")"
 CLAUDE_CONFIG="$HOME/Library/Application Support/Claude/claude_desktop_config.json"
 CHROMELINK_APP="$HOME/Desktop/Alfred.app"
 
@@ -63,13 +64,13 @@ echo "   ✅ Node.js found at $NODE_PATH"
 # ------------------------------------------------------------
 echo ""
 echo "▶ Checking dependencies..."
-CURRENT_SUM=$(md5 -q "$SCRIPT_DIR/package-lock.json" 2>/dev/null || md5sum "$SCRIPT_DIR/package-lock.json" 2>/dev/null | awk '{print $1}')
+CURRENT_SUM=$(md5 -q "$REPO_DIR/package-lock.json" 2>/dev/null || md5sum "$REPO_DIR/package-lock.json" 2>/dev/null | awk '{print $1}')
 STORED_SUM=$(python3 -c "import json,os; f=os.path.expanduser('~/.alfred-config.json'); d=json.load(open(f)) if os.path.exists(f) else {}; print(d.get('lockSum',''))" 2>/dev/null)
-if [ "$CURRENT_SUM" = "$STORED_SUM" ] && [ -f "$SCRIPT_DIR/node_modules/.package-lock.json" ]; then
+if [ "$CURRENT_SUM" = "$STORED_SUM" ] && [ -f "$REPO_DIR/node_modules/.package-lock.json" ]; then
   echo "   ✅ Dependencies up to date (97 packages) — skipping reinstall"
 else
   echo "   📦 Installing dependencies..."
-  PATH="$NODE_DIR:$PATH" npm ci --prefix "$SCRIPT_DIR" --no-fund
+  PATH="$NODE_DIR:$PATH" npm ci --prefix "$REPO_DIR" --no-fund
   python3 -c "
 import json, os
 f = os.path.expanduser('~/.alfred-config.json')
@@ -82,11 +83,11 @@ fi
 
 echo ""
 echo "▶ Building MCP server..."
-PATH="$NODE_DIR:$PATH" npm run build --prefix "$SCRIPT_DIR"
+PATH="$NODE_DIR:$PATH" npm run build --prefix "$REPO_DIR"
 echo "   ✅ Build complete"
 
 # Save installed version SHA for update checks
-INSTALLED_SHA=$(git -C "$SCRIPT_DIR" rev-parse --short HEAD 2>/dev/null || echo "")
+INSTALLED_SHA=$(git -C "$REPO_DIR" rev-parse --short HEAD 2>/dev/null || echo "")
 if [ -n "$INSTALLED_SHA" ]; then
   CONFIG_FILE_EARLY="$HOME/.alfred-config.json"
   python3 -c "
@@ -140,7 +141,7 @@ echo "   ✅ Dynamics URL set to: $NEW_DYNAMICS_URL"
 echo ""
 echo "▶ Configuring Claude Desktop..."
 
-DIST_PATH="$SCRIPT_DIR/dist/${ALFRED_VARIANT:-sc}/index.js"
+DIST_PATH="$REPO_DIR/dist/${ALFRED_VARIANT:-sc}/index.js"
 MCP_ENTRY=$(cat <<EOF
 {
   "command": "$NODE_PATH",
@@ -480,7 +481,7 @@ case "$INSTALL_HYGIENE" in
 
     HYGIENE_SCHEDULE_DESC="$HYGIENE_DAY at $HYGIENE_TIME"
     ROTATE_LOG="f=\$HOME/.alfred-hygiene.log; [ -f \"\$f\" ] && [ \$(wc -c < \"\$f\") -gt 1048576 ] && tail -500 \"\$f\" > \"\$f.tmp\" && mv \"\$f.tmp\" \"\$f\""
-    HYGIENE_CMD="$NODE_PATH $SCRIPT_DIR/scripts/hygiene-sweep.mjs >> $HOME/.alfred-hygiene.log 2>&1"
+    HYGIENE_CMD="$NODE_PATH $REPO_DIR/scripts/hygiene-sweep.mjs >> $HOME/.alfred-hygiene.log 2>&1"
     HYGIENE_CRON="$HYGIENE_MIN $HYGIENE_HOUR * * $HYGIENE_CRON_DAY $ROTATE_LOG; $HYGIENE_CMD"
     touch "$HOME/.alfred-hygiene.log"
     chmod 600 "$HOME/.alfred-hygiene.log"
@@ -516,7 +517,7 @@ case "$INSTALL_MEETING" in
 
     MEETING_SCHEDULE_DESC="$MEETING_DAY at $MEETING_TIME"
     ROTATE_LOG2="f=\$HOME/.alfred-meetings.log; [ -f \"\$f\" ] && [ \$(wc -c < \"\$f\") -gt 1048576 ] && tail -500 \"\$f\" > \"\$f.tmp\" && mv \"\$f.tmp\" \"\$f\""
-    MEETING_CMD="$NODE_PATH $SCRIPT_DIR/scripts/post-meeting-sweep.mjs >> $HOME/.alfred-meetings.log 2>&1"
+    MEETING_CMD="$NODE_PATH $REPO_DIR/scripts/post-meeting-sweep.mjs >> $HOME/.alfred-meetings.log 2>&1"
     MEETING_CRON="$MEETING_MIN $MEETING_HOUR * * $MEETING_CRON_DAY $ROTATE_LOG2; $MEETING_CMD"
     touch "$HOME/.alfred-meetings.log"
     chmod 600 "$HOME/.alfred-meetings.log"

@@ -3,10 +3,11 @@
 # ============================================================
 # Run this once to install everything and configure Claude Desktop.
 # Requirements: Windows 10+, Google Chrome, Claude Desktop
-# Called by: Setup.bat (sets $env:ALFRED_VARIANT)
+# Called by: Setup_Windows.bat (sets $env:ALFRED_VARIANT)
 
 $ErrorActionPreference = "Stop"
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+$RepoDir = Split-Path -Parent $ScriptDir
 $ConfigPath = "$env:USERPROFILE\.alfred-config.json"
 
 # --- Helper: read / write config JSON ---
@@ -126,18 +127,18 @@ if ($env:PATH -notlike "*$NodeDir*") {
 Write-Host ""
 Write-Host "[>] Checking dependencies..."
 
-$LockFile = Join-Path $ScriptDir "package-lock.json"
+$LockFile = Join-Path $RepoDir "package-lock.json"
 $CurrentHash = (Get-FileHash $LockFile -Algorithm MD5).Hash
 
 $Config = Read-AlfredConfig
 $StoredHash = if ($Config.PSObject.Properties.Name -contains "lockSum") { $Config.lockSum } else { "" }
-$NodeModulesLock = Join-Path $ScriptDir "node_modules\.package-lock.json"
+$NodeModulesLock = Join-Path $RepoDir "node_modules\.package-lock.json"
 
 if (($CurrentHash -eq $StoredHash) -and (Test-Path $NodeModulesLock)) {
     Write-Host "   Dependencies up to date - skipping reinstall"
 } else {
     Write-Host "   Installing dependencies..."
-    & npm --prefix "$ScriptDir" ci --no-fund
+    & npm --prefix "$RepoDir" ci --no-fund
     if ($LASTEXITCODE -ne 0) { throw "npm ci failed with exit code $LASTEXITCODE" }
 
     $Config = Read-AlfredConfig
@@ -149,13 +150,13 @@ if (($CurrentHash -eq $StoredHash) -and (Test-Path $NodeModulesLock)) {
 
 Write-Host ""
 Write-Host "[>] Building MCP server..."
-& npm --prefix "$ScriptDir" run build
+& npm --prefix "$RepoDir" run build
 if ($LASTEXITCODE -ne 0) { throw "npm run build failed with exit code $LASTEXITCODE" }
 Write-Host "   Build complete"
 
 # Save installed version SHA for update checks
 try {
-    $InstalledSHA = & git -C $ScriptDir rev-parse --short HEAD 2>$null
+    $InstalledSHA = & git -C $RepoDir rev-parse --short HEAD 2>$null
     if ($InstalledSHA) {
         $Config = Read-AlfredConfig
         Ensure-Property $Config "installedVersion" ""
@@ -203,7 +204,7 @@ Write-Host ""
 Write-Host "[>] Configuring Claude Desktop..."
 
 $Variant = if ($env:ALFRED_VARIANT) { $env:ALFRED_VARIANT } else { "sc" }
-$DistPath = Join-Path $ScriptDir "dist\$Variant\index.js"
+$DistPath = Join-Path $RepoDir "dist\$Variant\index.js"
 $ClaudeConfigDir = Join-Path $env:APPDATA "Claude"
 $ClaudeConfigPath = Join-Path $ClaudeConfigDir "claude_desktop_config.json"
 
@@ -499,13 +500,13 @@ if ($InstallHygiene -notmatch "^[nN]") {
     $HygieneScheduleDesc = "$HygieneDay at $HygieneTime"
     $HygieneTimeStr = "{0:D2}:{1:D2}" -f $HygieneHour, $HygieneMin
     $HygieneLogFile = Join-Path $env:USERPROFILE ".alfred-hygiene.log"
-    $HygieneScript = Join-Path $ScriptDir "scripts\hygiene-sweep.mjs"
+    $HygieneScript = Join-Path $RepoDir "scripts\hygiene-sweep.mjs"
 
     # Build the action: run node with the hygiene script, redirect output to log
     $HygieneAction = New-ScheduledTaskAction `
         -Execute $NodePath `
         -Argument "`"$HygieneScript`"" `
-        -WorkingDirectory $ScriptDir
+        -WorkingDirectory $RepoDir
 
     $HygieneTrigger = New-ScheduledTaskTrigger -Weekly -DaysOfWeek $HygieneDow -At $HygieneTimeStr
     $HygieneSettings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable
@@ -551,12 +552,12 @@ if ($InstallMeeting -notmatch "^[nN]") {
 
     $MeetingScheduleDesc = "$MeetingDay at $MeetingTime"
     $MeetingTimeStr = "{0:D2}:{1:D2}" -f $MeetingHour, $MeetingMin
-    $MeetingScript = Join-Path $ScriptDir "scripts\post-meeting-sweep.mjs"
+    $MeetingScript = Join-Path $RepoDir "scripts\post-meeting-sweep.mjs"
 
     $MeetingAction = New-ScheduledTaskAction `
         -Execute $NodePath `
         -Argument "`"$MeetingScript`"" `
-        -WorkingDirectory $ScriptDir
+        -WorkingDirectory $RepoDir
 
     $MeetingTrigger = New-ScheduledTaskTrigger -Weekly -DaysOfWeek $MeetingDow -At $MeetingTimeStr
     $MeetingSettings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable
