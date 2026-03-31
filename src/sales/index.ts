@@ -1356,19 +1356,6 @@ server.tool(
   }
 );
 
-// ---------------------------------------------------------------------------
-// Tool: ensure_alfred
-// ---------------------------------------------------------------------------
-server.tool(
-  "ensure_alfred",
-  "Launch Alfred (Chrome with Dynamics session) if it is not already running. Call this if you get auth errors.",
-  {},
-  async () => {
-    const progress = makeProgress(server);
-    await ensureAlfred(progress);
-    return { content: [{ type: "text", text: "✅ Alfred is running — Dynamics session ready." }] };
-  }
-);
 
 // ---------------------------------------------------------------------------
 // Start server

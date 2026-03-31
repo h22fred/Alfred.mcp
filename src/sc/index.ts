@@ -34,7 +34,7 @@ import {
   type OpportunityFilter,
   type EngagementDescription,
 } from "../tools/dynamicsClient.js";
-import { closeBrowser, setManualCookies, ensureAlfred, clearAuthCache } from "../auth/tokenExtractor.js";
+import { closeBrowser, ensureAlfred, clearAuthCache } from "../auth/tokenExtractor.js";
 import { getCalendarEvents, getEmails, listMailFolders, clearGraphTokenCache } from "../tools/outlookClient.js";
 import { setTeamsWebhook, postTeamsNotification, getTeamsTranscript, getTeamsChats } from "../tools/teamsClient.js";
 import { runHygieneSweep, formatHygieneReport } from "../tools/hygieneClient.js";
@@ -152,28 +152,6 @@ IMPORTANT AFTER CALLING THIS TOOL:
     await ensureAlfred(progress);
     return {
       content: [{ type: "text", text: "✅ Alfred is open. Please log into Dynamics, Outlook and Teams in the Chrome window, then tell me when you're ready and I'll continue." }],
-    };
-  }
-);
-
-// ---------------------------------------------------------------------------
-// Tool: provide_token  (manual fallback)
-// ---------------------------------------------------------------------------
-server.tool(
-  "provide_cookie",
-  "Manually provide Dynamics 365 session cookies. Get them from Chrome DevTools: open Dynamics → F12 → Network tab → click any request → copy the Cookie header value.",
-  { cookie: z.string().describe("The full Cookie header value from a Dynamics request") },
-  async ({ cookie }) => {
-    if (!cookie.includes("CrmOwinAuth")) {
-      return {
-        content: [{ type: "text", text: "❌ Invalid cookie — expected Dynamics auth cookies (CrmOwinAuth). Copy the Cookie header from a Dynamics network request." }],
-      };
-    }
-    const { userInfo } = await import("os");
-    process.stderr.write(`[alfred:audit] ${JSON.stringify({ timestamp: new Date().toISOString(), user: userInfo().username, action: "provide_cookie_manual" })}\n`);
-    setManualCookies(cookie);
-    return {
-      content: [{ type: "text", text: "✅ Session cookies accepted and cached. You can now use list_opportunities and other tools." }],
     };
   }
 );
