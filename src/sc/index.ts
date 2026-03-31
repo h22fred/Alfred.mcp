@@ -170,7 +170,9 @@ IMPORTANT: Before calling this tool, always ask:
 1. "Which account or opportunity are you looking for?"
 2. "100K+ NNACV only, or all sizes?" (default: 100K+ only)
 
-NOTE: $0 NNACV opportunities are excluded by default (noise). If the user explicitly asks for $0 deals, set include_zero_value=true.`
+NOTE: $0 NNACV opportunities are excluded by default (noise). If the user explicitly asks for $0 deals, set include_zero_value=true.
+
+DISPLAY: Always show the nnacv field as the primary deal value (labelled "NNACV"). Never show totalamount as the deal size — it is ACV (full contract value including renewals) and inflates pipeline figures. If the user asks about ACV specifically, show totalamount labelled as "ACV" alongside NNACV.`
     : isManager
     ? `List open opportunities from Dynamics 365.
 
@@ -181,7 +183,9 @@ IMPORTANT: Before calling this tool, always ask:
    — If a specific SC or account is named, pass it as the search field
 2. "100K+ NNACV only, or all sizes?" (default: 100K+ only)
 
-NOTE: $0 NNACV opportunities are excluded by default (noise). If the user explicitly asks for $0 deals, set include_zero_value=true.`
+NOTE: $0 NNACV opportunities are excluded by default (noise). If the user explicitly asks for $0 deals, set include_zero_value=true.
+
+DISPLAY: Always show the nnacv field as the primary deal value (labelled "NNACV"). Never show totalamount as the deal size — it is ACV (full contract value including renewals) and inflates pipeline figures. If the user asks about ACV specifically, show totalamount labelled as "ACV" alongside NNACV.`
     : `List open opportunities from Dynamics 365.
 
 Defaults to the current user's pipeline only (SC or territory). Only set my_opportunities_only=false if the user explicitly asks for all opportunities, a colleague's pipeline, a region, or a manager view.
@@ -192,7 +196,9 @@ IMPORTANT: Before calling this tool, always ask the user these two questions if 
 
 Ask both together in one message. Only call this tool once you have their answers.
 
-NOTE: $0 NNACV opportunities are excluded by default (noise). If the user explicitly asks for $0 deals, set include_zero_value=true.`,
+NOTE: $0 NNACV opportunities are excluded by default (noise). If the user explicitly asks for $0 deals, set include_zero_value=true.
+
+DISPLAY: Always show the nnacv field as the primary deal value (labelled "NNACV"). Never show totalamount as the deal size — it is ACV (full contract value including renewals) and inflates pipeline figures. If the user asks about ACV specifically, show totalamount labelled as "ACV" alongside NNACV.`,
   {
     top: z.number().optional().describe("Max number of results (default 50)"),
     search: z.string().optional().describe("Filter by opportunity or account name (partial match)"),
@@ -239,7 +245,9 @@ Then present a combined summary:
 - What they already own (products + seats purchased)
 - How much they're using (utilization % and used/total seats)
 - Deal type inference: upsell (expanding existing product), cross-sell (new product line), or new logo
-Example output: "SITA has CSM Pro — 600/1400 seats used (43%). This TPSM opportunity is an upsell."`,
+Example output: "SITA has CSM Pro — 600/1400 seats used (43%). This TPSM opportunity is an upsell."
+
+DISPLAY: Show both values clearly labelled — "NNACV: $X | ACV: $Y". NNACV (nnacv field) is the primary metric. ACV (totalamount) is the full contract value and should always be secondary. Never present totalamount as "deal value" without the ACV label.`,
   { opportunity_id: z.string().describe("Dynamics opportunity GUID") },
   async ({ opportunity_id }) => {
     const id = requireGuid(opportunity_id, "opportunity_id");
