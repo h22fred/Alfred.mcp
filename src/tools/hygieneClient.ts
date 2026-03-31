@@ -252,7 +252,7 @@ async function postHygieneToTeams(results: HygieneResult[], requiredTypes: strin
     version: "1.4",
     body,
     actions: [
-      { type: "Action.OpenUrl", title: "Open Claude", url: "https://claude.ai" },
+      { type: "Action.OpenUrl", title: "Open Claude Desktop", url: "claude://" },
     ],
   }, progress);
 }
