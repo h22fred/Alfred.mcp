@@ -333,9 +333,9 @@ describe("token extraction fallbacks", () => {
   const outlookSrc = readSource("src/tools/outlookClient.ts");
   const teamsSrc = readSource("src/tools/teamsClient.ts");
 
-  it("Outlook CDP extraction tries multiple tab types", () => {
-    // Should try Outlook tab, then Teams tab, then any tab
-    expect(outlookSrc).toContain("outlook.office.com");
+  it("Outlook CDP extraction tries multiple tab types with safe URL matching", () => {
+    expect(outlookSrc).toContain("urlHostMatches");
+    expect(outlookSrc).not.toMatch(/\.includes\(["']outlook\.office\.com["']\)/);
   });
 
   it("Teams MSAL extraction decodes JWT to check scopes", () => {

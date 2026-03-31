@@ -4,7 +4,7 @@
  */
 import { describe, it, expect } from "vitest";
 import { sanitizeODataSearch } from "../src/tools/dynamicsClient.js";
-import { requireGuid, WriteRateLimiter, stripHtml } from "../src/shared.js";
+import { requireGuid, WriteRateLimiter, stripHtml, urlHostMatches } from "../src/shared.js";
 
 // ---------------------------------------------------------------------------
 // OData injection prevention
@@ -165,7 +165,54 @@ describe("stripHtml", () => {
   it("handles deeply nested malicious HTML", () => {
     const nested = "<div>".repeat(50) + "payload" + "</div>".repeat(50);
     expect(stripHtml(nested)).toContain("payload");
-    expect(stripHtml(nested)).not.toContain("<");
+    expect(stripHtml(nested)).not.toContain("<div>");
+  });
+
+  it("handles obfuscated <<script>script> nesting", () => {
+    const obfuscated = '<<script>script>alert("xss")<</script>/script>';
+    const result = stripHtml(obfuscated);
+    expect(result).not.toContain("<script>");
+    expect(result).not.toContain("</script>");
+  });
+
+  it("iteratively strips nested tags until clean", () => {
+    // After first pass: <img src=x onerror=alert(1)> remains from <<img ...>img ...>
+    const input = "<<b>b>bold<</b>/b>";
+    const result = stripHtml(input);
+    expect(result).not.toMatch(/<[a-z]/i);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// URL hostname validation (prevents substring bypass attacks)
+// ---------------------------------------------------------------------------
+describe("urlHostMatches", () => {
+  it("matches exact hostname", () => {
+    expect(urlHostMatches("https://outlook.office.com/mail/", "outlook.office.com")).toBe(true);
+    expect(urlHostMatches("https://teams.microsoft.com/v2/", "teams.microsoft.com")).toBe(true);
+  });
+
+  it("matches subdomain", () => {
+    expect(urlHostMatches("https://sub.outlook.office.com/", "outlook.office.com")).toBe(true);
+  });
+
+  it("rejects attacker-controlled domain with substring", () => {
+    // This is the attack vector: evil.com includes "outlook.office.com" as substring
+    expect(urlHostMatches("https://outlook.office.com.evil.com/", "outlook.office.com")).toBe(false);
+    expect(urlHostMatches("https://evil.com?outlook.office.com", "outlook.office.com")).toBe(false);
+  });
+
+  it("rejects unrelated domains", () => {
+    expect(urlHostMatches("https://google.com/", "outlook.office.com")).toBe(false);
+  });
+
+  it("handles invalid URLs gracefully", () => {
+    expect(urlHostMatches("not-a-url", "outlook.office.com")).toBe(false);
+    expect(urlHostMatches("", "outlook.office.com")).toBe(false);
+  });
+
+  it("is case-insensitive", () => {
+    expect(urlHostMatches("https://OUTLOOK.OFFICE.COM/mail/", "outlook.office.com")).toBe(true);
   });
 });
 

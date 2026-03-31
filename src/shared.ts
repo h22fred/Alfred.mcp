@@ -33,26 +33,56 @@ export class WriteRateLimiter {
   }
 }
 
-/** Strip HTML tags and decode common entities to readable plain text. */
+/**
+ * Strip HTML tags and decode common entities to readable plain text.
+ * Uses iterative stripping to handle nested/obfuscated tags like <<script>script>.
+ */
 export function stripHtml(html: string): string {
-  return html
-    .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, "")
-    .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, "")
+  let text = html;
+
+  // Iteratively remove script/style blocks (handles nested obfuscation)
+  let prev: string;
+  do {
+    prev = text;
+    text = text.replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, "");
+    text = text.replace(/<style\b[^<]*(?:(?!<\/style>)<[^<]*)*<\/style>/gi, "");
+  } while (text !== prev);
+
+  // Convert structural tags to whitespace
+  text = text
     .replace(/<br\s*\/?>/gi, "\n")
     .replace(/<\/p>/gi, "\n\n")
     .replace(/<\/div>/gi, "\n")
     .replace(/<\/tr>/gi, "\n")
     .replace(/<\/th>/gi, " | ")
-    .replace(/<\/td>/gi, " | ")
-    .replace(/<[^>]+>/g, "")
+    .replace(/<\/td>/gi, " | ");
+
+  // Iteratively strip all remaining tags (handles <<tag>tag> nesting)
+  do {
+    prev = text;
+    text = text.replace(/<[^>]+>/g, "");
+  } while (text !== prev);
+
+  // Decode HTML entities AFTER all tags are removed (prevents re-injection via &lt;script&gt;)
+  text = text
     .replace(/&amp;/g, "&")
     .replace(/&lt;/g, "<")
     .replace(/&gt;/g, ">")
     .replace(/&nbsp;/g, " ")
     .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
-    .replace(/\n{3,}/g, "\n\n")
-    .trim();
+    .replace(/&#39;/g, "'");
+
+  return text.replace(/\n{3,}/g, "\n\n").trim();
+}
+
+/** Check if a URL's hostname ends with the given suffix (prevents substring bypass attacks). */
+export function urlHostMatches(url: string, hostname: string): boolean {
+  try {
+    const host = new URL(url).hostname.toLowerCase();
+    return host === hostname || host.endsWith("." + hostname);
+  } catch {
+    return false;
+  }
 }
 
 /** ServiceNow internal email domains — used to classify attendees as internal vs external. */
