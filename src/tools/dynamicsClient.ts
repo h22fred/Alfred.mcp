@@ -14,7 +14,7 @@ const DYNAMICS_BASE = `${DYNAMICS_HOST}/api/data/v9.2`;
  * Strips characters that could break out of the string context (parentheses,
  * slashes, OData operators) and escapes single quotes.
  */
-function sanitizeODataSearch(input: string): string {
+export function sanitizeODataSearch(input: string): string {
   // Allow only safe characters: letters, digits, spaces, hyphens, dots, @ _ #
   const stripped = input.replace(/[^a-zA-Z0-9 \-\.@_#]/g, "");
   // Escape remaining single quotes (belt-and-suspenders)
@@ -50,7 +50,8 @@ export interface Opportunity {
   forecastCategoryName?: string;
   ownerName?: string;
   scName?: string;
-  totalamount?: number;
+  totalamount?: number;  // Total ACV (full contract value)
+  nnacv?: number;        // Net New ACV (sn_netnewacv) — the real NNACV
   // Extended fields
   opportunityType?: string;       // e.g. "Order Reset", "New Business"
   salesStage?: string;            // e.g. "7 - Deal Imminent"
@@ -62,6 +63,8 @@ export interface Opportunity {
   isCompetitive?: boolean;
   winLossReason?: string;
   winLossNotes?: string;
+  /** True when scName doesn't match the authenticated user — field may be stale */
+  scNameMismatch?: boolean;
 }
 
 export interface Product {
@@ -150,16 +153,28 @@ async function dynamicsFetch(path: string, options: RequestInit = {}, progress: 
 
   if (!response.ok) {
     let msg = `Dynamics API error: ${response.status} ${response.statusText}`;
+    let rawDetail = "";
     try {
       const ct = response.headers.get("content-type") ?? "";
       if (ct.includes("json")) {
         const body = await response.json();
-        if (body?.error?.message) msg += ` — ${body.error.message}`;
+        if (body?.error?.message) { rawDetail = body.error.message; msg += ` — ${rawDetail}`; }
       } else {
         const text = await response.text().catch(() => "");
-        if (text) msg += ` — ${text.slice(0, 200)}`;
+        if (text) { rawDetail = text.slice(0, 300); msg += ` — ${rawDetail}`; }
       }
     } catch { /* ignore */ }
+
+    // Translate known Dynamics errors to actionable messages
+    if (response.status === 403 && rawDetail.includes("missing prv")) {
+      const privMatch = rawDetail.match(/missing (prv\w+) privilege/);
+      const entityMatch = rawDetail.match(/entity '(\w+)'/);
+      msg = `❌ Permission denied: your Dynamics role doesn't have ${privMatch?.[1] ?? "the required"} privilege on ${entityMatch?.[1] ?? "this entity"}. Ask your CRM admin to grant this permission.`;
+    }
+    if (response.status === 400 && rawDetail.includes("already exists for this opportunity")) {
+      const engMatch = rawDetail.match(/(ENG\d+)/);
+      msg = `❌ This engagement type already exists on this opportunity. Collaborate on the existing one${engMatch ? ` (${engMatch[1]})` : ""} instead.`;
+    }
     throw new Error(msg);
   }
 
@@ -198,6 +213,7 @@ function mapOpportunity(r: Record<string, unknown>): Opportunity {
     ownerName:           r["_ownerid_value@OData.Community.Display.V1.FormattedValue"] as string | undefined,
     scName:              r["_sn_solutionconsultant_value@OData.Community.Display.V1.FormattedValue"] as string | undefined,
     totalamount:         r.totalamount as number | undefined,
+    nnacv:               r.sn_netnewacv as number | undefined,
     // Extended fields (field names verified against Dynamics EntityDefinitions metadata)
     opportunityType:     r["sn_opportunitytype@OData.Community.Display.V1.FormattedValue"] as string | undefined,
     salesStage:          r["stepname"] as string | undefined,
@@ -215,8 +231,8 @@ function mapOpportunity(r: Record<string, unknown>): Opportunity {
 export interface OpportunityFilter {
   top?: number;        // max results (default 50)
   search?: string;     // filter by account/opportunity name (contains)
-  minNnacv?: number;   // minimum totalamount (NNACV) in USD
-  includeZeroValue?: boolean; // include totalamount == 0 (default: excluded — too much noise)
+  minNnacv?: number;   // minimum NNACV (sn_netnewacv) in USD
+  includeZeroValue?: boolean; // include $0 NNACV opps (default: excluded — too much noise)
   myOpportunitiesOnly?: boolean; // filter to current user's owned opportunities
   includeClosed?: boolean; // include won/lost/closed opps — default false (open only)
   ownerSearch?: string; // filter by owner (AE) name — resolves to user IDs
@@ -265,11 +281,11 @@ export async function fetchOpportunities(filter: OpportunityFilter = {}, progres
     filterClause += ` and (contains(name,'${safe}') or contains(sn_number,'${safe}'))`;
   }
   if (!filter.includeZeroValue) {
-    filterClause += ` and totalamount ne 0`;
+    filterClause += ` and sn_netnewacv ne 0`;
   }
   if (filter.minNnacv) {
     // Include opps >= threshold OR negative (negative NNACV is always important)
-    filterClause += ` and (totalamount ge ${filter.minNnacv} or totalamount lt 0)`;
+    filterClause += ` and (sn_netnewacv ge ${filter.minNnacv} or sn_netnewacv lt 0)`;
   }
   if (filter.myOpportunitiesOnly) {
     const { userId, territoryId } = await fetchCurrentUser(progress);
@@ -290,7 +306,7 @@ export async function fetchOpportunities(filter: OpportunityFilter = {}, progres
     }
   }
 
-  const selectFields = "opportunityid,sn_number,name,_accountid_value,_ownerid_value,_sn_solutionconsultant_value,statuscode,estimatedclosedate,totalamount,msdyn_forecastcategory,stepname,closeprobability,sn_opportunitytype,sn_opportunitybusinessunitlist";
+  const selectFields = "opportunityid,sn_number,name,_accountid_value,_ownerid_value,_sn_solutionconsultant_value,statuscode,estimatedclosedate,totalamount,sn_netnewacv,msdyn_forecastcategory,stepname,closeprobability,sn_opportunitytype,sn_opportunitybusinessunitlist";
 
   const path =
     `/opportunities` +
@@ -302,14 +318,36 @@ export async function fetchOpportunities(filter: OpportunityFilter = {}, progres
 
   const res = await dynamicsFetch(path, {}, progress);
   const data = await res.json();
-  const results = (data.value ?? []).map(mapOpportunity);
+  let results = (data.value ?? []).map(mapOpportunity);
+
+  // When filtering to "my opps", cross-reference against the collaboration team
+  // table which is the authoritative source of SC assignment. The denormalised
+  // _sn_solutionconsultant_value field can be stale/incorrect.
+  if (filter.myOpportunitiesOnly && results.length > 0) {
+    progress("🔍 Validating against collaboration team...");
+    const collabOpps = await fetchMyCollaborationOpportunities(progress);
+    const collabIds = new Set(collabOpps.map(o => o.opportunityid));
+    // Flag opps where the user isn't on the collab team (stale scName)
+    for (const opp of results) {
+      if (!collabIds.has(opp.opportunityid)) {
+        opp.scNameMismatch = true;
+      }
+    }
+    // Drop opps where user isn't on the collab team at all
+    const before = results.length;
+    results = results.filter(o => !o.scNameMismatch);
+    if (before > results.length) {
+      progress(`⚠️ Removed ${before - results.length} opportunities with stale SC attribution (not on your collaboration team)`);
+    }
+  }
+
   progress(`✅ Found ${results.length} opportunities`);
   return results;
 }
 
 export async function fetchOpportunityById(id: string, progress: ProgressFn = () => {}): Promise<Opportunity> {
   progress(`📡 Fetching opportunity ${id}...`);
-  const baseFields = "opportunityid,sn_number,name,_accountid_value,_ownerid_value,_sn_solutionconsultant_value,statuscode,estimatedclosedate,totalamount,msdyn_forecastcategory,stepname,closeprobability,sn_opportunitytype,sn_opportunitybusinessunitlist";
+  const baseFields = "opportunityid,sn_number,name,_accountid_value,_ownerid_value,_sn_solutionconsultant_value,statuscode,estimatedclosedate,totalamount,sn_netnewacv,msdyn_forecastcategory,stepname,closeprobability,sn_opportunitytype,sn_opportunitybusinessunitlist";
   // Enrichment fields for single-opp detail view — may not exist in all instances
   // sn_industrysolution is Virtual — excluded from $select, may come through via annotations
   const enrichFields = ",_sn_executivesponsor_value,description,sn_noncompetitive,sn_winlossnodecisionreason,sn_winlossnodecisionnotes";
@@ -412,6 +450,24 @@ export async function createEngagement(input: CreateEngagementInput, progress: P
   const typeGuid = ENGAGEMENT_TYPE_GUIDS[input.type];
   if (!typeGuid) throw new Error(`Unknown engagement type: ${input.type}`);
 
+  // Pre-check: Dynamics enforces at most 1 engagement per type per opportunity
+  progress(`🔍 Checking for existing ${input.type} on this opportunity...`);
+  const existing = await fetchEngagementsByOpportunity(input.opportunityId, progress);
+  const duplicate = existing.find(e => e.engagementTypeName === input.type);
+  if (duplicate) {
+    const isCancelled = duplicate.statusName?.toLowerCase().includes("cancel");
+    if (isCancelled) {
+      throw new Error(
+        `❌ A cancelled ${input.type} already exists on this opportunity: ${duplicate.sn_name} (${duplicate.sn_engagementnumber ?? duplicate.sn_engagementid}). ` +
+        `Reopen the existing one instead of creating a duplicate.`
+      );
+    }
+    throw new Error(
+      `❌ A ${input.type} engagement already exists on this opportunity: ${duplicate.sn_name} (${duplicate.sn_engagementnumber ?? duplicate.sn_engagementid}). ` +
+      `Collaborate on the existing one instead of creating a duplicate.`
+    );
+  }
+
   // Auto-complete if a completed date is provided and it's today or in the past
   const isCompleted = !!input.completedDate && new Date(input.completedDate) <= new Date();
 
@@ -502,9 +558,10 @@ const SECONDARY_POINTS_LABEL: Partial<Record<EngagementType, string>> = {
   "Customer Business Review": "Action items agreed",
 };
 
-/** Strip leading bullet characters (•, -, *) so the tool can add its own consistently. */
-function stripBullet(s: string): string {
-  return s.replace(/^[\s]*[•\-*]\s*/, "");
+/** Strip ALL leading bullet characters (•, -, *) so the tool can add its own consistently.
+ *  Handles double-bullets (e.g. "• • text") and repeated markers. */
+export function stripBullet(s: string): string {
+  return s.replace(/^(?:[\s]*[•\-*][\s]*)+(.*)/s, "$1");
 }
 
 export function buildDescription(d: EngagementDescription): string {
@@ -1001,7 +1058,7 @@ export async function fetchMyCollaborationOpportunities(
   for (let i = 0; i < oppIds.length; i += 15) {
     const batch = oppIds.slice(i, i + 15);
     const idFilter = batch.map(id => `opportunityid eq ${id}`).join(" or ");
-    const selectFields = "opportunityid,sn_number,name,_accountid_value,_ownerid_value,_sn_solutionconsultant_value,statuscode,estimatedclosedate,totalamount,msdyn_forecastcategory,stepname,closeprobability,sn_opportunitytype,sn_opportunitybusinessunitlist";
+    const selectFields = "opportunityid,sn_number,name,_accountid_value,_ownerid_value,_sn_solutionconsultant_value,statuscode,estimatedclosedate,totalamount,sn_netnewacv,msdyn_forecastcategory,stepname,closeprobability,sn_opportunitytype,sn_opportunitybusinessunitlist";
     const path =
       `/opportunities?$select=${selectFields}` +
       `&$expand=parentaccountid($select=accountid,name)` +

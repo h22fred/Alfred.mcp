@@ -1,5 +1,6 @@
 import {
   fetchOpportunities,
+  fetchMyCollaborationOpportunities,
   fetchEngagementsByOpportunity,
   type Opportunity,
   type Engagement,
@@ -54,12 +55,16 @@ export async function runHygieneSweep(opts: {
   const requiredTypes = opts.engagementTypes?.length ? opts.engagementTypes : DEFAULT_REQUIRED;
   const excludeAppStore = opts.excludeAppStore ?? true; // default: skip noise
 
-  const opps = await fetchOpportunities({
-    myOpportunitiesOnly: true,
-    // includeZeroValue defaults to false — $0 noise excluded automatically
-    minNnacv: opts.minNnacv ?? 100_000,
-    top: 200,
-  }, progress);
+  // Use collaboration team table as authoritative source — the denormalised
+  // _sn_solutionconsultant_value field on opportunities can be stale/incorrect.
+  const minNnacv = opts.minNnacv ?? 100_000;
+  const allCollab = await fetchMyCollaborationOpportunities(progress);
+  // Apply the same filters fetchOpportunities would: open, non-zero, min NNACV
+  const opps = allCollab.filter(o =>
+    o.statuscode === 1 &&                                   // open only
+    o.nnacv != null && o.nnacv !== 0 &&                     // non-zero NNACV
+    (o.nnacv >= minNnacv || o.nnacv < 0)                    // above threshold or negative
+  );
 
   // Client-side filter for noise patterns (App Store renewals, etc.)
   const filtered = excludeAppStore
@@ -138,8 +143,8 @@ function groupByAccount(results: HygieneResult[]): Map<string, HygieneResult[]> 
     const aWorst = Math.min(...a[1].map(r => statusOrder[r.status]));
     const bWorst = Math.min(...b[1].map(r => statusOrder[r.status]));
     if (aWorst !== bWorst) return aWorst - bWorst;
-    const aTotal = a[1].reduce((s, r) => s + (r.opportunity.totalamount ?? 0), 0);
-    const bTotal = b[1].reduce((s, r) => s + (r.opportunity.totalamount ?? 0), 0);
+    const aTotal = a[1].reduce((s, r) => s + (r.opportunity.nnacv ?? 0), 0);
+    const bTotal = b[1].reduce((s, r) => s + (r.opportunity.nnacv ?? 0), 0);
     return bTotal - aTotal;
   }));
   return sorted;
@@ -147,7 +152,7 @@ function groupByAccount(results: HygieneResult[]): Map<string, HygieneResult[]> 
 
 function accountBlock(account: string, opps: HygieneResult[]): Record<string, unknown>[] {
   const blocks: Record<string, unknown>[] = [];
-  const accountTotal = opps.reduce((s, r) => s + (r.opportunity.totalamount ?? 0), 0);
+  const accountTotal = opps.reduce((s, r) => s + (r.opportunity.nnacv ?? 0), 0);
   const worstStatus = opps.some(r => r.status === "red") ? "red"
     : opps.some(r => r.status === "yellow") ? "yellow" : "green";
   const icon = worstStatus === "red" ? "🔴" : worstStatus === "yellow" ? "🟡" : "✅";
@@ -177,7 +182,7 @@ function accountBlock(account: string, opps: HygieneResult[]): Record<string, un
         const db = b.opportunity.estimatedclosedate ?? "9999";
         return da < db ? -1 : da > db ? 1 : 0;
       }
-      return (b.opportunity.totalamount ?? 0) - (a.opportunity.totalamount ?? 0);
+      return (b.opportunity.nnacv ?? 0) - (a.opportunity.nnacv ?? 0);
     })
     .forEach(r => {
       const oppIcon = r.status === "red" ? "🔴" : r.status === "yellow" ? "🟡" : "✅";
@@ -198,7 +203,7 @@ function accountBlock(account: string, opps: HygieneResult[]): Record<string, un
           },
           {
             type: "Column", width: "auto",
-            items: [{ type: "TextBlock", text: fmt(r.opportunity.totalamount), size: "Small", isSubtle: true, horizontalAlignment: "Right" }],
+            items: [{ type: "TextBlock", text: fmt(r.opportunity.nnacv), size: "Small", isSubtle: true, horizontalAlignment: "Right" }],
           },
           {
             type: "Column", width: "auto",
@@ -226,7 +231,7 @@ async function postHygieneToTeams(results: HygieneResult[], requiredTypes: strin
   const red    = results.filter(r => r.status === "red").length;
   const yellow = results.filter(r => r.status === "yellow").length;
   const green  = results.filter(r => r.status === "green").length;
-  const totalPipeline = results.reduce((s, r) => s + (r.opportunity.totalamount ?? 0), 0);
+  const totalPipeline = results.reduce((s, r) => s + (r.opportunity.nnacv ?? 0), 0);
 
   // Only show red/yellow — green opps need no action. Cap at 20 rows.
   const actionable = results.filter(r => r.status !== "green");
@@ -248,7 +253,7 @@ async function postHygieneToTeams(results: HygieneResult[], requiredTypes: strin
       ? `[↗ Dynamics](${dynamicsUrl}/main.aspx?etn=opportunity&pagetype=entityrecord&id=${r.opportunity.opportunityid})`
       : "";
     body.push(
-      { type: "TextBlock", text: `${icon} **${truncate(r.opportunity.name, 40)}** — ${fmt(r.opportunity.totalamount)} · ${close}${oppLink ? `  ${oppLink}` : ""}`, size: "Small", wrap: true, spacing: "Small" },
+      { type: "TextBlock", text: `${icon} **${truncate(r.opportunity.name, 40)}** — ${fmt(r.opportunity.nnacv)} · ${close}${oppLink ? `  ${oppLink}` : ""}`, size: "Small", wrap: true, spacing: "Small" },
       { type: "TextBlock", text: checks, size: "Small", isSubtle: true, wrap: true, spacing: "None" },
     );
   }
@@ -278,7 +283,7 @@ export function formatHygieneReport(results: HygieneResult[]): string {
   const red    = results.filter(r => r.status === "red").length;
   const yellow = results.filter(r => r.status === "yellow").length;
   const green  = results.filter(r => r.status === "green").length;
-  const totalPipeline = results.reduce((s, r) => s + (r.opportunity.totalamount ?? 0), 0);
+  const totalPipeline = results.reduce((s, r) => s + (r.opportunity.nnacv ?? 0), 0);
 
   const lines = [
     `**CRM Hygiene — ${today}**`,
@@ -289,7 +294,7 @@ export function formatHygieneReport(results: HygieneResult[]): string {
   const grouped = groupByAccount(results);
 
   for (const [account, opps] of grouped) {
-    const accountTotal = opps.reduce((s, r) => s + (r.opportunity.totalamount ?? 0), 0);
+    const accountTotal = opps.reduce((s, r) => s + (r.opportunity.nnacv ?? 0), 0);
     const worstIcon = opps.some(r => r.status === "red") ? "🔴"
       : opps.some(r => r.status === "yellow") ? "🟡" : "✅";
 
@@ -304,11 +309,11 @@ export function formatHygieneReport(results: HygieneResult[]): string {
           const db = b.opportunity.estimatedclosedate ?? "9999";
           return da < db ? -1 : da > db ? 1 : 0;
         }
-        return (b.opportunity.totalamount ?? 0) - (a.opportunity.totalamount ?? 0);
+        return (b.opportunity.nnacv ?? 0) - (a.opportunity.nnacv ?? 0);
       })
       .forEach(r => {
         const icon = r.status === "red" ? "🔴" : r.status === "yellow" ? "🟡" : "✅";
-        const nnacv = fmt(r.opportunity.totalamount);
+        const nnacv = fmt(r.opportunity.nnacv);
         const closeDate = r.opportunity.estimatedclosedate ? ` · close ${r.opportunity.estimatedclosedate.slice(0, 10)}` : "";
         const missing = r.missingRequired.length
           ? `missing: ${r.missingRequired.join(", ")}`
