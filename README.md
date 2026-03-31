@@ -134,8 +134,8 @@ Both jobs run silently in the background. If Alfred isn't running or your Dynami
 
 To run manually at any time:
 ```bash
-node ~/Documents/alfred.sc/scripts/hygiene-sweep.mjs
-node ~/Documents/alfred.sc/scripts/post-meeting-sweep.mjs
+node ~/Documents/alfred.sc/setup/hygiene-sweep.mjs
+node ~/Documents/alfred.sc/setup/post-meeting-sweep.mjs
 ```
 
 To change the schedule, edit your crontab:

@@ -8,7 +8,7 @@
  *  3. If auth fails (not logged in) → posts a Teams reminder + macOS notification
  *  4. Posts results to Teams on success
  *
- * Usage: node scripts/hygiene-sweep.mjs
+ * Usage: node setup/hygiene-sweep.mjs
  * Cron:  30 9 * * 1  (every Monday at 9:30am)
  */
 

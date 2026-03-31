@@ -476,7 +476,7 @@ case "$INSTALL_HYGIENE" in
 
     HYGIENE_SCHEDULE_DESC="$HYGIENE_DAY at $HYGIENE_TIME"
     ROTATE_LOG="f=\$HOME/.alfred-hygiene.log; [ -f \"\$f\" ] && [ \$(wc -c < \"\$f\") -gt 1048576 ] && tail -500 \"\$f\" > \"\$f.tmp\" && mv \"\$f.tmp\" \"\$f\""
-    HYGIENE_CMD="$NODE_PATH $REPO_DIR/scripts/hygiene-sweep.mjs >> $HOME/.alfred-hygiene.log 2>&1"
+    HYGIENE_CMD="$NODE_PATH $REPO_DIR/setup/hygiene-sweep.mjs >> $HOME/.alfred-hygiene.log 2>&1"
     HYGIENE_CRON="$HYGIENE_MIN $HYGIENE_HOUR * * $HYGIENE_CRON_DAY $ROTATE_LOG; $HYGIENE_CMD"
     touch "$HOME/.alfred-hygiene.log"
     chmod 600 "$HOME/.alfred-hygiene.log"
@@ -512,7 +512,7 @@ case "$INSTALL_MEETING" in
 
     MEETING_SCHEDULE_DESC="$MEETING_DAY at $MEETING_TIME"
     ROTATE_LOG2="f=\$HOME/.alfred-meetings.log; [ -f \"\$f\" ] && [ \$(wc -c < \"\$f\") -gt 1048576 ] && tail -500 \"\$f\" > \"\$f.tmp\" && mv \"\$f.tmp\" \"\$f\""
-    MEETING_CMD="$NODE_PATH $REPO_DIR/scripts/post-meeting-sweep.mjs >> $HOME/.alfred-meetings.log 2>&1"
+    MEETING_CMD="$NODE_PATH $REPO_DIR/setup/post-meeting-sweep.mjs >> $HOME/.alfred-meetings.log 2>&1"
     MEETING_CRON="$MEETING_MIN $MEETING_HOUR * * $MEETING_CRON_DAY $ROTATE_LOG2; $MEETING_CMD"
     touch "$HOME/.alfred-meetings.log"
     chmod 600 "$HOME/.alfred-meetings.log"

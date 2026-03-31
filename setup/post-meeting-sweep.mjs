@@ -8,7 +8,7 @@
  *  3. If auth fails → posts a Teams reminder + macOS notification
  *  4. Posts a summary Adaptive Card to Teams listing meetings that may need engagements
  *
- * Usage: node scripts/post-meeting-sweep.mjs
+ * Usage: node setup/post-meeting-sweep.mjs
  * Cron:  0 14 * * 5  (every Friday at 2:00pm)
  */
 
