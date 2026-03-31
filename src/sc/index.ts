@@ -1241,6 +1241,18 @@ server.tool(
       writeFileSync(configPath, JSON.stringify(config, null, 2));
     } catch { /* non-fatal */ }
 
+    // Migrate crontab paths: scripts/ → setup/ (one-time after repo restructure)
+    try {
+      const cron = execFileSync("crontab", ["-l"], { encoding: "utf8", timeout: 5_000 });
+      if (cron.includes("/scripts/hygiene-sweep.mjs") || cron.includes("/scripts/post-meeting-sweep.mjs")) {
+        const fixed = cron
+          .replace(/\/scripts\/hygiene-sweep\.mjs/g, "/setup/hygiene-sweep.mjs")
+          .replace(/\/scripts\/post-meeting-sweep\.mjs/g, "/setup/post-meeting-sweep.mjs");
+        execFileSync("crontab", ["-"], { input: fixed, timeout: 5_000 });
+        progress("🔧 Migrated cron job paths (scripts/ → setup/)");
+      }
+    } catch { /* non-fatal — no crontab or not on macOS */ }
+
     return { content: [{ type: "text", text:
       `✅ **Alfred updated and rebuilt!**\n\n` +
       `**Changes pulled:**\n\`\`\`\n${gitOutput.trim()}\n\`\`\`\n\n` +
