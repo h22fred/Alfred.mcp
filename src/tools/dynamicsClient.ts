@@ -335,7 +335,7 @@ export async function fetchOpportunities(filter: OpportunityFilter = {}, progres
     }
     // Drop opps where user isn't on the collab team at all
     const before = results.length;
-    results = results.filter(o => !o.scNameMismatch);
+    results = results.filter((o: Opportunity) => !o.scNameMismatch);
     if (before > results.length) {
       progress(`⚠️ Removed ${before - results.length} opportunities with stale SC attribution (not on your collaboration team)`);
     }
