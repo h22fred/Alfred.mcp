@@ -144,6 +144,29 @@ describe("stripHtml", () => {
   it("strips onclick and event handlers", () => {
     expect(stripHtml('<a onclick="alert(1)">click</a>')).toBe("click");
   });
+
+  it("converts table cells to pipe-delimited text", () => {
+    const result = stripHtml("<tr><td>A</td><td>B</td></tr>");
+    expect(result).toContain("A");
+    expect(result).toContain("B");
+    expect(result).toContain("|");
+  });
+
+  it("decodes &nbsp; to space", () => {
+    expect(stripHtml("hello&nbsp;world")).toBe("hello world");
+  });
+
+  it("collapses excessive newlines", () => {
+    const result = stripHtml("<p>a</p><p></p><p></p><p>b</p>");
+    // Should not have more than 2 consecutive newlines
+    expect(result).not.toMatch(/\n{3,}/);
+  });
+
+  it("handles deeply nested malicious HTML", () => {
+    const nested = "<div>".repeat(50) + "payload" + "</div>".repeat(50);
+    expect(stripHtml(nested)).toContain("payload");
+    expect(stripHtml(nested)).not.toContain("<");
+  });
 });
 
 // ---------------------------------------------------------------------------
