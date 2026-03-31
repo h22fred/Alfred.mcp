@@ -198,18 +198,17 @@ function mapOpportunity(r: Record<string, unknown>): Opportunity {
     ownerName:           r["_ownerid_value@OData.Community.Display.V1.FormattedValue"] as string | undefined,
     scName:              r["_sn_solutionconsultant_value@OData.Community.Display.V1.FormattedValue"] as string | undefined,
     totalamount:         r.totalamount as number | undefined,
-    // Extended fields
+    // Extended fields (field names verified against Dynamics EntityDefinitions metadata)
     opportunityType:     r["sn_opportunitytype@OData.Community.Display.V1.FormattedValue"] as string | undefined,
-    salesStage:          r["sn_salestage@OData.Community.Display.V1.FormattedValue"] as string | undefined
-                         ?? r["stepname"] as string | undefined,
+    salesStage:          r["stepname"] as string | undefined,
     probability:         r.closeprobability as number | undefined,
-    businessUnitList:    r.sn_businessunitlist as string | undefined,
-    dealChampion:        r["_sn_dealchampion_value@OData.Community.Display.V1.FormattedValue"] as string | undefined,
+    businessUnitList:    r.sn_opportunitybusinessunitlist as string | undefined,
+    dealChampion:        r["_sn_executivesponsor_value@OData.Community.Display.V1.FormattedValue"] as string | undefined,
     industrySolution:    r["sn_industrysolution@OData.Community.Display.V1.FormattedValue"] as string | undefined,
     description:         r.description as string | undefined,
-    isCompetitive:       r.sn_iscompetitive as boolean | undefined,
-    winLossReason:       r["sn_winlossreason@OData.Community.Display.V1.FormattedValue"] as string | undefined,
-    winLossNotes:        r.sn_winlossnotes as string | undefined,
+    isCompetitive:       r.sn_noncompetitive != null ? !(r.sn_noncompetitive as boolean) : undefined,
+    winLossReason:       r["sn_winlossnodecisionreason@OData.Community.Display.V1.FormattedValue"] as string | undefined,
+    winLossNotes:        r.sn_winlossnodecisionnotes as string | undefined,
   };
 }
 
@@ -291,7 +290,7 @@ export async function fetchOpportunities(filter: OpportunityFilter = {}, progres
     }
   }
 
-  const selectFields = "opportunityid,sn_number,name,_accountid_value,_ownerid_value,_sn_solutionconsultant_value,statuscode,estimatedclosedate,totalamount,msdyn_forecastcategory,stepname,closeprobability,sn_opportunitytype,sn_businessunitlist";
+  const selectFields = "opportunityid,sn_number,name,_accountid_value,_ownerid_value,_sn_solutionconsultant_value,statuscode,estimatedclosedate,totalamount,msdyn_forecastcategory,stepname,closeprobability,sn_opportunitytype,sn_opportunitybusinessunitlist";
 
   const path =
     `/opportunities` +
@@ -310,9 +309,10 @@ export async function fetchOpportunities(filter: OpportunityFilter = {}, progres
 
 export async function fetchOpportunityById(id: string, progress: ProgressFn = () => {}): Promise<Opportunity> {
   progress(`📡 Fetching opportunity ${id}...`);
-  const baseFields = "opportunityid,sn_number,name,_accountid_value,_ownerid_value,_sn_solutionconsultant_value,statuscode,estimatedclosedate,totalamount,msdyn_forecastcategory,stepname,closeprobability,sn_opportunitytype,sn_businessunitlist";
+  const baseFields = "opportunityid,sn_number,name,_accountid_value,_ownerid_value,_sn_solutionconsultant_value,statuscode,estimatedclosedate,totalamount,msdyn_forecastcategory,stepname,closeprobability,sn_opportunitytype,sn_opportunitybusinessunitlist";
   // Enrichment fields for single-opp detail view — may not exist in all instances
-  const enrichFields = ",_sn_dealchampion_value,sn_industrysolution,description,sn_iscompetitive,sn_winlossreason,sn_winlossnotes";
+  // sn_industrysolution is Virtual — excluded from $select, may come through via annotations
+  const enrichFields = ",_sn_executivesponsor_value,description,sn_noncompetitive,sn_winlossnodecisionreason,sn_winlossnodecisionnotes";
   const expand = "&$expand=parentaccountid($select=accountid,name)";
 
   let res: Response;
@@ -1001,7 +1001,7 @@ export async function fetchMyCollaborationOpportunities(
   for (let i = 0; i < oppIds.length; i += 15) {
     const batch = oppIds.slice(i, i + 15);
     const idFilter = batch.map(id => `opportunityid eq ${id}`).join(" or ");
-    const selectFields = "opportunityid,sn_number,name,_accountid_value,_ownerid_value,_sn_solutionconsultant_value,statuscode,estimatedclosedate,totalamount,msdyn_forecastcategory,stepname,closeprobability,sn_opportunitytype,sn_businessunitlist";
+    const selectFields = "opportunityid,sn_number,name,_accountid_value,_ownerid_value,_sn_solutionconsultant_value,statuscode,estimatedclosedate,totalamount,msdyn_forecastcategory,stepname,closeprobability,sn_opportunitytype,sn_opportunitybusinessunitlist";
     const path =
       `/opportunities?$select=${selectFields}` +
       `&$expand=parentaccountid($select=accountid,name)` +
