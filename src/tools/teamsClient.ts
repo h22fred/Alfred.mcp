@@ -1,7 +1,7 @@
 import { execFileSync } from "child_process";
 import { connectWithRetry } from "../auth/tokenExtractor.js";
 import type { ProgressFn } from "../auth/tokenExtractor.js";
-import { stripHtml } from "../shared.js";
+import { stripHtml, urlHostMatches } from "../shared.js";
 
 const CDP_PORT = 9222;
 const TOKEN_CACHE_MS = 45 * 60 * 1000;
@@ -219,7 +219,7 @@ export async function acquireTeamsGraphToken(progress: ProgressFn): Promise<stri
   if (listRes?.ok) {
     const targets = await listRes.json() as Array<{ webSocketDebuggerUrl?: string; type?: string; url?: string }>;
     const candidates = targets.filter(t => t.type === "page" && t.webSocketDebuggerUrl &&
-      (t.url?.includes("teams.microsoft.com") || t.url?.includes("outlook.office.com")));
+      (t.url && (urlHostMatches(t.url, "teams.microsoft.com") || urlHostMatches(t.url, "outlook.office.com"))));
     for (let attempt = 0; attempt < 4; attempt++) {
       for (const t of candidates) {
         const token = await extractGraphTokenFromTab(t.webSocketDebuggerUrl!);
@@ -243,12 +243,12 @@ export async function acquireTeamsGraphToken(progress: ProgressFn): Promise<stri
 
     // Prefer reusing an existing Teams tab — avoids opening new windows
     const existingPages = ctx.pages();
-    let page = existingPages.find(p => p.url().includes("teams.microsoft.com"));
+    let page = existingPages.find(p => urlHostMatches(p.url(), "teams.microsoft.com"));
 
     let isNewPage = false;
     if (!page) {
       // No Teams tab — try Outlook tab (it may have broad scopes), else reuse any tab
-      page = existingPages.find(p => p.url().includes("outlook.office.com"))
+      page = existingPages.find(p => urlHostMatches(p.url(), "outlook.office.com"))
           ?? existingPages.find(p => p.url().startsWith("http"))
           ?? await ctx.newPage();
       isNewPage = !existingPages.includes(page);
@@ -262,7 +262,7 @@ export async function acquireTeamsGraphToken(progress: ProgressFn): Promise<stri
     });
 
     progress("📡 Loading Teams to capture Graph token (broad scopes)...");
-    if (!page.url().includes("teams.microsoft.com")) {
+    if (!urlHostMatches(page.url(), "teams.microsoft.com")) {
       await page.goto("https://teams.microsoft.com/v2/", { waitUntil: "domcontentloaded", timeout: 20_000 }).catch(() => {});
     } else {
       await page.reload({ waitUntil: "domcontentloaded", timeout: 20_000 }).catch(() => {});

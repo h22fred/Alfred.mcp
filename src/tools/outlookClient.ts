@@ -1,7 +1,7 @@
 import { connectWithRetry } from "../auth/tokenExtractor.js";
 import { acquireTeamsGraphToken } from "./teamsClient.js";
 import type { ProgressFn } from "../auth/tokenExtractor.js";
-import { stripHtml } from "../shared.js";
+import { stripHtml, urlHostMatches } from "../shared.js";
 
 const CDP_PORT = 9222;
 const OUTLOOK_ORIGIN = "https://outlook.office.com";
@@ -56,8 +56,8 @@ async function acquireGraphTokenRawCDP(progress: ProgressFn): Promise<string> {
   const targets = await listRes.json() as Array<{ webSocketDebuggerUrl?: string; type?: string; url?: string }>;
 
   // Prefer Outlook tab, but also try Teams or any tab that might have a mail-scoped MSAL token
-  const outlookTarget = targets.find(t => t.type === "page" && t.url?.includes("outlook.office.com") && t.webSocketDebuggerUrl);
-  const teamsTarget   = targets.find(t => t.type === "page" && t.url?.includes("teams.microsoft.com") && t.webSocketDebuggerUrl);
+  const outlookTarget = targets.find(t => t.type === "page" && t.url && urlHostMatches(t.url, "outlook.office.com") && t.webSocketDebuggerUrl);
+  const teamsTarget   = targets.find(t => t.type === "page" && t.url && urlHostMatches(t.url, "teams.microsoft.com") && t.webSocketDebuggerUrl);
   const anyTarget     = targets.find(t => t.type === "page" && t.webSocketDebuggerUrl);
   const target        = outlookTarget ?? teamsTarget ?? anyTarget;
 
@@ -167,7 +167,7 @@ async function acquireGraphToken(progress: ProgressFn): Promise<string> {
 
       // Try to find an existing Outlook tab instead of opening a new one
       const existingPages = ctx.pages();
-      let page = existingPages.find(p => p.url().includes("outlook.office.com"));
+      let page = existingPages.find(p => urlHostMatches(p.url(), "outlook.office.com"));
 
       let isNewPage = false;
       if (!page) {
@@ -184,7 +184,7 @@ async function acquireGraphToken(progress: ProgressFn): Promise<string> {
       });
 
       // Navigate/reload to trigger Graph API calls
-      if (!page.url().includes("outlook.office.com")) {
+      if (!urlHostMatches(page.url(), "outlook.office.com")) {
         await page.goto("https://outlook.office.com/mail/", { waitUntil: "domcontentloaded", timeout: 20_000 }).catch(() => {});
       } else {
         await page.reload({ waitUntil: "domcontentloaded", timeout: 20_000 }).catch(() => {});
