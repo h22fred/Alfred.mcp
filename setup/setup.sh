@@ -235,17 +235,12 @@ open -a "Claude" 2>/dev/null || true
 
 # Background update check — runs silently, never blocks startup
 (
-  INSTALLED=\$(python3 -c "
-import json, os
-f = os.path.expanduser('~/.alfred-config.json')
-d = json.load(open(f)) if os.path.exists(f) else {}
-print(d.get('installedVersion', ''))
-" 2>/dev/null)
+  ALFRED_DIR="\$(cd "\$(dirname "\$0")/../.." && pwd)"
+  INSTALLED=\$(git -C "\$ALFRED_DIR" rev-parse --short HEAD 2>/dev/null)
   if [ -z "\$INSTALLED" ]; then exit 0; fi
-  LATEST=\$(curl -sf --max-time 5 \
-    "https://api.github.com/repos/h22fred/Alfred.mcp/commits/main" \
-    | python3 -c "import json,sys; print(json.load(sys.stdin)['sha'][:7])" 2>/dev/null)
-  if [ -n "\$LATEST" ] && [ "\$INSTALLED" != "\$LATEST" ]; then
+  git -C "\$ALFRED_DIR" fetch --quiet 2>/dev/null || exit 0
+  REMOTE=\$(git -C "\$ALFRED_DIR" rev-parse --short origin/main 2>/dev/null)
+  if [ -n "\$REMOTE" ] && [ "\$INSTALLED" != "\$REMOTE" ]; then
     osascript -e "display notification \"A new version of Alfred is available. Ask Claude: update Alfred\" with title \"Alfred Update Available 🆕\" sound name \"Ping\"" 2>/dev/null
   fi
 ) &

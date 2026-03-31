@@ -299,12 +299,12 @@ start "" "%CHROME_EXE%" ^
 :: Background update check
 start /b powershell -WindowStyle Hidden -ExecutionPolicy Bypass -Command ^"& { ^
     try { ^
-        `$cfg = Get-Content '%USERPROFILE%\.alfred-config.json' -Raw | ConvertFrom-Json; ^
-        `$installed = `$cfg.installedVersion; ^
+        `$alfredDir = (Get-Item '%~dp0').Parent.Parent.FullName; ^
+        `$installed = (git -C `$alfredDir rev-parse --short HEAD 2>`$null); ^
         if (-not `$installed) { exit }; ^
-        `$resp = Invoke-RestMethod -Uri 'https://api.github.com/repos/h22fred/Alfred.mcp/commits/main' -TimeoutSec 5 -ErrorAction Stop; ^
-        `$latest = `$resp.sha.Substring(0,7); ^
-        if (`$installed -ne `$latest) { ^
+        git -C `$alfredDir fetch --quiet 2>`$null; ^
+        `$remote = (git -C `$alfredDir rev-parse --short origin/main 2>`$null); ^
+        if (`$installed -ne `$remote) { ^
             try { ^
                 [Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] | Out-Null; ^
                 `$template = [Windows.UI.Notifications.ToastNotificationManager]::GetTemplateContent([Windows.UI.Notifications.ToastTemplateType]::ToastText02); ^
