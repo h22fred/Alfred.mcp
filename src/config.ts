@@ -30,8 +30,8 @@ if (existsSync(configPath)) {
           `[alfred] \u26a0\ufe0f WARNING: ~/.alfred-config.json is readable by other users. Run: chmod 600 ~/.alfred-config.json\n`
         );
       }
-    } catch {
-      // stat failed — file may have been removed between exists check and stat; ignore
+    } catch (e) {
+      process.stderr.write(`[alfred:warn] stat check on config file failed: ${e instanceof Error ? e.message : String(e)}\n`);
     }
   }
 }

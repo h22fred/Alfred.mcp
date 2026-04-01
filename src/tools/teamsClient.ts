@@ -37,7 +37,7 @@ try {
       }
     }
   }
-} catch { /* non-fatal — user can set it manually */ }
+} catch (e) { process.stderr.write(`[alfred:warn] failed to load webhook config: ${e instanceof Error ? e.message : String(e)}\n`); }
 
 export function setTeamsWebhook(url: string): void {
   if (!isValidWebhookUrl(url)) {
@@ -263,16 +263,16 @@ export async function acquireTeamsGraphToken(progress: ProgressFn): Promise<stri
 
     progress("📡 Loading Teams to capture Graph token (broad scopes)...");
     if (!urlHostMatches(page.url(), "teams.microsoft.com")) {
-      await page.goto("https://teams.microsoft.com/v2/", { waitUntil: "domcontentloaded", timeout: 20_000 }).catch(() => {});
+      await page.goto("https://teams.microsoft.com/v2/", { waitUntil: "domcontentloaded", timeout: 20_000 }).catch((e) => { process.stderr.write(`[alfred:warn] Teams page.goto failed: ${e instanceof Error ? e.message : String(e)}\n`); });
     } else {
-      await page.reload({ waitUntil: "domcontentloaded", timeout: 20_000 }).catch(() => {});
+      await page.reload({ waitUntil: "domcontentloaded", timeout: 20_000 }).catch((e) => { process.stderr.write(`[alfred:warn] Teams page.reload failed: ${e instanceof Error ? e.message : String(e)}\n`); });
     }
 
     const deadline = Date.now() + 10_000;
     while (!capturedToken && Date.now() < deadline) await page.waitForTimeout(500);
 
     // Clean up route interceptor and only close pages we created
-    await page.unroute("**/graph.microsoft.com/**").catch(() => {});
+    await page.unroute("**/graph.microsoft.com/**").catch((e) => { process.stderr.write(`[alfred:warn] unroute failed: ${e instanceof Error ? e.message : String(e)}\n`); });
     if (isNewPage) await page.close();
 
     if (!capturedToken) throw new Error("Could not capture Graph token. Make sure Teams or Outlook is loaded in Alfred.");
@@ -390,8 +390,8 @@ export async function getTeamsTranscript(opts: {
       result.attendees  = ((event.attendees as { emailAddress: { address: string } }[]) ?? [])
         .map(a => a.emailAddress?.address).filter(Boolean);
       results.push(result);
-    } catch {
-      // Meeting might not have a transcript — skip silently
+    } catch (e) {
+      process.stderr.write(`[alfred:warn] transcript fetch skipped for meeting: ${e instanceof Error ? e.message : String(e)}\n`);
     }
   }
 
@@ -502,7 +502,8 @@ async function fetchChatMessages(
       body:            stripHtml((m.body as Record<string, unknown>)?.content as string ?? ""),
       createdDateTime: m.createdDateTime as string,
     })).filter(m => m.body);
-  } catch {
+  } catch (e) {
+    process.stderr.write(`[alfred:warn] fetchChatMessages failed for ${chatId}: ${e instanceof Error ? e.message : String(e)}\n`);
     return [];
   }
 }

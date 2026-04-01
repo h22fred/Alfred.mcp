@@ -32,7 +32,7 @@ function auditLog(action: string, details: Record<string, unknown> = {}): void {
       ...details,
     };
     process.stderr.write(`[alfred:audit] ${JSON.stringify(entry)}\n`);
-  } catch { /* non-fatal */ }
+  } catch (e) { process.stderr.write(`[alfred:warn] audit log failed: ${e instanceof Error ? e.message : String(e)}\n`); }
 }
 
 export type { EngagementType };
@@ -145,7 +145,7 @@ async function dynamicsFetch(path: string, options: RequestInit = {}, progress: 
     });
     if (!retry.ok) {
       let msg = `Dynamics API error: ${retry.status} ${retry.statusText}`;
-      try { const b = await retry.json(); if (b?.error?.message) msg += ` — ${b.error.message}`; } catch { /* ignore */ }
+      try { const b = await retry.json(); if (b?.error?.message) msg += ` — ${b.error.message}`; } catch (e) { process.stderr.write(`[alfred:warn] retry error body parse failed: ${e instanceof Error ? e.message : String(e)}\n`); }
       throw new Error(msg);
     }
     return retry;
@@ -163,7 +163,7 @@ async function dynamicsFetch(path: string, options: RequestInit = {}, progress: 
         const text = await response.text().catch(() => "");
         if (text) { rawDetail = text.slice(0, 300); msg += ` — ${rawDetail}`; }
       }
-    } catch { /* ignore */ }
+    } catch (e) { process.stderr.write(`[alfred:warn] error body parse failed: ${e instanceof Error ? e.message : String(e)}\n`); }
 
     // Translate known Dynamics errors to actionable messages
     if (response.status === 403 && rawDetail.includes("missing prv")) {
@@ -262,8 +262,8 @@ async function fetchCurrentUser(progress: ProgressFn = () => {}): Promise<Curren
     );
     const userData = await userRes.json() as Record<string, unknown>;
     territoryId = userData._sn_fieldterritory_value as string | undefined || undefined;
-  } catch {
-    // Territory field may not exist — non-fatal
+  } catch (e) {
+    process.stderr.write(`[alfred:warn] territory field fetch failed: ${e instanceof Error ? e.message : String(e)}\n`);
   }
 
   progress(`👤 User: ${UserId}${territoryId ? ` | Territory: ${territoryId}` : ""}`);
@@ -610,7 +610,7 @@ export async function createTimelineNote(
       progress(`⏭️ Timeline note "${title}" already exists (dedup) — skipping`);
       return;
     }
-  } catch { /* non-fatal — proceed with creation */ }
+  } catch (e) { process.stderr.write(`[alfred:warn] timeline dedup check failed: ${e instanceof Error ? e.message : String(e)}\n`); }
 
   progress(`📋 Adding timeline note: "${title}"...`);
   await dynamicsFetch("/annotations", {
@@ -684,7 +684,7 @@ export async function updateEngagement(
         progress(`♻️ Replacing existing timeline note "${patch.timelineTitle}"...`);
         await deleteTimelineNote(match.annotationid, progress);
       }
-    } catch { /* non-fatal — create new if lookup fails */ }
+    } catch (e) { process.stderr.write(`[alfred:warn] timeline note lookup for update-in-place failed: ${e instanceof Error ? e.message : String(e)}\n`); }
     await createTimelineNote(id, patch.timelineTitle, patch.timelineText, progress);
   }
 
