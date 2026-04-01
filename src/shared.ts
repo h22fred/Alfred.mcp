@@ -103,3 +103,84 @@ export const FORECAST_NAMES: Record<number, string> = {
   100000003: "Committed",
   100000004: "Omitted",
 };
+
+/**
+ * Regenerate the Alfred.app shell script on macOS.
+ * Called by update_alfred so the .app bundle stays in sync with the repo
+ * (e.g. update-check logic, Chrome flags, notification text).
+ * No-op on Windows or if Alfred.app doesn't exist.
+ */
+export function regenerateAlfredApp(installDir: string): string | null {
+  if (process.platform !== "darwin") return null;
+
+  const { existsSync: ex, readFileSync: rf, writeFileSync: wf, copyFileSync: cf } = require("fs") as typeof import("fs");
+  const { homedir: hd } = require("os") as typeof import("os");
+  const { join: pj } = require("path") as typeof import("path");
+
+  const home = hd();
+  const appScript = pj(home, "Desktop", "Alfred.app", "Contents", "MacOS", "Alfred");
+  if (!ex(appScript)) return null;
+
+  const configPath = pj(home, ".alfred-config.json");
+  const cfg = ex(configPath) ? JSON.parse(rf(configPath, "utf8")) : {};
+  const company = cfg.dynamicsCompany ?? "servicenow";
+  const dynamicsUrl = `https://${company}.crm.dynamics.com`;
+
+  const script = `#!/bin/bash
+notify() { osascript -e "display notification \\"\$1\\" with title \\"Alfred\\"" 2>/dev/null; }
+
+# Already running?
+if pgrep -f "alfred-profile" > /dev/null 2>&1; then
+  notify "Already running — you're good to use Claude!"
+  open -a "Claude" 2>/dev/null || true
+  exit 0
+fi
+
+mkdir -p "\$HOME/.alfred-profile"
+open -na "Google Chrome" --args \\
+  --remote-debugging-port=9222 \\
+  --user-data-dir="\$HOME/.alfred-profile" \\
+  --no-first-run \\
+  --no-default-browser-check \\
+  --disable-extensions \\
+  --disable-sync \\
+  --disable-default-apps \\
+  --disable-translate \\
+  --disable-component-update \\
+  --disable-domain-reliability \\
+  --disable-client-side-phishing-detection \\
+  "${dynamicsUrl}" \\
+  "https://outlook.office.com" \\
+  "https://teams.microsoft.com/v2/"
+
+# First run detection
+PROFILE_SIZE=\$(du -sk "\$HOME/.alfred-profile" 2>/dev/null | cut -f1)
+if [ -z "\$PROFILE_SIZE" ] || [ "\$PROFILE_SIZE" -lt 500 ]; then
+  notify "First time setup: log into Dynamics, Outlook and Teams in this window. You only do this once!"
+else
+  notify "Launched — ready for Claude!"
+fi
+open -a "Claude" 2>/dev/null || true
+
+# Background update check — uses git directly, never blocks startup
+(
+  ALFRED_DIR="\$(cd "\$(dirname "\$0")/../.." && pwd)"
+  INSTALLED=\$(git -C "\$ALFRED_DIR" rev-parse --short HEAD 2>/dev/null)
+  if [ -z "\$INSTALLED" ]; then exit 0; fi
+  git -C "\$ALFRED_DIR" fetch --quiet 2>/dev/null || exit 0
+  REMOTE=\$(git -C "\$ALFRED_DIR" rev-parse --short origin/main 2>/dev/null)
+  if [ -n "\$REMOTE" ] && [ "\$INSTALLED" != "\$REMOTE" ]; then
+    osascript -e "display notification \\"A new version of Alfred is available. Ask Claude: update Alfred\\" with title \\"Alfred Update Available 🆕\\" sound name \\"Ping\\"" 2>/dev/null
+  fi
+) &
+`;
+
+  wf(appScript, script, { mode: 0o755 });
+
+  // Refresh icon in case it changed
+  const iconSrc = pj(installDir, "setup", "assets", "alfred.icns");
+  const iconDst = pj(home, "Desktop", "Alfred.app", "Contents", "Resources", "alfred.icns");
+  if (ex(iconSrc)) cf(iconSrc, iconDst);
+
+  return "🔄 Regenerated Alfred.app with latest updates";
+}
