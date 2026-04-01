@@ -32,7 +32,7 @@ import {
   type EngagementType,
   type EngagementDescription,
 } from "../tools/dynamicsClient.js";
-import { closeBrowser, ensureAlfred, clearAuthCache } from "../auth/tokenExtractor.js";
+import { ensureAlfred, clearAuthCache } from "../auth/tokenExtractor.js";
 import { getCalendarEvents, getEmails, listMailFolders, clearGraphTokenCache } from "../tools/outlookClient.js";
 import { setTeamsWebhook, postTeamsNotification, getTeamsTranscript, getTeamsChats } from "../tools/teamsClient.js";
 import { runHygieneSweep, formatHygieneReport } from "../tools/hygieneClient.js";
@@ -1469,6 +1469,5 @@ await server.connect(transport);
 console.error("[alfred-sales] Server running on stdio");
 
 process.on("SIGINT", async () => {
-  await closeBrowser();
   process.exit(0);
 });

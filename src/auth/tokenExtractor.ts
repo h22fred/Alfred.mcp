@@ -279,7 +279,3 @@ export function setManualCookies(cookieHeader: string): void {
   console.error(`[auth] Manual cookies set`);
 }
 
-export async function closeBrowser(): Promise<void> {
-  // Nothing to close — we use the user's running Chrome
-}
-
