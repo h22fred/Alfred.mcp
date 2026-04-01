@@ -34,7 +34,7 @@ import {
   type OpportunityFilter,
   type EngagementDescription,
 } from "../tools/dynamicsClient.js";
-import { closeBrowser, ensureAlfred, clearAuthCache } from "../auth/tokenExtractor.js";
+import { ensureAlfred, clearAuthCache } from "../auth/tokenExtractor.js";
 import { getCalendarEvents, getEmails, listMailFolders, clearGraphTokenCache } from "../tools/outlookClient.js";
 import { setTeamsWebhook, postTeamsNotification, getTeamsTranscript, getTeamsChats } from "../tools/teamsClient.js";
 import { runHygieneSweep, formatHygieneReport } from "../tools/hygieneClient.js";
@@ -1366,6 +1366,5 @@ console.error("[sc-engagement-mcp] Server running on stdio");
 // Do NOT auto-launch at startup — avoids spawning extra Chrome windows
 
 process.on("SIGINT", async () => {
-  await closeBrowser();
   process.exit(0);
 });
