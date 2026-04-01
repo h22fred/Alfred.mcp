@@ -124,6 +124,11 @@ export function regenerateAlfredApp(installDir: string): string | null {
   const configPath = pj(home, ".alfred-config.json");
   const cfg = ex(configPath) ? JSON.parse(rf(configPath, "utf8")) : {};
   const company = cfg.dynamicsCompany ?? "servicenow";
+  if (!/^[a-zA-Z0-9-]+$/.test(company)) {
+    throw new Error(
+      `[alfred] Invalid dynamicsCompany "${company}" in ~/.alfred-config.json: must contain only alphanumeric characters and hyphens.`
+    );
+  }
   const dynamicsUrl = `https://${company}.crm.dynamics.com`;
 
   const script = `#!/bin/bash

@@ -82,7 +82,7 @@ export async function runHygieneSweep(opts: {
   const BATCH_SIZE = 15;
   for (let i = 0; i < filtered.length; i += BATCH_SIZE) {
     const batch = filtered.slice(i, i + BATCH_SIZE);
-    const batchResults = await Promise.all(
+    const batchSettled = await Promise.allSettled(
       batch.map(async (opp) => {
         const engagements = await fetchEngagementsByOpportunity(opp.opportunityid, progress);
         // Exclude cancelled engagements entirely
@@ -102,7 +102,21 @@ export async function runHygieneSweep(opts: {
         return { opportunity: opp, engagements: activeEngagements, missingRequired, missingOptional, status } as HygieneResult;
       })
     );
-    results.push(...batchResults);
+    for (let j = 0; j < batchSettled.length; j++) {
+      const settled = batchSettled[j]!;
+      if (settled.status === "fulfilled") {
+        results.push(settled.value);
+      } else {
+        progress(`⚠️ Failed to fetch engagements for ${batch[j]!.name} — treating as all types missing`);
+        results.push({
+          opportunity: batch[j]!,
+          engagements: [],
+          missingRequired: [...requiredTypes],
+          missingOptional: [],
+          status: "red",
+        } as HygieneResult);
+      }
+    }
     if (i + BATCH_SIZE < filtered.length) {
       progress(`📋 Checked ${Math.min(i + BATCH_SIZE, filtered.length)}/${filtered.length} opportunities...`);
     }

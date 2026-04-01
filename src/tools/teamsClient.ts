@@ -376,7 +376,7 @@ export async function getTeamsTranscript(opts: {
     try {
       // Resolve calendar event → onlineMeeting ID
       const meetingData = await graphFetch(
-        `/me/onlineMeetings?$filter=JoinWebUrl eq '${encodeURIComponent(joinUrl.replace(/'/g, "''"))}'`,
+        `/me/onlineMeetings?$filter=JoinWebUrl eq '${joinUrl.replace(/'/g, "''")}'`,
         token
       );
       const meeting = (meetingData.value as Record<string, unknown>[])?.[0];

@@ -2,6 +2,7 @@ import { connectWithRetry } from "../auth/tokenExtractor.js";
 import { acquireTeamsGraphToken } from "./teamsClient.js";
 import type { ProgressFn } from "../auth/tokenExtractor.js";
 import { stripHtml, urlHostMatches } from "../shared.js";
+import { sanitizeODataSearch } from "./dynamicsClient.js";
 
 const CDP_PORT = 9222;
 const OUTLOOK_ORIGIN = "https://outlook.office.com";
@@ -293,7 +294,7 @@ export async function getCalendarEvents(
   // but calendarView may not support it — so we always apply client-side filter as fallback.
   if (search) {
     try {
-      const safe = search.replace(/'/g, "''").slice(0, 80);
+      const safe = sanitizeODataSearch(search);
       params.set("$filter", `contains(subject,'${safe}')`);
     } catch {
       // Some Graph instances don't support $filter on calendarView — fall through to client filter
