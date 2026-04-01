@@ -1132,7 +1132,7 @@ If no transcript, use the meeting subject, attendees and calendar notes for best
 
     // Post to Teams if requested
     if (post_to_teams) {
-      await notifyPostMeetingCandidates(candidates, progress);
+      await notifyPostMeetingCandidates(candidates, DYNAMICS_HOST, progress);
     }
 
     // Strip raw calendarEvent (large Graph API blob Claude doesn't need) and truncate transcripts
@@ -1300,21 +1300,44 @@ server.tool(
 );
 
 // ---------------------------------------------------------------------------
-// Startup version check — run before server connect so prompt is ready
+// Startup version check — cached for 24h to avoid slow git fetch on every start
 // ---------------------------------------------------------------------------
 let versionStatus = "";
 try {
   const __fn = fileURLToPath(import.meta.url);
   const installDir = join(dirname(__fn), "..", "..");
   const localSha = execFileSync("git", ["-C", installDir, "rev-parse", "--short", "HEAD"], { encoding: "utf8", timeout: 5_000 }).trim();
-  execFileSync("git", ["-C", installDir, "fetch", "--quiet"], { timeout: 15_000 });
-  const remoteSha = execFileSync("git", ["-C", installDir, "rev-parse", "--short", "origin/main"], { encoding: "utf8", timeout: 5_000 }).trim();
-  if (localSha !== remoteSha) {
-    const behind = execFileSync("git", ["-C", installDir, "rev-list", "--count", `${localSha}..origin/main`], { encoding: "utf8", timeout: 5_000 }).trim();
-    versionStatus = `⚠️ Alfred update available — you are ${behind} commit(s) behind (${localSha} → ${remoteSha}). Tell the user to run update_alfred to get the latest version.`;
-    console.error(`[alfred] ${versionStatus}`);
-  } else {
-    console.error(`[alfred] ✅ Up to date (${localSha})`);
+
+  const cacheFile = join(homedir(), ".alfred-version-check");
+  const CACHE_TTL = 24 * 60 * 60 * 1000; // 24 hours
+  let shouldFetch = true;
+
+  if (existsSync(cacheFile)) {
+    try {
+      const cache = JSON.parse(readFileSync(cacheFile, "utf8"));
+      if (cache.localSha === localSha && Date.now() - cache.timestamp < CACHE_TTL) {
+        shouldFetch = false;
+        if (cache.versionStatus) {
+          versionStatus = cache.versionStatus;
+          console.error(`[alfred] ${versionStatus} (cached)`);
+        } else {
+          console.error(`[alfred] ✅ Up to date (${localSha}) (cached)`);
+        }
+      }
+    } catch { /* invalid cache — re-fetch */ }
+  }
+
+  if (shouldFetch) {
+    execFileSync("git", ["-C", installDir, "fetch", "--quiet"], { timeout: 15_000 });
+    const remoteSha = execFileSync("git", ["-C", installDir, "rev-parse", "--short", "origin/main"], { encoding: "utf8", timeout: 5_000 }).trim();
+    if (localSha !== remoteSha) {
+      const behind = execFileSync("git", ["-C", installDir, "rev-list", "--count", `${localSha}..origin/main`], { encoding: "utf8", timeout: 5_000 }).trim();
+      versionStatus = `⚠️ Alfred update available — you are ${behind} commit(s) behind (${localSha} → ${remoteSha}). Tell the user to run update_alfred to get the latest version.`;
+      console.error(`[alfred] ${versionStatus}`);
+    } else {
+      console.error(`[alfred] ✅ Up to date (${localSha})`);
+    }
+    try { writeFileSync(cacheFile, JSON.stringify({ localSha, versionStatus, timestamp: Date.now() })); } catch { /* non-fatal */ }
   }
 } catch { /* non-fatal — skip version check if offline or git fails */ }
 

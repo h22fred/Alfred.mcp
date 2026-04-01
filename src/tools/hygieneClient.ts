@@ -78,8 +78,8 @@ export async function runHygieneSweep(opts: {
   progress(`📋 Checking ${filtered.length} opportunities...`);
   const results: HygieneResult[] = [];
 
-  // Batch engagement fetches in groups of 8 for ~8x speedup over sequential
-  const BATCH_SIZE = 8;
+  // Batch engagement fetches in parallel for speedup over sequential
+  const BATCH_SIZE = 15;
   for (let i = 0; i < filtered.length; i += BATCH_SIZE) {
     const batch = filtered.slice(i, i + BATCH_SIZE);
     const batchResults = await Promise.all(

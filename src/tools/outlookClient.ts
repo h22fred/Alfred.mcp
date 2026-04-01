@@ -267,6 +267,7 @@ export interface CalendarEvent {
   attendees?: { name: string; email: string }[];
   isOnlineMeeting?: boolean;
   bodyPreview?: string;
+  webLink?: string;
 }
 
 export async function getCalendarEvents(
@@ -283,7 +284,7 @@ export async function getCalendarEvents(
   const params = new URLSearchParams({
     startDateTime: `${startDate}T00:00:00Z`,
     endDateTime:   `${endDate}T23:59:59Z`,
-    $select: "subject,start,end,location,organizer,attendees,isOnlineMeeting",
+    $select: "subject,start,end,location,organizer,attendees,isOnlineMeeting,webLink",
     $top: String(top),
     $orderby: "start/dateTime",
   });
@@ -339,6 +340,7 @@ export async function getCalendarEvents(
       attendees,
       isOnlineMeeting: e.isOnlineMeeting as boolean,
       bodyPreview:     undefined, // dropped to save context — use search_emails for full content
+      webLink:         (e.webLink as string) || undefined,
     };
   });
 
