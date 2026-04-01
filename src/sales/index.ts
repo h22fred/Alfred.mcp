@@ -161,7 +161,9 @@ server.tool(
 
 NOTE: $0 NNACV opportunities are excluded by default (noise). If the user explicitly asks for $0 deals, set include_zero_value=true. Negative NNACV deals are always included.
 
-DISPLAY: Always show the nnacv field as the primary deal value (labelled "NNACV"). Never show totalamount as the deal size — it is ACV (full contract value including renewals) and inflates pipeline figures. If the user asks about ACV specifically, show totalamount labelled as "ACV" alongside NNACV.`,
+DISPLAY: Always show the nnacv field as the primary deal value (labelled "NNACV"). Never show totalamount as the deal size — it is ACV (full contract value including renewals) and inflates pipeline figures. If the user asks about ACV specifically, show totalamount labelled as "ACV" alongside NNACV.
+
+CROSS-REFERENCE: After presenting pipeline results, compare with the Data_Analytics_Connection account_insights tool. Note: Dynamics data is live CRM state; Data Analytics is data lake (may lag by up to 24h). Flag any discrepancies between the two sources.`,
   {
     search:   z.string().optional().describe("Filter by account or opportunity name"),
     min_nnacv: z.number().optional().describe("Minimum NNACV in USD — default 100000 ($100K+). Set to 0 for no filter. Negative NNACV deals are always included."),
@@ -191,6 +193,16 @@ server.tool(
   `Get a single opportunity by its Dynamics ID.
 
 Also fetches timeline notes attached to the opportunity — essential context for engagement creation and updates.
+
+After fetching the opportunity, ALWAYS enrich it by calling the account_insights MCP tool with:
+"Show current subscriptions, license utilization, and renewal data for [accountName]"
+
+Then present a combined summary:
+- What they're buying (the opportunity)
+- What they already own (products + seats purchased)
+- How much they're using (utilization % and used/total seats)
+- Deal type inference: upsell (expanding existing product), cross-sell (new product line), or new logo
+Example output: "SITA has CSM Pro — 600/1400 seats used (43%). This TPSM opportunity is an upsell."
 
 DISPLAY: Show both values clearly labelled — "NNACV: $X | ACV: $Y". NNACV (nnacv field) is the primary metric. ACV (totalamount) is the full contract value and should always be secondary. Never present totalamount as "deal value" without the ACV label.`,
   { opportunity_id: z.string().describe("Dynamics opportunity GUID") },
@@ -1234,7 +1246,9 @@ server.tool(
 Required milestones: Discovery, Demo, Technical Win
 Optional milestones: RFx, Business Case, Workshop, POV, EBC
 
-Always runs for the current user's pipeline only. Optionally posts results to Teams.`,
+Always runs for the current user's pipeline only. Optionally posts results to Teams.
+
+CROSS-REFERENCE: After presenting results, use Data_Analytics_Connection account_insights to check customer health scores, license utilization, and renewal status for the accounts in the sweep. This adds context on which red/yellow accounts are also at-risk from a health perspective.`,
   {
     post_to_teams: z.boolean().optional().describe("Post the report to Teams (requires configure_teams_webhook)"),
     min_nnacv:     z.number().optional().describe("Minimum NNACV filter in USD (default $100K). $0 opportunities are always excluded."),
@@ -1265,7 +1279,9 @@ After calling this tool, analyse each candidate and:
 4. Ask for approval before calling create_engagement
 
 If a transcript is available it will be included — use it to pre-fill the engagement description.
-If no transcript, use the meeting subject, attendees and calendar notes for best-effort pre-fill.`,
+If no transcript, use the meeting subject, attendees and calendar notes for best-effort pre-fill.
+
+CROSS-REFERENCE: For each matched account, use Data_Analytics_Connection account_insights to pull customer health, product subscriptions, and license utilization. This gives context for writing up the engagement — what the customer owns, how much they use it, and any risk signals.`,
   {
     hours_back: z.number().optional().describe("How many hours back to scan for ended meetings (default 24)"),
     search:     z.string().optional().describe("Optional keyword to filter meeting subjects (e.g. 'PMI', 'SITA')"),

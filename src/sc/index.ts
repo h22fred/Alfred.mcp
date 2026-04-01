@@ -198,7 +198,9 @@ Ask both together in one message. Only call this tool once you have their answer
 
 NOTE: $0 NNACV opportunities are excluded by default (noise). If the user explicitly asks for $0 deals, set include_zero_value=true.
 
-DISPLAY: Always show the nnacv field as the primary deal value (labelled "NNACV"). Never show totalamount as the deal size — it is ACV (full contract value including renewals) and inflates pipeline figures. If the user asks about ACV specifically, show totalamount labelled as "ACV" alongside NNACV.`,
+DISPLAY: Always show the nnacv field as the primary deal value (labelled "NNACV"). Never show totalamount as the deal size — it is ACV (full contract value including renewals) and inflates pipeline figures. If the user asks about ACV specifically, show totalamount labelled as "ACV" alongside NNACV.
+
+CROSS-REFERENCE: After presenting pipeline results, compare with the Data_Analytics_Connection account_insights tool. Note: Dynamics data is live CRM state; Data Analytics is data lake (may lag by up to 24h). Flag any discrepancies between the two sources.`,
   {
     top: z.number().optional().describe("Max number of results (default 50)"),
     search: z.string().optional().describe("Filter by opportunity or account name (partial match)"),
@@ -1085,7 +1087,9 @@ server.tool(
 Required SC milestones: Discovery, Demo, Technical Win
 Optional SC milestones: RFx, Business Case, Workshop, POV, EBC
 
-Always runs for the current user's pipeline only. Optionally posts results to Teams.`,
+Always runs for the current user's pipeline only. Optionally posts results to Teams.
+
+CROSS-REFERENCE: After presenting results, use Data_Analytics_Connection account_insights to check customer health scores, license utilization, and renewal status for the accounts in the sweep. This adds context on which red/yellow accounts are also at-risk from a health perspective.`,
   {
     post_to_teams: z.boolean().optional().describe("Post the report to Teams (requires configure_teams_webhook)"),
     min_nnacv:     z.number().optional().describe("Minimum NNACV filter in USD (default $100K). $0 opportunities are always excluded."),
@@ -1116,7 +1120,9 @@ After calling this tool, analyse each candidate and:
 4. Ask for approval before calling create_engagement
 
 If a transcript is available it will be included — use it to pre-fill the engagement description.
-If no transcript, use the meeting subject, attendees and calendar notes for best-effort pre-fill.`,
+If no transcript, use the meeting subject, attendees and calendar notes for best-effort pre-fill.
+
+CROSS-REFERENCE: For each matched account, use Data_Analytics_Connection account_insights to pull customer health, product subscriptions, and license utilization. This gives context for writing up the engagement — what the customer owns, how much they use it, and any risk signals.`,
   {
     hours_back: z.number().optional().describe("How many hours back to scan for ended meetings (default 24)"),
     search:     z.string().optional().describe("Optional keyword to filter meeting subjects (e.g. 'PMI', 'SITA')"),
