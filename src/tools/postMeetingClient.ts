@@ -23,11 +23,14 @@ export interface PostMeetingCandidate {
   suggestedAccountName?: string;
   matchReason?: string;  // e.g. "subject", "domain", "organizer"
 
+  // Links
+  webLink?: string;  // Outlook calendar event URL
+
   // Raw data for Claude to reason about
   calendarEvent: Record<string, unknown>;
 }
 
-import { NON_CUSTOMER_DOMAINS } from "../shared.js";
+import { NON_CUSTOMER_DOMAINS, SN_INTERNAL_DOMAINS } from "../shared.js";
 
 function attendeeDomainWord(email: string): string | null {
   const domain = email.split("@")[1]?.toLowerCase();
@@ -177,6 +180,7 @@ export async function detectPostMeetingEngagements(opts: {
       suggestedOpportunityName,
       suggestedAccountName,
       matchReason,
+      webLink:                 event.webLink,
       calendarEvent:           event as unknown as Record<string, unknown>,
     });
   }
@@ -191,50 +195,112 @@ export async function detectPostMeetingEngagements(opts: {
  */
 export async function notifyPostMeetingCandidates(
   candidates: PostMeetingCandidate[],
+  dynamicsUrl: string | undefined,
   progress: ProgressFn = () => {}
 ): Promise<number> {
   if (candidates.length === 0) return 0;
 
-  let posted = 0;
+  const today = new Date().toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
+  const matched = candidates.filter(c => c.suggestedOpportunityName).length;
+  const unmatched = candidates.length - matched;
+
+  const body: Record<string, unknown>[] = [
+    { type: "TextBlock", text: `📋 Post-Meeting Summary — ${today}`, weight: "Bolder", size: "Large", wrap: true },
+    {
+      type: "ColumnSet", spacing: "Small",
+      columns: [
+        { type: "Column", width: "auto", items: [{ type: "TextBlock", text: `📅 **${candidates.length}** meeting(s)`, size: "Small" }] },
+        { type: "Column", width: "auto", items: [{ type: "TextBlock", text: `✅ **${matched}** matched`, size: "Small" }] },
+        ...(unmatched > 0 ? [{ type: "Column", width: "auto", items: [{ type: "TextBlock", text: `❓ **${unmatched}** unmatched`, size: "Small" }] }] : []),
+      ],
+    },
+  ];
+
+  // Group by account (or "Unmatched" for those without an opp)
+  const grouped = new Map<string, PostMeetingCandidate[]>();
   for (const c of candidates) {
-    const attendeeList = c.attendeeNames.length
-      ? c.attendeeNames.slice(0, 8).join(", ") + (c.attendeeNames.length > 8 ? ` +${c.attendeeNames.length - 8} more` : "")
-      : "—";
+    const key = c.suggestedAccountName ?? "❓ No matching opportunity";
+    if (!grouped.has(key)) grouped.set(key, []);
+    grouped.get(key)!.push(c);
+  }
+  // Sort: matched accounts first (alphabetical), unmatched last
+  const sorted = new Map([...grouped.entries()].sort((a, b) => {
+    const aUnmatched = a[0].startsWith("❓") ? 1 : 0;
+    const bUnmatched = b[0].startsWith("❓") ? 1 : 0;
+    if (aUnmatched !== bUnmatched) return aUnmatched - bUnmatched;
+    return a[0].localeCompare(b[0]);
+  }));
 
-    const matchLine = c.suggestedOpportunityName
-      ? `**Suggested opp:** ${c.suggestedOpportunityName} (${c.suggestedAccountName ?? "—"}) — matched by ${c.matchReason}`
-      : "_No matching opportunity found — please specify manually._";
+  for (const [account, meetings] of sorted) {
+    // Account header
+    body.push({
+      type: "Container", separator: true, spacing: "Medium",
+      items: [{ type: "TextBlock", text: `**${account}**`, size: "Small", weight: "Bolder", wrap: false }],
+    });
 
-    const durationLine = c.durationMinutes ? `${c.durationMinutes} min` : "—";
-    const transcriptLine = c.transcriptAvailable ? "Transcript available" : "No transcript";
+    // Meeting rows
+    for (const c of meetings) {
+      const time = c.meetingStart?.slice(11, 16) ?? "";
+      const duration = c.durationMinutes ? `${c.durationMinutes}m` : "";
+      const transcript = c.transcriptAvailable ? "📝" : "";
 
-    const body: Record<string, unknown>[] = [
-      { type: "TextBlock", text: `📋 Post-meeting: **${c.meetingSubject}**`, weight: "Bolder", size: "Medium", wrap: true },
-      { type: "FactSet", facts: [
-        { title: "When", value: `${c.meetingStart?.slice(0, 16).replace("T", " ")} · ${durationLine}` },
-        { title: "Attendees", value: attendeeList },
-        { title: "Transcript", value: transcriptLine },
-      ]},
-      { type: "TextBlock", text: matchLine, wrap: true, spacing: "Small" },
-      { type: "TextBlock", text: '_Open Claude and say: "Log the engagement for this meeting"_', size: "Small", isSubtle: true, wrap: true, spacing: "Medium" },
-    ];
+      // External vs internal attendee split
+      const extCount = c.attendees.filter(a => {
+        const domain = a.email.split("@")[1]?.toLowerCase();
+        return domain && !SN_INTERNAL_DOMAINS.has(domain);
+      }).length;
+      const intCount = c.attendees.length - extCount;
+      const attendeeSplit = c.attendees.length > 0
+        ? `👥 ${extCount} ext · ${intCount} int`
+        : "";
 
-    try {
-      await postAdaptiveCard({
-        $schema: "http://adaptivecards.io/schemas/adaptive-card.json",
-        type: "AdaptiveCard",
-        version: "1.4",
-        body,
-        actions: [
-          { type: "Action.OpenUrl", title: "Open Claude", url: "https://claude.ai" },
+      const oppName = c.suggestedOpportunityName
+        ? (c.suggestedOpportunityName.length > 30 ? c.suggestedOpportunityName.slice(0, 29) + "…" : c.suggestedOpportunityName)
+        : "";
+      const oppLink = oppName && dynamicsUrl && c.suggestedOpportunityId
+        ? `[${oppName}](${dynamicsUrl}/main.aspx?etn=opportunity&pagetype=entityrecord&id=${c.suggestedOpportunityId})`
+        : oppName;
+
+      // Meeting subject — link to Outlook if available
+      const subjectText = c.webLink
+        ? `📅 **[${c.meetingSubject}](${c.webLink})**`
+        : `📅 **${c.meetingSubject}**`;
+
+      const details = [time, duration, attendeeSplit, transcript].filter(Boolean).join(" · ");
+
+      body.push({
+        type: "ColumnSet", spacing: "Small",
+        columns: [
+          { type: "Column", width: "stretch", items: [{ type: "TextBlock", text: subjectText, size: "Small", wrap: false }] },
+          { type: "Column", width: "auto", items: [{ type: "TextBlock", text: details, size: "Small", horizontalAlignment: "Right" }] },
         ],
-      }, progress);
-      posted++;
-    } catch (err) {
-      progress(`⚠️ Failed to post card for "${c.meetingSubject}": ${err instanceof Error ? err.message : String(err)}`);
+      });
+
+      if (oppLink) {
+        body.push({
+          type: "ColumnSet", spacing: "None",
+          columns: [
+            { type: "Column", width: "stretch", items: [{ type: "TextBlock", text: `   → ${oppLink}`, size: "Small", wrap: false, color: "Accent" }] },
+          ],
+        });
+      }
     }
   }
 
-  progress(`✅ Posted ${posted}/${candidates.length} meeting notification(s) to Teams`);
-  return posted;
+  // Footer CTA
+  body.push({ type: "TextBlock", text: `💡 Open Claude Desktop — Ask Claude: _"Log the engagements for my recent meetings"_`, size: "Small", isSubtle: true, wrap: true, separator: true, spacing: "Medium" });
+
+  try {
+    await postAdaptiveCard({
+      $schema: "http://adaptivecards.io/schemas/adaptive-card.json",
+      type: "AdaptiveCard",
+      version: "1.4",
+      body,
+    }, progress);
+    progress(`✅ Posted meeting summary card (${candidates.length} meetings) to Teams`);
+    return candidates.length;
+  } catch (err) {
+    progress(`⚠️ Failed to post meeting card: ${err instanceof Error ? err.message : String(err)}`);
+    return 0;
+  }
 }
