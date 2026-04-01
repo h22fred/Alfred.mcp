@@ -2,7 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import { DYNAMICS_HOST, ALL_ENGAGEMENT_TYPES } from "../config.js";
-import { requireGuid, makeProgress, WriteRateLimiter, FORECAST_NAMES } from "../shared.js";
+import { requireGuid, makeProgress, WriteRateLimiter, FORECAST_NAMES, regenerateAlfredApp } from "../shared.js";
 import {
   fetchOpportunities,
   fetchOpportunityById,
@@ -1389,6 +1389,12 @@ server.tool(
         progress("🔧 Migrated cron job paths (scripts/ → setup/)");
       }
     } catch { /* non-fatal — no crontab or not on macOS */ }
+
+    // Regenerate Alfred.app shell script (picks up update-check fixes, new Chrome flags, etc.)
+    try {
+      const appMsg = regenerateAlfredApp(installDir);
+      if (appMsg) progress(appMsg);
+    } catch { /* non-fatal — skip on Windows or if Alfred.app doesn't exist */ }
 
     progress("✅ Done — restart Claude Desktop to load the new version.");
     return { content: [{ type: "text", text:

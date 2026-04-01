@@ -7,7 +7,7 @@ import { join, dirname } from "path";
 import { fileURLToPath } from "url";
 import { execFileSync } from "child_process";
 import { DYNAMICS_HOST, alfredConfig as _baseConfig, ALL_ENGAGEMENT_TYPES } from "../config.js";
-import { requireGuid, makeProgress, WriteRateLimiter } from "../shared.js";
+import { requireGuid, makeProgress, WriteRateLimiter, regenerateAlfredApp } from "../shared.js";
 import {
   fetchOpportunities,
   fetchOpportunityById,
@@ -1284,6 +1284,12 @@ server.tool(
         progress("🔧 Migrated cron job paths (scripts/ → setup/)");
       }
     } catch { /* non-fatal — no crontab or not on macOS */ }
+
+    // Regenerate Alfred.app shell script (picks up update-check fixes, new Chrome flags, etc.)
+    try {
+      const appMsg = regenerateAlfredApp(installDir);
+      if (appMsg) progress(appMsg);
+    } catch { /* non-fatal — skip on Windows or if Alfred.app doesn't exist */ }
 
     return { content: [{ type: "text", text:
       `✅ **Alfred updated and rebuilt!**\n\n` +
