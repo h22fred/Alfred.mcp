@@ -1421,6 +1421,106 @@ server.tool(
   }
 );
 
+// ---------------------------------------------------------------------------
+// Tool: uninstall_alfred
+// ---------------------------------------------------------------------------
+server.tool(
+  "uninstall_alfred",
+  `Uninstall Alfred from this machine. IMPORTANT: Always confirm with the user before running this.
+
+Removes: cron jobs, Claude Desktop config entry, Alfred.app, version cache.
+Optional: config file (~/.alfred-config.json), Chrome profile (~/.alfred-profile), log files.
+
+After uninstall, the user must restart Claude Desktop.`,
+  {
+    remove_config: z.boolean().optional().describe("Also remove ~/.alfred-config.json (Dynamics URL, webhook, role). Default false."),
+    remove_chrome_profile: z.boolean().optional().describe("Also remove ~/.alfred-profile (Chrome session, cookies). Default false."),
+    remove_logs: z.boolean().optional().describe("Also remove ~/.alfred-hygiene.log and ~/.alfred-meetings.log. Default false."),
+  },
+  async ({ remove_config, remove_chrome_profile, remove_logs }) => {
+    const progress = makeProgress(server);
+    const results: string[] = [];
+    const { unlinkSync, rmSync } = await import("fs");
+
+    // 1. Remove cron jobs
+    try {
+      const currentCron = execFileSync("crontab", ["-l"], { encoding: "utf8", timeout: 5_000 }).trim();
+      const newCron = currentCron.split("\n").filter(l => !l.includes("hygiene-sweep") && !l.includes("post-meeting-sweep")).join("\n");
+      if (newCron !== currentCron) {
+        execFileSync("crontab", ["-"], { input: newCron, timeout: 5_000 });
+        results.push("✅ Cron jobs removed");
+      } else {
+        results.push("ℹ️ No Alfred cron jobs found");
+      }
+    } catch { results.push("ℹ️ No crontab (skipped)"); }
+
+    // 2. Remove from Claude Desktop config
+    try {
+      const claudeConfig = join(homedir(), "Library", "Application Support", "Claude", "claude_desktop_config.json");
+      if (existsSync(claudeConfig)) {
+        const config = JSON.parse(readFileSync(claudeConfig, "utf8"));
+        let removed = false;
+        for (const key of ["alfred", "sc-engagement", "alfred-sales"]) {
+          if (config.mcpServers?.[key]) { delete config.mcpServers[key]; removed = true; }
+        }
+        if (removed) {
+          writeFileSync(claudeConfig, JSON.stringify(config, null, 2));
+          results.push("✅ Removed from Claude Desktop config");
+        } else {
+          results.push("ℹ️ No Alfred entry in Claude Desktop config");
+        }
+      }
+    } catch (e) { results.push(`⚠️ Could not update Claude Desktop config: ${e instanceof Error ? e.message : String(e)}`); }
+
+    // 3. Remove Alfred.app
+    try {
+      const appPath = join(homedir(), "Desktop", "Alfred.app");
+      if (existsSync(appPath)) { rmSync(appPath, { recursive: true }); results.push("✅ Alfred.app removed"); }
+      else { results.push("ℹ️ Alfred.app not found"); }
+    } catch (e) { results.push(`⚠️ Could not remove Alfred.app: ${e instanceof Error ? e.message : String(e)}`); }
+
+    // 4. Remove version cache
+    try {
+      const cache = join(homedir(), ".alfred-version-check");
+      if (existsSync(cache)) { unlinkSync(cache); results.push("✅ Version cache removed"); }
+    } catch { /* non-fatal */ }
+
+    // 5. Optional: config file
+    if (remove_config) {
+      try {
+        const cfg = join(homedir(), ".alfred-config.json");
+        if (existsSync(cfg)) { unlinkSync(cfg); results.push("✅ Config file removed"); }
+      } catch (e) { results.push(`⚠️ Could not remove config: ${e instanceof Error ? e.message : String(e)}`); }
+    }
+
+    // 6. Optional: Chrome profile
+    if (remove_chrome_profile) {
+      try {
+        const profile = join(homedir(), ".alfred-profile");
+        if (existsSync(profile)) { rmSync(profile, { recursive: true }); results.push("✅ Chrome profile removed"); }
+      } catch (e) { results.push(`⚠️ Could not remove Chrome profile: ${e instanceof Error ? e.message : String(e)}`); }
+    }
+
+    // 7. Optional: log files
+    if (remove_logs) {
+      for (const log of [".alfred-hygiene.log", ".alfred-meetings.log"]) {
+        try {
+          const logPath = join(homedir(), log);
+          if (existsSync(logPath)) { unlinkSync(logPath); results.push(`✅ ${log} removed`); }
+        } catch { /* non-fatal */ }
+      }
+    }
+
+    progress("🗑️ Uninstall complete");
+    return { content: [{ type: "text", text:
+      `🗑️ **Alfred uninstalled**\n\n${results.join("\n")}\n\n` +
+      `${!remove_config ? "ℹ️ Config file kept (~/.alfred-config.json) — re-run with remove_config=true to delete\n" : ""}` +
+      `${!remove_chrome_profile ? "ℹ️ Chrome profile kept (~/.alfred-profile) — re-run with remove_chrome_profile=true to delete\n" : ""}` +
+      `\n⚠️ **Restart Claude Desktop** to complete the uninstall.`
+    }] };
+  }
+);
+
 
 // ---------------------------------------------------------------------------
 // Start server

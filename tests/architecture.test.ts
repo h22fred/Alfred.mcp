@@ -63,6 +63,7 @@ describe("SC / Sales tool parity", () => {
     "get_collaboration_team",
     "open_chrome_debug",
     "update_alfred",
+    "uninstall_alfred",
   ];
 
   for (const tool of REQUIRED_SHARED) {
