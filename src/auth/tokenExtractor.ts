@@ -85,7 +85,7 @@ export async function ensureAlfred(progress: ProgressFn = () => {}): Promise<voi
   await waitForChrome();
   // Open Dynamics, Outlook and Teams tabs via CDP
   for (const url of [DYNAMICS_URL, OUTLOOK_URL, "https://teams.microsoft.com/v2/"]) {
-    await fetch(`http://localhost:${CDP_PORT}/json/new?${url}`).catch(() => {});
+    await fetch(`http://localhost:${CDP_PORT}/json/new?${url}`).catch((e) => { process.stderr.write(`[alfred:warn] failed to open tab ${url}: ${e instanceof Error ? e.message : String(e)}\n`); });
   }
   progress("✅ Alfred ready — please log into Dynamics, Outlook and Teams in the new window");
 }

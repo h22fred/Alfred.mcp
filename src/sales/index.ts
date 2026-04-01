@@ -1118,7 +1118,7 @@ server.tool(
       const cfg = JSON.parse(fs.default.readFileSync(cfgPath, "utf-8").toString());
       cfg.teamsWebhook = webhook_url;
       fs.default.writeFileSync(cfgPath, JSON.stringify(cfg, null, 2));
-    } catch { /* non-fatal */ }
+    } catch (e) { process.stderr.write(`[alfred:warn] webhook config persist failed: ${e instanceof Error ? e.message : String(e)}\n`); }
     return { content: [{ type: "text", text: "✅ Teams webhook configured and saved. Notifications will post to that channel." }] };
   }
 );
@@ -1376,7 +1376,7 @@ server.tool(
       const config = existsSync(configPath) ? JSON.parse(readFileSync(configPath, "utf8")) : {};
       config.installedVersion = newSha;
       writeFileSync(configPath, JSON.stringify(config, null, 2));
-    } catch { /* non-fatal */ }
+    } catch (e) { process.stderr.write(`[alfred:warn] version config persist failed: ${e instanceof Error ? e.message : String(e)}\n`); }
 
     // Migrate crontab paths: scripts/ → setup/ (one-time after repo restructure)
     try {
@@ -1388,13 +1388,13 @@ server.tool(
         execFileSync("crontab", ["-"], { input: fixed, timeout: 5_000 });
         progress("🔧 Migrated cron job paths (scripts/ → setup/)");
       }
-    } catch { /* non-fatal — no crontab or not on macOS */ }
+    } catch (e) { process.stderr.write(`[alfred:warn] cron migration failed: ${e instanceof Error ? e.message : String(e)}\n`); }
 
     // Regenerate Alfred.app shell script (picks up update-check fixes, new Chrome flags, etc.)
     try {
       const appMsg = regenerateAlfredApp(installDir);
       if (appMsg) progress(appMsg);
-    } catch { /* non-fatal — skip on Windows or if Alfred.app doesn't exist */ }
+    } catch (e) { process.stderr.write(`[alfred:warn] Alfred.app regeneration failed: ${e instanceof Error ? e.message : String(e)}\n`); }
 
     progress("✅ Done — restart Claude Desktop to load the new version.");
     return { content: [{ type: "text", text:
@@ -1434,7 +1434,7 @@ try {
           console.error(`[alfred] ✅ Up to date (${localSha}) (cached)`);
         }
       }
-    } catch { /* invalid cache — re-fetch */ }
+    } catch (e) { process.stderr.write(`[alfred:warn] version cache parse failed: ${e instanceof Error ? e.message : String(e)}\n`); }
   }
 
   if (shouldFetch) {
@@ -1447,9 +1447,9 @@ try {
     } else {
       console.error(`[alfred] ✅ Up to date (${localSha})`);
     }
-    try { writeFileSync(cacheFile, JSON.stringify({ localSha, versionStatus, timestamp: Date.now() })); } catch { /* non-fatal */ }
+    try { writeFileSync(cacheFile, JSON.stringify({ localSha, versionStatus, timestamp: Date.now() })); } catch (e) { process.stderr.write(`[alfred:warn] version cache write failed: ${e instanceof Error ? e.message : String(e)}\n`); }
   }
-} catch { /* non-fatal — skip version check if offline or git fails */ }
+} catch (e) { process.stderr.write(`[alfred:warn] version check failed: ${e instanceof Error ? e.message : String(e)}\n`); }
 
 if (versionStatus) {
   server.prompt(

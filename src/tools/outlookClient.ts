@@ -143,7 +143,7 @@ async function acquireGraphTokenRawCDP(progress: ProgressFn): Promise<string> {
             done(capturedToken);
           }
         }
-      } catch { /* ignore */ }
+      } catch (e) { process.stderr.write(`[alfred:warn] CDP message parse error: ${e instanceof Error ? e.message : String(e)}\n`); }
     });
 
     ws.addEventListener("error", () => {
@@ -157,7 +157,8 @@ async function acquireGraphTokenRawCDP(progress: ProgressFn): Promise<string> {
 async function acquireGraphToken(progress: ProgressFn): Promise<string> {
   try {
     return await acquireGraphTokenRawCDP(progress);
-  } catch {
+  } catch (e) {
+    process.stderr.write(`[alfred:warn] raw CDP token acquisition failed, falling back to Playwright: ${e instanceof Error ? e.message : String(e)}\n`);
     // Raw CDP failed — use Playwright to capture token from an existing Outlook tab
     // (or navigate an existing tab to Outlook — avoids opening a new window)
     progress("📡 Falling back to Playwright token capture via Outlook...");
@@ -186,16 +187,16 @@ async function acquireGraphToken(progress: ProgressFn): Promise<string> {
 
       // Navigate/reload to trigger Graph API calls
       if (!urlHostMatches(page.url(), "outlook.office.com")) {
-        await page.goto("https://outlook.office.com/mail/", { waitUntil: "domcontentloaded", timeout: 20_000 }).catch(() => {});
+        await page.goto("https://outlook.office.com/mail/", { waitUntil: "domcontentloaded", timeout: 20_000 }).catch((e) => { process.stderr.write(`[alfred:warn] Outlook page.goto failed: ${e instanceof Error ? e.message : String(e)}\n`); });
       } else {
-        await page.reload({ waitUntil: "domcontentloaded", timeout: 20_000 }).catch(() => {});
+        await page.reload({ waitUntil: "domcontentloaded", timeout: 20_000 }).catch((e) => { process.stderr.write(`[alfred:warn] Outlook page.reload failed: ${e instanceof Error ? e.message : String(e)}\n`); });
       }
 
       const deadline = Date.now() + 10_000;
       while (!capturedToken && Date.now() < deadline) await page.waitForTimeout(500);
 
       // Clean up route interceptor
-      await page.unroute("**/*").catch(() => {});
+      await page.unroute("**/*").catch((e) => { process.stderr.write(`[alfred:warn] unroute failed: ${e instanceof Error ? e.message : String(e)}\n`); });
       // Only close pages we created
       if (isNewPage) await page.close();
 
@@ -296,8 +297,8 @@ export async function getCalendarEvents(
     try {
       const safe = sanitizeODataSearch(search);
       params.set("$filter", `contains(subject,'${safe}')`);
-    } catch {
-      // Some Graph instances don't support $filter on calendarView — fall through to client filter
+    } catch (e) {
+      process.stderr.write(`[alfred:warn] OData search sanitize failed, using client-side filter: ${e instanceof Error ? e.message : String(e)}\n`);
     }
   }
 
@@ -496,7 +497,7 @@ export async function listMailFolders(progress: ProgressFn = () => {}): Promise<
         unreadItemCount:  f.unreadItemCount as number,
       }));
       folders.push(...children);
-    } catch { /* non-fatal */ }
+    } catch (e) { process.stderr.write(`[alfred:warn] child folder fetch failed for ${parent.id}: ${e instanceof Error ? e.message : String(e)}\n`); }
   }
 
   progress(`✅ Found ${folders.length} mail folder(s)`);
