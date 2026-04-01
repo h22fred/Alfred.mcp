@@ -1054,7 +1054,7 @@ export async function fetchMyCollaborationOpportunities(
   }
 
   // Step 2: Fetch full opportunity details for those IDs (batch in groups of 15 for OData filter length)
-  const allOpps: Opportunity[] = [];
+  const batchPromises: Promise<Opportunity[]>[] = [];
   for (let i = 0; i < oppIds.length; i += 15) {
     const batch = oppIds.slice(i, i + 15);
     const idFilter = batch.map(id => `opportunityid eq ${id}`).join(" or ");
@@ -1065,10 +1065,13 @@ export async function fetchMyCollaborationOpportunities(
       `&$filter=statecode eq 0 and (${idFilter})` +
       `&$orderby=estimatedclosedate asc&$top=50`;
 
-    const res = await dynamicsFetch(path, {}, progress);
-    const data = await res.json();
-    allOpps.push(...(data.value ?? []).map(mapOpportunity));
+    batchPromises.push(
+      dynamicsFetch(path, {}, progress)
+        .then(res => res.json())
+        .then(data => (data.value ?? []).map(mapOpportunity))
+    );
   }
+  const allOpps: Opportunity[] = (await Promise.all(batchPromises)).flat();
 
   progress(`✅ Found ${allOpps.length} open opportunities where you are a collaborator`);
   return allOpps;
@@ -1223,19 +1226,26 @@ export async function addAttendeesToEngagement(
 
   auditLog("add_attendees", { engagementId, count: dedupedAttendees.length });
 
+  // Pre-filter invalid emails synchronously
+  const validAttendees: typeof dedupedAttendees = [];
   for (const attendee of dedupedAttendees) {
     if (!EMAIL_RE.test(attendee.email)) {
       progress(`⚠️ Skipping invalid email: ${attendee.email}`);
       results.push({ email: attendee.email, name: attendee.name, type: "not_found" });
-      continue;
+    } else {
+      validAttendees.push(attendee);
     }
-    const domain = attendee.email.split("@")[1]!.toLowerCase();
-    const isInternal = SN_INTERNAL_DOMAINS.has(domain);
+  }
 
-    try {
+  // Process all valid attendees in parallel — each is independent (lookup + create)
+  const attendeeResults = await Promise.allSettled(
+    validAttendees.map(async (attendee) => {
+      const domain = attendee.email.split("@")[1]!.toLowerCase();
+      const isInternal = SN_INTERNAL_DOMAINS.has(domain);
+
       if (isInternal) {
         // Look up Dynamics systemuser by internal email
-        const safeEmail = attendee.email.replace(/'/g, "''");
+        const safeEmail = sanitizeODataSearch(attendee.email);
         const userRes = await dynamicsFetch(
           `/systemusers?$filter=internalemailaddress eq '${safeEmail}'&$select=systemuserid,fullname&$top=1`,
           {}, progress
@@ -1252,14 +1262,14 @@ export async function addAttendeesToEngagement(
             }),
           }, progress);
           progress(`👤 Added participant: ${user.fullname}`);
-          results.push({ email: attendee.email, name: user.fullname, type: "participant", id: user.systemuserid });
+          return { email: attendee.email, name: user.fullname, type: "participant" as const, id: user.systemuserid };
         } else {
           progress(`⚠️ Internal user not found in Dynamics: ${attendee.email}`);
-          results.push({ email: attendee.email, name: attendee.name, type: "not_found" });
+          return { email: attendee.email, name: attendee.name, type: "not_found" as const };
         }
       } else {
         // Look up Dynamics contact by email
-        const safeEmail = attendee.email.replace(/'/g, "''");
+        const safeEmail = sanitizeODataSearch(attendee.email);
         const contactRes = await dynamicsFetch(
           `/contacts?$filter=emailaddress1 eq '${safeEmail}'&$select=contactid,fullname&$top=1`,
           {}, progress
@@ -1276,14 +1286,22 @@ export async function addAttendeesToEngagement(
             }),
           }, progress);
           progress(`👤 Added engagement contact: ${contact.fullname}`);
-          results.push({ email: attendee.email, name: contact.fullname, type: "contact", id: contact.contactid });
+          return { email: attendee.email, name: contact.fullname, type: "contact" as const, id: contact.contactid };
         } else {
           progress(`⚠️ Contact not found in CRM: ${attendee.email}`);
-          results.push({ email: attendee.email, name: attendee.name, type: "not_found" });
+          return { email: attendee.email, name: attendee.name, type: "not_found" as const };
         }
       }
-    } catch {
-      results.push({ email: attendee.email, name: attendee.name, type: "not_found" });
+    })
+  );
+
+  // Collect results — failed promises become not_found
+  for (let i = 0; i < attendeeResults.length; i++) {
+    const settled = attendeeResults[i]!;
+    if (settled.status === "fulfilled") {
+      results.push(settled.value);
+    } else {
+      results.push({ email: validAttendees[i]!.email, name: validAttendees[i]!.name, type: "not_found" });
     }
   }
 

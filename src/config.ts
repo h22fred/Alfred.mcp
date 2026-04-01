@@ -1,4 +1,4 @@
-import { readFileSync, existsSync } from "fs";
+import { readFileSync, existsSync, statSync } from "fs";
 import { homedir } from "os";
 import { join } from "path";
 
@@ -19,6 +19,20 @@ if (existsSync(configPath)) {
     const msg = `[alfred] FATAL: ${configPath} exists but is not valid JSON: ${e instanceof Error ? e.message : String(e)}`;
     process.stderr.write(msg + "\n");
     throw new Error(msg + `\nFix or delete the file and restart Alfred.`);
+  }
+
+  // Warn if config file is readable by group or others (Unix/macOS only)
+  if (process.platform !== "win32") {
+    try {
+      const mode = statSync(configPath).mode;
+      if (mode & 0o044) {
+        process.stderr.write(
+          `[alfred] \u26a0\ufe0f WARNING: ~/.alfred-config.json is readable by other users. Run: chmod 600 ~/.alfred-config.json\n`
+        );
+      }
+    } catch {
+      // stat failed — file may have been removed between exists check and stat; ignore
+    }
   }
 }
 
