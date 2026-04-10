@@ -120,6 +120,21 @@ describe("auth resilience", () => {
     expect(teamsSrc).toContain("--max-time\", \"3\"");
     expect(teamsSrc).toContain("timeout: 5_000");
   });
+
+  it("Playwright fallbacks do NOT call browser.close() to preserve Alfred Chrome", () => {
+    // The comment warns against browser.close(), but no actual await browser.close() call should exist
+    expect(outlookSrc).not.toContain("await browser.close()");
+    expect(outlookSrc).toContain("Do NOT call browser.close()");
+    expect(teamsSrc).not.toContain("await browser.close()");
+    expect(teamsSrc).toContain("Do NOT call browser.close()");
+  });
+
+  it("MSAL extraction logs timeout and parse errors for diagnostics", () => {
+    expect(outlookSrc).toContain("MSAL extraction timed out");
+    expect(outlookSrc).toContain("MSAL extraction parse error");
+    expect(teamsSrc).toContain("Teams MSAL extraction timed out");
+    expect(teamsSrc).toContain("Teams MSAL parse error");
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -134,10 +149,13 @@ describe("error handling patterns", () => {
     expect(dynamicsSrc).toContain("_retryCount");
   });
 
-  it("dynamicsFetch handles 401 with session refresh", () => {
+  it("dynamicsFetch handles 401 with scoped Dynamics-only cache clear", () => {
     expect(dynamicsSrc).toContain("401");
-    expect(dynamicsSrc).toContain("clearAuthCache");
-    expect(dynamicsSrc).toContain("session expired");
+    expect(dynamicsSrc).toContain("clearMemoryAuthCache");
+    expect(dynamicsSrc).toContain('clearCachedAuthFile("dynamics")');
+    // Must NOT call clearAuthCache (which nukes Graph/Teams/Outlook tokens too)
+    const block401 = dynamicsSrc.slice(dynamicsSrc.indexOf("response.status === 401"), dynamicsSrc.indexOf("response.status === 401") + 500);
+    expect(block401).not.toContain("clearAuthCache()");
   });
 
   it("dynamicsFetch detects HTML auth redirects", () => {

@@ -38,6 +38,7 @@ describe("dynamicsFetch retry logic (via fetchOpportunities)", () => {
     vi.doMock("../src/auth/tokenExtractor.js", () => ({
       getAuthCookies: vi.fn().mockResolvedValue("CrmOwinAuth=mock-cookie"),
       clearAuthCache: vi.fn(),
+      clearMemoryAuthCache: vi.fn(),
       connectWithRetry: vi.fn(),
     }));
 
@@ -164,6 +165,7 @@ describe("getCalendarEvents Graph API error handling", () => {
     vi.doMock("../src/auth/tokenExtractor.js", () => ({
       getAuthCookies: vi.fn().mockResolvedValue("mock-cookie"),
       clearAuthCache: vi.fn(),
+      clearMemoryAuthCache: vi.fn(),
       connectWithRetry: vi.fn(),
     }));
 
@@ -274,6 +276,7 @@ describe("opportunity mapping via fetchOpportunities", () => {
     vi.doMock("../src/auth/tokenExtractor.js", () => ({
       getAuthCookies: vi.fn().mockResolvedValue("CrmOwinAuth=mock-cookie"),
       clearAuthCache: vi.fn(),
+      clearMemoryAuthCache: vi.fn(),
       connectWithRetry: vi.fn(),
     }));
 
@@ -394,6 +397,7 @@ describe("sanitizeODataSearch in OData URL context", () => {
     vi.doMock("../src/auth/tokenExtractor.js", () => ({
       getAuthCookies: vi.fn().mockResolvedValue("mock"),
       clearAuthCache: vi.fn(),
+      clearMemoryAuthCache: vi.fn(),
       connectWithRetry: vi.fn(),
     }));
     vi.doMock("../src/config.js", () => ({

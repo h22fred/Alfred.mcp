@@ -1,4 +1,5 @@
-import { getAuthCookies, clearAuthCache, type ProgressFn } from "../auth/tokenExtractor.js";
+import { getAuthCookies, clearMemoryAuthCache, type ProgressFn } from "../auth/tokenExtractor.js";
+import { clearCachedAuthFile } from "../auth/authFileCache.js";
 import { userInfo } from "os";
 import { DYNAMICS_HOST, ENGAGEMENT_TYPE_GUIDS, type EngagementType } from "../config.js";
 import { FORECAST_NAMES, requireGuid, SN_INTERNAL_DOMAINS } from "../shared.js";
@@ -126,8 +127,9 @@ async function dynamicsFetch(path: string, options: RequestInit = {}, progress: 
   }
 
   if (response.status === 401) {
-    // Session expired — clear cache and retry once with fresh cookies
-    clearAuthCache();
+    // Session expired — clear only Dynamics cookies (not Graph/Teams/Outlook tokens)
+    clearMemoryAuthCache();
+    clearCachedAuthFile("dynamics");
     progress("🔄 Dynamics session expired — re-acquiring cookies...");
     let freshCookie: string;
     try {

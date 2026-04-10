@@ -181,7 +181,11 @@ const GRAPH_MSAL_EXTRACT_JS = `(function() {
 async function extractGraphTokenFromTab(wsUrl: string): Promise<string | null> {
   return new Promise((resolve) => {
     const ws = new WebSocket(wsUrl);
-    const timer = setTimeout(() => { try { ws.close(); } catch {} resolve(null); }, 5_000);
+    const timer = setTimeout(() => {
+      process.stderr.write("[alfred:warn] Teams MSAL extraction timed out (5s) — tab may be unresponsive\n");
+      try { ws.close(); } catch {}
+      resolve(null);
+    }, 5_000);
     ws.addEventListener("open", () => {
       ws.send(JSON.stringify({ id: 1, method: "Runtime.evaluate", params: { expression: GRAPH_MSAL_EXTRACT_JS, returnByValue: true } }));
     });
@@ -191,9 +195,17 @@ async function extractGraphTokenFromTab(wsUrl: string): Promise<string | null> {
       try {
         const msg = JSON.parse(event.data as string) as { result?: { result?: { value?: string } } };
         resolve(msg.result?.result?.value ?? null);
-      } catch { resolve(null); }
+      } catch (e) {
+        process.stderr.write(`[alfred:warn] Teams MSAL parse error: ${e instanceof Error ? e.message : String(e)}\n`);
+        resolve(null);
+      }
     });
-    ws.addEventListener("error", () => { clearTimeout(timer); try { ws.close(); } catch {} resolve(null); });
+    ws.addEventListener("error", () => {
+      clearTimeout(timer);
+      process.stderr.write("[alfred:warn] Teams MSAL extraction WebSocket error\n");
+      try { ws.close(); } catch {}
+      resolve(null);
+    });
   });
 }
 
@@ -296,7 +308,8 @@ export async function acquireTeamsGraphToken(progress: ProgressFn): Promise<stri
     progress("✅ Graph token acquired");
     return capturedToken;
   } finally {
-    await browser.close();
+    // Do NOT call browser.close() — it kills the user's actual Alfred Chrome process.
+    // The CDP connection wrapper is GC'd; Alfred Chrome keeps running.
   }
 }
 
