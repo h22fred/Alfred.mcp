@@ -31,9 +31,10 @@ export function _seedGraphTokenCache(token: string, ttlMs = TOKEN_CACHE_FALLBACK
 // service call, and captures the outgoing Authorization header.
 // ---------------------------------------------------------------------------
 
-// JS snippet injected into the Outlook page to extract a Bearer token + expiry from MSAL cache
-// Returns { token, expiresAt } or null
-// IMPORTANT: checks JWT audience to ensure the token is for graph.microsoft.com, not outlook.office.com
+// JS snippet injected into a browser tab to extract a Graph API Bearer token + expiry from MSAL cache.
+// Returns { token, expiresAt } or null.
+// Accepts any AccessToken with graph.microsoft.com audience (not just 'mail' scoped).
+// Prefers tokens with calendar/mail scopes, falls back to any Graph token.
 const MSAL_EXTRACT_JS = `(function() {
   const decodeAud = (jwt) => {
     try {
@@ -43,20 +44,26 @@ const MSAL_EXTRACT_JS = `(function() {
   };
   const tryStorage = (s) => {
     try {
+      let bestMatch = null;
       for (const key of Object.keys(s)) {
         try {
           const val = JSON.parse(s.getItem(key));
-          if (val && val.credentialType === 'AccessToken' && val.secret &&
-              (val.target || '').toLowerCase().includes('mail')) {
+          if (val && val.credentialType === 'AccessToken' && val.secret) {
             const aud = decodeAud(val.secret);
             if (!aud.includes('graph.microsoft.com')) continue;
             const exp = Number(val.expiresOn || val.extended_expires_on || 0);
-            if (!exp || exp * 1000 > Date.now()) {
+            if (exp && exp * 1000 < Date.now()) continue;
+            const target = (val.target || '').toLowerCase();
+            // Prefer tokens with calendar or mail scopes
+            if (target.includes('calendars') || target.includes('mail')) {
               return { token: val.secret, expiresAt: exp ? exp * 1000 : 0 };
             }
+            // Keep any Graph token as fallback
+            if (!bestMatch) bestMatch = { token: val.secret, expiresAt: exp ? exp * 1000 : 0 };
           }
         } catch {}
       }
+      return bestMatch;
     } catch {}
     return null;
   };
@@ -84,27 +91,28 @@ async function acquireGraphTokenRawCDP(progress: ProgressFn): Promise<string> {
   const listRes = await fetch(`http://localhost:${CDP_PORT}/json/list`);
   const targets = await listRes.json() as Array<{ webSocketDebuggerUrl?: string; type?: string; url?: string }>;
 
-  // Prefer Outlook tab, but also try Teams or any tab that might have a mail-scoped MSAL token
-  const outlookTarget = targets.find(t => t.type === "page" && t.url && urlHostMatches(t.url, "outlook.office.com") && t.webSocketDebuggerUrl);
+  // Prefer Teams tab — it actually talks to graph.microsoft.com.
+  // Outlook uses the Outlook REST API (outlook.office.com), so its MSAL cache
+  // rarely has Graph-audience tokens. Try Outlook only as fallback.
   const teamsTarget   = targets.find(t => t.type === "page" && t.url && urlHostMatches(t.url, "teams.microsoft.com") && t.webSocketDebuggerUrl);
+  const outlookTarget = targets.find(t => t.type === "page" && t.url && urlHostMatches(t.url, "outlook.office.com") && t.webSocketDebuggerUrl);
   const anyTarget     = targets.find(t => t.type === "page" && t.webSocketDebuggerUrl);
-  const target        = outlookTarget ?? teamsTarget ?? anyTarget;
+  const target        = teamsTarget ?? outlookTarget ?? anyTarget;
 
   if (!target?.webSocketDebuggerUrl) {
-    throw new Error("No page targets found in Alfred. Open Alfred.app and log into Outlook.");
+    throw new Error("No page targets found in Alfred. Open Alfred.app and log into Teams or Outlook.");
   }
 
-  if (!outlookTarget) {
-    process.stderr.write(`[alfred] CDP: no Outlook tab found — trying ${teamsTarget ? "Teams" : "other"} tab for MSAL cache\n`);
+  if (!teamsTarget) {
+    process.stderr.write(`[alfred] CDP: no Teams tab found — trying ${outlookTarget ? "Outlook" : "other"} tab for MSAL cache (may lack Graph audience)\n`);
   }
 
-  // Detect if the Outlook tab is stuck on a login/redirect page
-  if (outlookTarget?.url) {
-    const tabUrl = outlookTarget.url;
-    if (tabUrl.includes("login.microsoftonline.com") || tabUrl.includes("login.live.com") || tabUrl.includes("/oauth2/")) {
+  // Detect if tabs are stuck on login pages
+  for (const t of [teamsTarget, outlookTarget]) {
+    if (t?.url && (t.url.includes("login.microsoftonline.com") || t.url.includes("login.live.com") || t.url.includes("/oauth2/"))) {
       throw new Error(
-        "Outlook tab is on the Microsoft login page — your session has expired.\n" +
-        "Please log back into Outlook in the Alfred window (make sure the inbox is fully loaded), then retry."
+        "A tab in Alfred is on the Microsoft login page — your session has expired.\n" +
+        "Please log back into Teams/Outlook in the Alfred window, then retry."
       );
     }
   }
@@ -219,27 +227,27 @@ async function acquireGraphToken(progress: ProgressFn): Promise<string> {
     return await acquireGraphTokenRawCDP(progress);
   } catch (e) {
     process.stderr.write(`[alfred:warn] raw CDP token acquisition failed, falling back to Playwright: ${e instanceof Error ? e.message : String(e)}\n`);
-    // Raw CDP failed — use Playwright to capture token from an existing Outlook tab
-    // (or navigate an existing tab to Outlook — avoids opening a new window)
-    progress("📡 Falling back to Playwright token capture via Outlook...");
+    // Raw CDP failed — use Playwright to capture a Graph API token.
+    // Prefer Teams tab (it talks to graph.microsoft.com), fall back to Outlook.
+    progress("📡 Falling back to Playwright token capture via Teams...");
     const browser = await connectWithRetry();
     try {
       const ctx = browser.contexts()[0];
       if (!ctx) throw new Error("No browser context found in Alfred");
 
-      // Try to find an existing Outlook tab instead of opening a new one
       const existingPages = ctx.pages();
-      let page = existingPages.find(p => urlHostMatches(p.url(), "outlook.office.com"));
+      // Prefer Teams — it actually uses Graph API. Outlook uses its own REST API.
+      let page = existingPages.find(p => urlHostMatches(p.url(), "teams.microsoft.com"))
+              ?? existingPages.find(p => urlHostMatches(p.url(), "outlook.office.com"));
 
       let isNewPage = false;
       if (!page) {
-        // No Outlook tab — reuse any existing tab or open one as last resort
         page = existingPages.find(p => p.url().startsWith("http")) ?? await ctx.newPage();
         isNewPage = !existingPages.includes(page);
       }
 
       let capturedToken: string | null = null;
-      // Only capture Bearer tokens destined for Graph API — skip Outlook REST tokens
+      // Only capture Bearer tokens destined for Graph API
       await page.route("**/graph.microsoft.com/**", async (route) => {
         const auth = route.request().headers()["authorization"] ?? "";
         if (!capturedToken && auth.startsWith("Bearer ")) capturedToken = auth.slice(7);
@@ -247,10 +255,10 @@ async function acquireGraphToken(progress: ProgressFn): Promise<string> {
       });
 
       // Navigate/reload to trigger Graph API calls
-      if (!urlHostMatches(page.url(), "outlook.office.com")) {
-        await page.goto("https://outlook.office.com/mail/", { waitUntil: "domcontentloaded", timeout: 20_000 }).catch((e) => { process.stderr.write(`[alfred:warn] Outlook page.goto failed: ${e instanceof Error ? e.message : String(e)}\n`); });
-      } else {
-        await page.reload({ waitUntil: "domcontentloaded", timeout: 20_000 }).catch((e) => { process.stderr.write(`[alfred:warn] Outlook page.reload failed: ${e instanceof Error ? e.message : String(e)}\n`); });
+      if (urlHostMatches(page.url(), "teams.microsoft.com")) {
+        await page.reload({ waitUntil: "domcontentloaded", timeout: 20_000 }).catch((e) => { process.stderr.write(`[alfred:warn] Teams page.reload failed: ${e instanceof Error ? e.message : String(e)}\n`); });
+      } else if (!urlHostMatches(page.url(), "teams.microsoft.com")) {
+        await page.goto("https://teams.microsoft.com/v2/", { waitUntil: "domcontentloaded", timeout: 20_000 }).catch((e) => { process.stderr.write(`[alfred:warn] Teams page.goto failed: ${e instanceof Error ? e.message : String(e)}\n`); });
       }
 
       const deadline = Date.now() + 10_000;
