@@ -9,13 +9,14 @@ interface CacheEntry {
   expiresAt: number;
 }
 
-type CacheKey = "dynamics" | "outlook" | "graphToken" | "teamsGraphToken";
+type CacheKey = "dynamics" | "outlook" | "graphToken" | "teamsGraphToken" | "outlookRestToken";
 
 interface CacheFile {
   dynamics?: CacheEntry;
   outlook?: CacheEntry;
   graphToken?: CacheEntry;
   teamsGraphToken?: CacheEntry;
+  outlookRestToken?: CacheEntry;
 }
 
 function readCache(): CacheFile {
