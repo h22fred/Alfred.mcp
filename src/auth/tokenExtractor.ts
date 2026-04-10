@@ -1,5 +1,6 @@
 import { execFileSync, execFile } from "child_process";
 import { DYNAMICS_HOST } from "../config.js";
+import { loadCachedAuth, saveCachedAuth, clearCachedAuthFile } from "./authFileCache.js";
 
 const DYNAMICS_URL = DYNAMICS_HOST;
 const OUTLOOK_URL  = "https://outlook.office.com";
@@ -74,6 +75,8 @@ export function clearAuthCache(): void {
   cachedOutlookAuth = null;
   inflightDynamics = null;
   inflightOutlook = null;
+  clearCachedAuthFile("dynamics");
+  clearCachedAuthFile("outlook");
 }
 
 export async function ensureAlfred(progress: ProgressFn = () => {}): Promise<void> {
@@ -189,6 +192,15 @@ export async function getAuthCookies(progress: ProgressFn = () => {}): Promise<s
     return cachedAuth.cookieHeader;
   }
 
+  // Check file cache before hitting CDP
+  const fileCached = loadCachedAuth("dynamics");
+  if (fileCached && Date.now() < fileCached.expiresAt - COOKIE_REFRESH_MARGIN_MS) {
+    cachedAuth = { cookieHeader: fileCached.value, expiresAt: fileCached.expiresAt };
+    const minsLeft = Math.round((fileCached.expiresAt - Date.now()) / 60000);
+    progress(`🔑 Using cached session (~${minsLeft} min remaining)`);
+    return fileCached.value;
+  }
+
   // Dedup: if another caller is already refreshing, wait for that result
   if (inflightDynamics) return inflightDynamics;
 
@@ -199,12 +211,12 @@ export async function getAuthCookies(progress: ProgressFn = () => {}): Promise<s
 
       const auth = await getAuthCookiesViaCDP(progress);
       cachedAuth = auth;
+      saveCachedAuth("dynamics", auth.cookieHeader, auth.expiresAt);
 
       const expiresIn = Math.round((auth.expiresAt - Date.now()) / 60000);
       progress(`✅ Session cookies acquired — valid for ~${expiresIn} minutes`);
       return auth.cookieHeader;
     } catch (e) {
-      // Clear inflight so the next caller retries fresh instead of getting this rejection
       inflightDynamics = null;
       throw e;
     }
@@ -215,7 +227,6 @@ export async function getAuthCookies(progress: ProgressFn = () => {}): Promise<s
   try {
     return await promise;
   } finally {
-    // Only clear if we're still the current inflight (could have been cleared by catch above)
     if (inflightDynamics === promise) inflightDynamics = null;
   }
 }
@@ -225,6 +236,15 @@ export async function getOutlookCookies(progress: ProgressFn = () => {}): Promis
     const minsLeft = Math.round((cachedOutlookAuth.expiresAt - Date.now()) / 60000);
     progress(`🔑 Using cached Outlook session (~${minsLeft} min remaining)`);
     return cachedOutlookAuth.cookieHeader;
+  }
+
+  // Check file cache before hitting CDP
+  const fileCached = loadCachedAuth("outlook");
+  if (fileCached && Date.now() < fileCached.expiresAt - COOKIE_REFRESH_MARGIN_MS) {
+    cachedOutlookAuth = { cookieHeader: fileCached.value, expiresAt: fileCached.expiresAt };
+    const minsLeft = Math.round((fileCached.expiresAt - Date.now()) / 60000);
+    progress(`🔑 Using cached Outlook session (~${minsLeft} min remaining)`);
+    return fileCached.value;
   }
 
   // Dedup: if another caller is already refreshing, wait for that result
@@ -253,6 +273,7 @@ export async function getOutlookCookies(progress: ProgressFn = () => {}): Promis
       );
 
       cachedOutlookAuth = { cookieHeader, expiresAt };
+      saveCachedAuth("outlook", cookieHeader, expiresAt);
       const minsLeft = Math.round((expiresAt - Date.now()) / 60000);
       progress(`✅ Outlook cookies acquired — valid for ~${minsLeft} minutes`);
       return cookieHeader;
@@ -272,10 +293,9 @@ export async function getOutlookCookies(progress: ProgressFn = () => {}): Promis
 }
 
 export function setManualCookies(cookieHeader: string): void {
-  cachedAuth = {
-    cookieHeader,
-    expiresAt: Date.now() + 8 * 60 * 60 * 1000, // assume 8h
-  };
+  const expiresAt = Date.now() + 8 * 60 * 60 * 1000; // assume 8h
+  cachedAuth = { cookieHeader, expiresAt };
+  saveCachedAuth("dynamics", cookieHeader, expiresAt);
   console.error(`[auth] Manual cookies set`);
 }
 

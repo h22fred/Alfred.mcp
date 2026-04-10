@@ -1,6 +1,6 @@
 import { connectWithRetry } from "../auth/tokenExtractor.js";
-import { acquireTeamsGraphToken } from "./teamsClient.js";
 import type { ProgressFn } from "../auth/tokenExtractor.js";
+import { loadCachedAuth, saveCachedAuth, clearCachedAuthFile } from "../auth/authFileCache.js";
 import { stripHtml, urlHostMatches } from "../shared.js";
 import { sanitizeODataSearch } from "./dynamicsClient.js";
 
@@ -16,6 +16,12 @@ let tokenCache: TokenCache | null = null;
 
 export function clearGraphTokenCache(): void {
   tokenCache = null;
+  clearCachedAuthFile("graphToken");
+}
+
+/** @internal — test-only helper to pre-seed the Graph token cache */
+export function _seedGraphTokenCache(token: string, ttlMs = 60_000): void {
+  tokenCache = { token, expiresAt: Date.now() + ttlMs };
 }
 
 // ---------------------------------------------------------------------------
@@ -49,6 +55,15 @@ async function acquireGraphTokenRawCDP(progress: ProgressFn): Promise<string> {
     const mins = Math.round((tokenCache.expiresAt - Date.now()) / 60_000);
     progress(`🔑 Using cached Graph token (~${mins} min remaining)`);
     return tokenCache.token;
+  }
+
+  // Check file cache before hitting CDP
+  const fileCached = loadCachedAuth("graphToken");
+  if (fileCached) {
+    tokenCache = { token: fileCached.value, expiresAt: fileCached.expiresAt };
+    const mins = Math.round((fileCached.expiresAt - Date.now()) / 60_000);
+    progress(`🔑 Using cached Graph token (~${mins} min remaining)`);
+    return fileCached.value;
   }
 
   progress("🔑 Acquiring Graph Bearer token via CDP...");
@@ -90,7 +105,9 @@ async function acquireGraphTokenRawCDP(progress: ProgressFn): Promise<string> {
   });
 
   if (msalToken) {
-    tokenCache = { token: msalToken, expiresAt: Date.now() + TOKEN_CACHE_MS };
+    const expiresAt = Date.now() + TOKEN_CACHE_MS;
+    tokenCache = { token: msalToken, expiresAt };
+    saveCachedAuth("graphToken", msalToken, expiresAt);
     progress("✅ Graph token acquired from MSAL cache");
     return msalToken;
   }
@@ -114,7 +131,9 @@ async function acquireGraphTokenRawCDP(progress: ProgressFn): Promise<string> {
     const done = (token: string) => {
       clearTimeout(timer);
       try { ws.close(); } catch {}
-      tokenCache = { token, expiresAt: Date.now() + TOKEN_CACHE_MS };
+      const expiresAt = Date.now() + TOKEN_CACHE_MS;
+      tokenCache = { token, expiresAt };
+      saveCachedAuth("graphToken", token, expiresAt);
       progress("✅ Graph token acquired");
       resolve(token);
     };
@@ -201,7 +220,9 @@ async function acquireGraphToken(progress: ProgressFn): Promise<string> {
       if (isNewPage) await page.close();
 
       if (!capturedToken) throw new Error("Could not capture Graph token from Outlook.\nMake sure you are logged into Outlook in the Alfred window.");
-      tokenCache = { token: capturedToken, expiresAt: Date.now() + TOKEN_CACHE_MS };
+      const expiresAt = Date.now() + TOKEN_CACHE_MS;
+      tokenCache = { token: capturedToken, expiresAt };
+      saveCachedAuth("graphToken", capturedToken, expiresAt);
       progress("✅ Graph token acquired via Playwright");
       return capturedToken;
     } finally {
@@ -232,6 +253,7 @@ async function outlookApiFetch(path: string, token: string, progress?: ProgressF
 
   if (res.status === 401) {
     tokenCache = null;
+    clearCachedAuthFile("graphToken");
     progress?.("🔄 Graph token expired — re-acquiring...");
     const freshToken = await acquireGraphToken(progress ?? (() => {}));
     const retry = await fetch(`${OUTLOOK_API}${path}`, {
@@ -302,7 +324,7 @@ export async function getCalendarEvents(
     }
   }
 
-  const token = await acquireTeamsGraphToken(progress);
+  const token = await acquireGraphToken(progress);
   let res = await fetch(`https://graph.microsoft.com/v1.0/me/calendarview?${params}`, {
     headers: { Authorization: `Bearer ${token}`, Accept: "application/json" },
     signal: AbortSignal.timeout(30_000),

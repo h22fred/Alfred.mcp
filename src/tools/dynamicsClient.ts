@@ -238,36 +238,12 @@ export interface OpportunityFilter {
   ownerSearch?: string; // filter by owner (AE) name — resolves to user IDs
 }
 
-interface CurrentUser {
-  userId: string;
-  territoryId?: string;
-}
-
 export async function fetchCurrentUserId(progress: ProgressFn = () => {}): Promise<string> {
-  const user = await fetchCurrentUser(progress);
-  return user.userId;
-}
-
-async function fetchCurrentUser(progress: ProgressFn = () => {}): Promise<CurrentUser> {
   progress("👤 Resolving current user...");
   const whoAmI = await dynamicsFetch("/WhoAmI", {}, progress);
   const { UserId } = await whoAmI.json() as { UserId: string };
-
-  // Fetch user's territory GUID
-  let territoryId: string | undefined;
-  try {
-    const userRes = await dynamicsFetch(
-      `/systemusers(${UserId})?$select=_sn_fieldterritory_value`,
-      {}, progress
-    );
-    const userData = await userRes.json() as Record<string, unknown>;
-    territoryId = userData._sn_fieldterritory_value as string | undefined || undefined;
-  } catch (e) {
-    process.stderr.write(`[alfred:warn] territory field fetch failed: ${e instanceof Error ? e.message : String(e)}\n`);
-  }
-
-  progress(`👤 User: ${UserId}${territoryId ? ` | Territory: ${territoryId}` : ""}`);
-  return { userId: UserId, territoryId };
+  progress(`👤 User: ${UserId}`);
+  return UserId;
 }
 
 export async function fetchOpportunities(filter: OpportunityFilter = {}, progress: ProgressFn = () => {}): Promise<Opportunity[]> {
@@ -288,12 +264,9 @@ export async function fetchOpportunities(filter: OpportunityFilter = {}, progres
     filterClause += ` and (sn_netnewacv ge ${filter.minNnacv} or sn_netnewacv lt 0)`;
   }
   if (filter.myOpportunitiesOnly) {
-    const { userId, territoryId } = await fetchCurrentUser(progress);
+    const userId = await fetchCurrentUserId(progress);
     requireGuid(userId, "currentUserId");
-    // Match opps where user is SC OR in the user's territory
-    const scFilter = `_sn_solutionconsultant_value eq '${userId}'`;
-    const terrFilter = territoryId ? (requireGuid(territoryId, "territoryId"), ` or _sn_fieldterritory_value eq '${territoryId}'`) : "";
-    filterClause += ` and (${scFilter}${terrFilter})`;
+    filterClause += ` and (_sn_solutionconsultant_value eq '${userId}')`;
   }
   if (filter.ownerSearch) {
     const users = await searchSystemUsers(filter.ownerSearch, progress);
