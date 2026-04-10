@@ -1,6 +1,7 @@
 import { execFileSync } from "child_process";
 import { connectWithRetry } from "../auth/tokenExtractor.js";
 import type { ProgressFn } from "../auth/tokenExtractor.js";
+import { loadCachedAuth, saveCachedAuth, clearCachedAuthFile } from "../auth/authFileCache.js";
 import { stripHtml, urlHostMatches } from "../shared.js";
 
 const CDP_PORT = 9222;
@@ -205,6 +206,15 @@ export async function acquireTeamsGraphToken(progress: ProgressFn): Promise<stri
     return teamsTokenCache.token;
   }
 
+  // Check file cache before hitting CDP
+  const fileCached = loadCachedAuth("teamsGraphToken");
+  if (fileCached) {
+    teamsTokenCache = { token: fileCached.value, expiresAt: fileCached.expiresAt };
+    const mins = Math.round((fileCached.expiresAt - Date.now()) / 60_000);
+    progress(`🔑 Using cached Teams Graph token (~${mins} min remaining)`);
+    return fileCached.value;
+  }
+
   try {
     execFileSync("curl", ["-s", "--max-time", "1", `http://localhost:${CDP_PORT}/json/version`], { timeout: 2_000 });
   } catch {
@@ -224,7 +234,9 @@ export async function acquireTeamsGraphToken(progress: ProgressFn): Promise<stri
       for (const t of candidates) {
         const token = await extractGraphTokenFromTab(t.webSocketDebuggerUrl!);
         if (token) {
-          teamsTokenCache = { token, expiresAt: Date.now() + TOKEN_CACHE_MS };
+          const expiresAt = Date.now() + TOKEN_CACHE_MS;
+          teamsTokenCache = { token, expiresAt };
+          saveCachedAuth("teamsGraphToken", token, expiresAt);
           progress("✅ Graph token acquired from MSAL cache");
           return token;
         }
@@ -277,7 +289,9 @@ export async function acquireTeamsGraphToken(progress: ProgressFn): Promise<stri
 
     if (!capturedToken) throw new Error("Could not capture Graph token. Make sure Teams or Outlook is loaded in Alfred.");
 
-    teamsTokenCache = { token: capturedToken, expiresAt: Date.now() + TOKEN_CACHE_MS };
+    const expiresAt = Date.now() + TOKEN_CACHE_MS;
+    teamsTokenCache = { token: capturedToken, expiresAt };
+    saveCachedAuth("teamsGraphToken", capturedToken, expiresAt);
     progress("✅ Graph token acquired");
     return capturedToken;
   } finally {
@@ -302,12 +316,12 @@ async function graphFetch(path: string, token: string, _retryCount = 0): Promise
   if (!res.ok) {
     const body = await res.text().catch(() => "");
     // Only clear cache for auth failures on non-transcript endpoints (transcript 401 = scope issue, not bad token)
-    if (res.status === 401 && !path.includes("transcript")) teamsTokenCache = null;
+    if (res.status === 401 && !path.includes("transcript")) { teamsTokenCache = null; clearCachedAuthFile("teamsGraphToken"); }
     // Detect scope permission errors and give actionable guidance
     if (res.status === 403 && body.includes("Missing scope permissions")) {
       const match = body.match(/API requires one of '([^']+)'/);
       const needed = match?.[1] ?? "unknown scopes";
-      teamsTokenCache = null;  // force re-acquire — current token lacks scopes
+      teamsTokenCache = null; clearCachedAuthFile("teamsGraphToken");
       throw new Error(
         `Graph 403: Token is missing required scope (${needed}).\n` +
         `This usually means the token was captured from Outlook (which lacks Chat scopes).\n` +

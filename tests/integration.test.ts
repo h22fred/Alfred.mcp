@@ -50,8 +50,16 @@ describe("dynamicsFetch retry logic (via fetchOpportunities)", () => {
     }));
 
     // Mock os.userInfo to avoid system calls in auditLog
-    vi.doMock("os", () => ({
-      userInfo: () => ({ username: "testuser" }),
+    vi.doMock("os", async (importOriginal) => {
+      const actual = await importOriginal() as typeof import("os");
+      return { ...actual, userInfo: () => ({ username: "testuser" }) };
+    });
+
+    // Prevent file cache I/O during tests
+    vi.doMock("../src/auth/authFileCache.js", () => ({
+      loadCachedAuth: vi.fn().mockReturnValue(null),
+      saveCachedAuth: vi.fn(),
+      clearCachedAuthFile: vi.fn(),
     }));
 
     // Install fetch spy
@@ -142,7 +150,7 @@ describe("dynamicsFetch retry logic (via fetchOpportunities)", () => {
 // ---------------------------------------------------------------------------
 // 2. outlookApiFetch retry logic (via getCalendarEvents)
 //    outlookApiFetch is private, tested through getCalendarEvents export.
-//    getCalendarEvents uses Graph API directly (acquireTeamsGraphToken),
+//    getCalendarEvents uses Graph API directly (acquireGraphToken),
 //    not outlookApiFetch. We test the Graph API fetch path.
 // ---------------------------------------------------------------------------
 describe("getCalendarEvents Graph API error handling", () => {
@@ -151,12 +159,6 @@ describe("getCalendarEvents Graph API error handling", () => {
 
   beforeEach(async () => {
     vi.resetModules();
-
-    // Mock teamsClient to provide a fake token
-    vi.doMock("../src/tools/teamsClient.js", () => ({
-      acquireTeamsGraphToken: vi.fn().mockResolvedValue("mock-graph-token"),
-      postAdaptiveCard: vi.fn(),
-    }));
 
     // Mock auth
     vi.doMock("../src/auth/tokenExtractor.js", () => ({
@@ -172,8 +174,16 @@ describe("getCalendarEvents Graph API error handling", () => {
       alfredConfig: {},
     }));
 
-    vi.doMock("os", () => ({
-      userInfo: () => ({ username: "testuser" }),
+    vi.doMock("os", async (importOriginal) => {
+      const actual = await importOriginal() as typeof import("os");
+      return { ...actual, userInfo: () => ({ username: "testuser" }) };
+    });
+
+    // Prevent file cache writes during tests
+    vi.doMock("../src/auth/authFileCache.js", () => ({
+      loadCachedAuth: vi.fn().mockReturnValue(null),
+      saveCachedAuth: vi.fn(),
+      clearCachedAuthFile: vi.fn(),
     }));
 
     fetchSpy = vi.fn();
@@ -181,6 +191,10 @@ describe("getCalendarEvents Graph API error handling", () => {
 
     const mod = await import("../src/tools/outlookClient.js");
     getCalendarEvents = mod.getCalendarEvents;
+
+    // Pre-seed the Graph token cache so acquireGraphToken returns immediately
+    // without hitting CDP or Playwright.
+    mod._seedGraphTokenCache("mock-graph-token");
   });
 
   afterEach(() => {
@@ -270,8 +284,15 @@ describe("opportunity mapping via fetchOpportunities", () => {
       alfredConfig: {},
     }));
 
-    vi.doMock("os", () => ({
-      userInfo: () => ({ username: "testuser" }),
+    vi.doMock("os", async (importOriginal) => {
+      const actual = await importOriginal() as typeof import("os");
+      return { ...actual, userInfo: () => ({ username: "testuser" }) };
+    });
+
+    vi.doMock("../src/auth/authFileCache.js", () => ({
+      loadCachedAuth: vi.fn().mockReturnValue(null),
+      saveCachedAuth: vi.fn(),
+      clearCachedAuthFile: vi.fn(),
     }));
 
     fetchSpy = vi.fn();
@@ -381,8 +402,15 @@ describe("sanitizeODataSearch in OData URL context", () => {
       ALL_ENGAGEMENT_TYPES: [],
       alfredConfig: {},
     }));
-    vi.doMock("os", () => ({
-      userInfo: () => ({ username: "testuser" }),
+    vi.doMock("os", async (importOriginal) => {
+      const actual = await importOriginal() as typeof import("os");
+      return { ...actual, userInfo: () => ({ username: "testuser" }) };
+    });
+
+    vi.doMock("../src/auth/authFileCache.js", () => ({
+      loadCachedAuth: vi.fn().mockReturnValue(null),
+      saveCachedAuth: vi.fn(),
+      clearCachedAuthFile: vi.fn(),
     }));
 
     const mod = await import("../src/tools/dynamicsClient.js");
