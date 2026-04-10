@@ -22,12 +22,14 @@ describe("token management", () => {
   const teamsSrc = readSource("src/tools/teamsClient.ts");
 
   it("Outlook token has cache with expiry", () => {
-    expect(outlookSrc).toContain("TOKEN_CACHE_MS");
+    expect(outlookSrc).toContain("TOKEN_CACHE_FALLBACK_MS");
+    expect(outlookSrc).toContain("TOKEN_REFRESH_MARGIN_MS");
     expect(outlookSrc).toContain("expiresAt");
   });
 
   it("Teams token has cache with expiry", () => {
-    expect(teamsSrc).toContain("TOKEN_CACHE_MS");
+    expect(teamsSrc).toContain("TOKEN_CACHE_FALLBACK_MS");
+    expect(teamsSrc).toContain("TOKEN_REFRESH_MARGIN_MS");
     expect(teamsSrc).toContain("teamsTokenCache");
   });
 
@@ -53,6 +55,70 @@ describe("token management", () => {
 
   it("Teams Playwright fallback reuses existing tabs", () => {
     expect(teamsSrc).toContain("existingPages");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Auth resilience — ensureAlfred, login detection, refresh margins
+// ---------------------------------------------------------------------------
+describe("auth resilience", () => {
+  const tokenExtSrc = readSource("src/auth/tokenExtractor.ts");
+  const outlookSrc = readSource("src/tools/outlookClient.ts");
+  const teamsSrc = readSource("src/tools/teamsClient.ts");
+
+  it("ensureAlfred uses soft cache clear (memory only, preserves file cache)", () => {
+    expect(tokenExtSrc).toContain("clearMemoryAuthCache");
+    // ensureAlfred must NOT call clearAuthCache (which wipes file cache)
+    const ensureBlock = tokenExtSrc.slice(tokenExtSrc.indexOf("async function ensureAlfred"), tokenExtSrc.indexOf("export async function freshCdpEndpoint"));
+    expect(ensureBlock).toContain("clearMemoryAuthCache()");
+    expect(ensureBlock).not.toContain("clearAuthCache()");
+  });
+
+  it("clearMemoryAuthCache only clears in-memory state", () => {
+    // clearMemoryAuthCache must NOT call clearCachedAuthFile
+    const fnStart = tokenExtSrc.indexOf("export function clearMemoryAuthCache");
+    const fnEnd = tokenExtSrc.indexOf("}", fnStart) + 1;
+    const fnBody = tokenExtSrc.slice(fnStart, fnEnd);
+    expect(fnBody).toContain("cachedAuth = null");
+    expect(fnBody).not.toContain("clearCachedAuthFile");
+  });
+
+  it("clearAuthCache (full wipe) still exists for 401 handling", () => {
+    expect(tokenExtSrc).toContain("export function clearAuthCache");
+    const fullClearStart = tokenExtSrc.indexOf("export function clearAuthCache");
+    const fullClearEnd = tokenExtSrc.indexOf("}", fullClearStart + 50) + 1;
+    const fullClearBody = tokenExtSrc.slice(fullClearStart, fullClearEnd);
+    expect(fullClearBody).toContain("clearCachedAuthFile");
+  });
+
+  it("isAlfredgable uses 3s timeout to avoid false negatives", () => {
+    expect(tokenExtSrc).toContain("--max-time\", \"3\"");
+    expect(tokenExtSrc).toContain("timeout: 5_000");
+  });
+
+  it("Outlook detects login-page redirect and surfaces clear error", () => {
+    expect(outlookSrc).toContain("login.microsoftonline.com");
+    expect(outlookSrc).toContain("login.live.com");
+    expect(outlookSrc).toContain("session has expired");
+  });
+
+  it("Outlook MSAL extraction returns token + expiresAt (not just string)", () => {
+    expect(outlookSrc).toContain("return { token: val.secret, expiresAt:");
+  });
+
+  it("Outlook Graph token cache uses refresh margin before expiry", () => {
+    expect(outlookSrc).toContain("tokenCache.expiresAt - TOKEN_REFRESH_MARGIN_MS");
+    expect(outlookSrc).toContain("fileCached.expiresAt - TOKEN_REFRESH_MARGIN_MS");
+  });
+
+  it("Teams Graph token cache uses refresh margin before expiry", () => {
+    expect(teamsSrc).toContain("teamsTokenCache.expiresAt - TOKEN_REFRESH_MARGIN_MS");
+    expect(teamsSrc).toContain("fileCached.expiresAt - TOKEN_REFRESH_MARGIN_MS");
+  });
+
+  it("Teams CDP health check uses 3s timeout", () => {
+    expect(teamsSrc).toContain("--max-time\", \"3\"");
+    expect(teamsSrc).toContain("timeout: 5_000");
   });
 });
 

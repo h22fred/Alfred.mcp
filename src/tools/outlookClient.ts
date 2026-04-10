@@ -6,7 +6,8 @@ import { sanitizeODataSearch } from "./dynamicsClient.js";
 
 const CDP_PORT = 9222;
 const OUTLOOK_ORIGIN = "https://outlook.office.com";
-const TOKEN_CACHE_MS  = 45 * 60 * 1000; // 45 min
+const TOKEN_CACHE_FALLBACK_MS = 45 * 60 * 1000; // 45 min — fallback when MSAL doesn't report expiry
+const TOKEN_REFRESH_MARGIN_MS = 5 * 60 * 1000;  // refresh 5 min before expiry
 
 interface TokenCache {
   token: string;
@@ -20,7 +21,7 @@ export function clearGraphTokenCache(): void {
 }
 
 /** @internal — test-only helper to pre-seed the Graph token cache */
-export function _seedGraphTokenCache(token: string, ttlMs = 60_000): void {
+export function _seedGraphTokenCache(token: string, ttlMs = TOKEN_CACHE_FALLBACK_MS): void {
   tokenCache = { token, expiresAt: Date.now() + ttlMs };
 }
 
@@ -30,7 +31,8 @@ export function _seedGraphTokenCache(token: string, ttlMs = 60_000): void {
 // service call, and captures the outgoing Authorization header.
 // ---------------------------------------------------------------------------
 
-// JS snippet injected into the Outlook page to extract a Bearer token from MSAL cache
+// JS snippet injected into the Outlook page to extract a Bearer token + expiry from MSAL cache
+// Returns { token, expiresAt } or null
 const MSAL_EXTRACT_JS = `(function() {
   const tryStorage = (s) => {
     try {
@@ -40,7 +42,9 @@ const MSAL_EXTRACT_JS = `(function() {
           if (val && val.credentialType === 'AccessToken' && val.secret &&
               (val.target || '').toLowerCase().includes('mail')) {
             const exp = Number(val.expiresOn || val.extended_expires_on || 0);
-            if (!exp || exp * 1000 > Date.now()) return val.secret;
+            if (!exp || exp * 1000 > Date.now()) {
+              return { token: val.secret, expiresAt: exp ? exp * 1000 : 0 };
+            }
           }
         } catch {}
       }
@@ -51,15 +55,15 @@ const MSAL_EXTRACT_JS = `(function() {
 })()`;
 
 async function acquireGraphTokenRawCDP(progress: ProgressFn): Promise<string> {
-  if (tokenCache && Date.now() < tokenCache.expiresAt) {
+  if (tokenCache && Date.now() < tokenCache.expiresAt - TOKEN_REFRESH_MARGIN_MS) {
     const mins = Math.round((tokenCache.expiresAt - Date.now()) / 60_000);
     progress(`🔑 Using cached Graph token (~${mins} min remaining)`);
     return tokenCache.token;
   }
 
-  // Check file cache before hitting CDP
+  // Check file cache before hitting CDP — apply refresh margin
   const fileCached = loadCachedAuth("graphToken");
-  if (fileCached) {
+  if (fileCached && Date.now() < fileCached.expiresAt - TOKEN_REFRESH_MARGIN_MS) {
     tokenCache = { token: fileCached.value, expiresAt: fileCached.expiresAt };
     const mins = Math.round((fileCached.expiresAt - Date.now()) / 60_000);
     progress(`🔑 Using cached Graph token (~${mins} min remaining)`);
@@ -85,8 +89,19 @@ async function acquireGraphTokenRawCDP(progress: ProgressFn): Promise<string> {
     process.stderr.write(`[alfred] CDP: no Outlook tab found — trying ${teamsTarget ? "Teams" : "other"} tab for MSAL cache\n`);
   }
 
+  // Detect if the Outlook tab is stuck on a login/redirect page
+  if (outlookTarget?.url) {
+    const tabUrl = outlookTarget.url;
+    if (tabUrl.includes("login.microsoftonline.com") || tabUrl.includes("login.live.com") || tabUrl.includes("/oauth2/")) {
+      throw new Error(
+        "Outlook tab is on the Microsoft login page — your session has expired.\n" +
+        "Please log back into Outlook in the Alfred window (make sure the inbox is fully loaded), then retry."
+      );
+    }
+  }
+
   // Step 1: try reading token directly from MSAL storage — fast, no network interception
-  const msalToken = await new Promise<string | null>((resolve) => {
+  const msalResult = await new Promise<{ token: string; expiresAt: number } | null>((resolve) => {
     const ws = new WebSocket(target.webSocketDebuggerUrl!);
     const timer = setTimeout(() => { try { ws.close(); } catch {} resolve(null); }, 5_000);
 
@@ -97,19 +112,21 @@ async function acquireGraphTokenRawCDP(progress: ProgressFn): Promise<string> {
       clearTimeout(timer);
       try { ws.close(); } catch {}
       try {
-        const msg = JSON.parse(event.data as string) as { result?: { result?: { value?: string } } };
+        const msg = JSON.parse(event.data as string) as { result?: { result?: { value?: { token: string; expiresAt: number } | null } } };
         resolve(msg.result?.result?.value ?? null);
       } catch { resolve(null); }
     });
     ws.addEventListener("error", () => { clearTimeout(timer); try { ws.close(); } catch {} resolve(null); });
   });
 
-  if (msalToken) {
-    const expiresAt = Date.now() + TOKEN_CACHE_MS;
-    tokenCache = { token: msalToken, expiresAt };
-    saveCachedAuth("graphToken", msalToken, expiresAt);
-    progress("✅ Graph token acquired from MSAL cache");
-    return msalToken;
+  if (msalResult) {
+    // Use real MSAL expiry when available, otherwise fall back to 45 min
+    const expiresAt = msalResult.expiresAt > 0 ? msalResult.expiresAt : Date.now() + TOKEN_CACHE_FALLBACK_MS;
+    tokenCache = { token: msalResult.token, expiresAt };
+    saveCachedAuth("graphToken", msalResult.token, expiresAt);
+    const mins = Math.round((expiresAt - Date.now()) / 60_000);
+    progress(`✅ Graph token acquired from MSAL cache (~${mins} min valid)`);
+    return msalResult.token;
   }
 
   // Step 2: fallback — enable Network tracking and trigger an OWA API fetch
@@ -131,7 +148,7 @@ async function acquireGraphTokenRawCDP(progress: ProgressFn): Promise<string> {
     const done = (token: string) => {
       clearTimeout(timer);
       try { ws.close(); } catch {}
-      const expiresAt = Date.now() + TOKEN_CACHE_MS;
+      const expiresAt = Date.now() + TOKEN_CACHE_FALLBACK_MS;
       tokenCache = { token, expiresAt };
       saveCachedAuth("graphToken", token, expiresAt);
       progress("✅ Graph token acquired");
@@ -220,7 +237,7 @@ async function acquireGraphToken(progress: ProgressFn): Promise<string> {
       if (isNewPage) await page.close();
 
       if (!capturedToken) throw new Error("Could not capture Graph token from Outlook.\nMake sure you are logged into Outlook in the Alfred window.");
-      const expiresAt = Date.now() + TOKEN_CACHE_MS;
+      const expiresAt = Date.now() + TOKEN_CACHE_FALLBACK_MS;
       tokenCache = { token: capturedToken, expiresAt };
       saveCachedAuth("graphToken", capturedToken, expiresAt);
       progress("✅ Graph token acquired via Playwright");

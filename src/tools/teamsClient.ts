@@ -5,7 +5,8 @@ import { loadCachedAuth, saveCachedAuth, clearCachedAuthFile } from "../auth/aut
 import { stripHtml, urlHostMatches } from "../shared.js";
 
 const CDP_PORT = 9222;
-const TOKEN_CACHE_MS = 45 * 60 * 1000;
+const TOKEN_CACHE_FALLBACK_MS = 45 * 60 * 1000; // fallback when MSAL doesn't report expiry
+const TOKEN_REFRESH_MARGIN_MS = 5 * 60 * 1000;  // refresh 5 min before expiry
 
 // ---------------------------------------------------------------------------
 // Teams webhook config — loaded from ~/.alfred-config.json on startup,
@@ -200,15 +201,15 @@ interface TokenCache { token: string; expiresAt: number; }
 let teamsTokenCache: TokenCache | null = null;
 
 export async function acquireTeamsGraphToken(progress: ProgressFn): Promise<string> {
-  if (teamsTokenCache && Date.now() < teamsTokenCache.expiresAt) {
+  if (teamsTokenCache && Date.now() < teamsTokenCache.expiresAt - TOKEN_REFRESH_MARGIN_MS) {
     const mins = Math.round((teamsTokenCache.expiresAt - Date.now()) / 60_000);
     progress(`🔑 Using cached Teams Graph token (~${mins} min remaining)`);
     return teamsTokenCache.token;
   }
 
-  // Check file cache before hitting CDP
+  // Check file cache before hitting CDP — apply refresh margin
   const fileCached = loadCachedAuth("teamsGraphToken");
-  if (fileCached) {
+  if (fileCached && Date.now() < fileCached.expiresAt - TOKEN_REFRESH_MARGIN_MS) {
     teamsTokenCache = { token: fileCached.value, expiresAt: fileCached.expiresAt };
     const mins = Math.round((fileCached.expiresAt - Date.now()) / 60_000);
     progress(`🔑 Using cached Teams Graph token (~${mins} min remaining)`);
@@ -216,7 +217,7 @@ export async function acquireTeamsGraphToken(progress: ProgressFn): Promise<stri
   }
 
   try {
-    execFileSync("curl", ["-s", "--max-time", "1", `http://localhost:${CDP_PORT}/json/version`], { timeout: 2_000 });
+    execFileSync("curl", ["-s", "--max-time", "3", `http://localhost:${CDP_PORT}/json/version`], { timeout: 5_000 });
   } catch {
     throw new Error("Alfred is not running. Open Alfred.app first.");
   }
@@ -234,7 +235,7 @@ export async function acquireTeamsGraphToken(progress: ProgressFn): Promise<stri
       for (const t of candidates) {
         const token = await extractGraphTokenFromTab(t.webSocketDebuggerUrl!);
         if (token) {
-          const expiresAt = Date.now() + TOKEN_CACHE_MS;
+          const expiresAt = Date.now() + TOKEN_CACHE_FALLBACK_MS;
           teamsTokenCache = { token, expiresAt };
           saveCachedAuth("teamsGraphToken", token, expiresAt);
           progress("✅ Graph token acquired from MSAL cache");
@@ -289,7 +290,7 @@ export async function acquireTeamsGraphToken(progress: ProgressFn): Promise<stri
 
     if (!capturedToken) throw new Error("Could not capture Graph token. Make sure Teams or Outlook is loaded in Alfred.");
 
-    const expiresAt = Date.now() + TOKEN_CACHE_MS;
+    const expiresAt = Date.now() + TOKEN_CACHE_FALLBACK_MS;
     teamsTokenCache = { token: capturedToken, expiresAt };
     saveCachedAuth("teamsGraphToken", capturedToken, expiresAt);
     progress("✅ Graph token acquired");
