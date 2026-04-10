@@ -33,7 +33,14 @@ export function _seedGraphTokenCache(token: string, ttlMs = TOKEN_CACHE_FALLBACK
 
 // JS snippet injected into the Outlook page to extract a Bearer token + expiry from MSAL cache
 // Returns { token, expiresAt } or null
+// IMPORTANT: checks JWT audience to ensure the token is for graph.microsoft.com, not outlook.office.com
 const MSAL_EXTRACT_JS = `(function() {
+  const decodeAud = (jwt) => {
+    try {
+      const payload = JSON.parse(atob(jwt.split('.')[1].replace(/-/g,'+').replace(/_/g,'/')));
+      return (payload.aud || '').toLowerCase();
+    } catch { return ''; }
+  };
   const tryStorage = (s) => {
     try {
       for (const key of Object.keys(s)) {
@@ -41,6 +48,8 @@ const MSAL_EXTRACT_JS = `(function() {
           const val = JSON.parse(s.getItem(key));
           if (val && val.credentialType === 'AccessToken' && val.secret &&
               (val.target || '').toLowerCase().includes('mail')) {
+            const aud = decodeAud(val.secret);
+            if (!aud.includes('graph.microsoft.com')) continue;
             const exp = Number(val.expiresOn || val.extended_expires_on || 0);
             if (!exp || exp * 1000 > Date.now()) {
               return { token: val.secret, expiresAt: exp ? exp * 1000 : 0 };
