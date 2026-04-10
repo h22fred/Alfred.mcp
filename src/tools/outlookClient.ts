@@ -14,15 +14,26 @@ interface TokenCache {
   expiresAt: number;
 }
 let tokenCache: TokenCache | null = null;
+let outlookRestTokenCache: TokenCache | null = null;
 
 export function clearGraphTokenCache(): void {
   tokenCache = null;
   clearCachedAuthFile("graphToken");
 }
 
+export function clearOutlookRestTokenCache(): void {
+  outlookRestTokenCache = null;
+  clearCachedAuthFile("outlookRestToken");
+}
+
 /** @internal — test-only helper to pre-seed the Graph token cache */
 export function _seedGraphTokenCache(token: string, ttlMs = TOKEN_CACHE_FALLBACK_MS): void {
   tokenCache = { token, expiresAt: Date.now() + ttlMs };
+}
+
+/** @internal — test-only helper to pre-seed the Outlook REST token cache */
+export function _seedOutlookRestTokenCache(token: string, ttlMs = TOKEN_CACHE_FALLBACK_MS): void {
+  outlookRestTokenCache = { token, expiresAt: Date.now() + ttlMs };
 }
 
 // ---------------------------------------------------------------------------
@@ -282,10 +293,134 @@ async function acquireGraphToken(progress: ProgressFn): Promise<string> {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Outlook REST token — for email/folder operations against outlook.office.com
+// Separate from Graph token (which is for calendar via graph.microsoft.com)
+// ---------------------------------------------------------------------------
+
+const OUTLOOK_REST_MSAL_JS = `(function() {
+  const decodeAud = (jwt) => {
+    try {
+      const payload = JSON.parse(atob(jwt.split('.')[1].replace(/-/g,'+').replace(/_/g,'/')));
+      return (payload.aud || '').toLowerCase();
+    } catch { return ''; }
+  };
+  const tryStorage = (s) => {
+    try {
+      for (const key of Object.keys(s)) {
+        try {
+          const val = JSON.parse(s.getItem(key));
+          if (val && val.credentialType === 'AccessToken' && val.secret) {
+            const aud = decodeAud(val.secret);
+            if (!aud.includes('outlook.office')) continue;
+            const exp = Number(val.expiresOn || val.extended_expires_on || 0);
+            if (exp && exp * 1000 < Date.now()) continue;
+            return { token: val.secret, expiresAt: exp ? exp * 1000 : 0 };
+          }
+        } catch {}
+      }
+    } catch {}
+    return null;
+  };
+  return tryStorage(sessionStorage) || tryStorage(localStorage);
+})()`;
+
+async function acquireOutlookRestToken(progress: ProgressFn): Promise<string> {
+  // Check in-memory cache
+  if (outlookRestTokenCache && Date.now() < outlookRestTokenCache.expiresAt - TOKEN_REFRESH_MARGIN_MS) {
+    const mins = Math.round((outlookRestTokenCache.expiresAt - Date.now()) / 60_000);
+    progress(`🔑 Using cached Outlook REST token (~${mins} min remaining)`);
+    return outlookRestTokenCache.token;
+  }
+
+  // Check file cache
+  const fileCached = loadCachedAuth("outlookRestToken");
+  if (fileCached && Date.now() < fileCached.expiresAt - TOKEN_REFRESH_MARGIN_MS) {
+    outlookRestTokenCache = { token: fileCached.value, expiresAt: fileCached.expiresAt };
+    const mins = Math.round((fileCached.expiresAt - Date.now()) / 60_000);
+    progress(`🔑 Using cached Outlook REST token (~${mins} min remaining)`);
+    return fileCached.value;
+  }
+
+  progress("🔑 Acquiring Outlook REST token via CDP...");
+
+  const listRes = await fetch(`http://localhost:${CDP_PORT}/json/list`);
+  const targets = await listRes.json() as Array<{ webSocketDebuggerUrl?: string; type?: string; url?: string }>;
+
+  // Outlook REST tokens live in the Outlook tab's MSAL cache
+  const outlookTarget = targets.find(t => t.type === "page" && t.url && urlHostMatches(t.url, "outlook.office.com") && t.webSocketDebuggerUrl);
+  const anyTarget = targets.find(t => t.type === "page" && t.webSocketDebuggerUrl);
+  const target = outlookTarget ?? anyTarget;
+
+  if (!target?.webSocketDebuggerUrl) {
+    throw new Error("No page targets found in Alfred. Open Alfred.app and log into Outlook.");
+  }
+
+  if (!outlookTarget) {
+    process.stderr.write("[alfred] CDP: no Outlook tab found — trying other tab for Outlook REST MSAL token\n");
+  }
+
+  // Detect login-page redirect
+  if (outlookTarget?.url) {
+    const tabUrl = outlookTarget.url;
+    if (tabUrl.includes("login.microsoftonline.com") || tabUrl.includes("login.live.com") || tabUrl.includes("/oauth2/")) {
+      throw new Error(
+        "Outlook tab is on the Microsoft login page — your session has expired.\n" +
+        "Please log back into Outlook in the Alfred window (make sure the inbox is fully loaded), then retry."
+      );
+    }
+  }
+
+  // Extract Outlook REST token from MSAL cache
+  const msalResult = await new Promise<{ token: string; expiresAt: number } | null>((resolve) => {
+    const ws = new WebSocket(target.webSocketDebuggerUrl!);
+    const timer = setTimeout(() => {
+      process.stderr.write("[alfred:warn] Outlook REST MSAL extraction timed out (5s)\n");
+      try { ws.close(); } catch {}
+      resolve(null);
+    }, 5_000);
+
+    ws.addEventListener("open", () => {
+      ws.send(JSON.stringify({ id: 1, method: "Runtime.evaluate", params: { expression: OUTLOOK_REST_MSAL_JS, returnByValue: true } }));
+    });
+    ws.addEventListener("message", (event: MessageEvent) => {
+      clearTimeout(timer);
+      try { ws.close(); } catch {}
+      try {
+        const msg = JSON.parse(event.data as string) as { result?: { result?: { value?: { token: string; expiresAt: number } | null } } };
+        resolve(msg.result?.result?.value ?? null);
+      } catch (e) {
+        process.stderr.write(`[alfred:warn] Outlook REST MSAL parse error: ${e instanceof Error ? e.message : String(e)}\n`);
+        resolve(null);
+      }
+    });
+    ws.addEventListener("error", () => {
+      clearTimeout(timer);
+      process.stderr.write("[alfred:warn] Outlook REST MSAL extraction WebSocket error\n");
+      try { ws.close(); } catch {};
+      resolve(null);
+    });
+  });
+
+  if (msalResult) {
+    const expiresAt = msalResult.expiresAt > 0 ? msalResult.expiresAt : Date.now() + TOKEN_CACHE_FALLBACK_MS;
+    outlookRestTokenCache = { token: msalResult.token, expiresAt };
+    saveCachedAuth("outlookRestToken", msalResult.token, expiresAt);
+    const mins = Math.round((expiresAt - Date.now()) / 60_000);
+    progress(`✅ Outlook REST token acquired from MSAL cache (~${mins} min valid)`);
+    return msalResult.token;
+  }
+
+  throw new Error(
+    "Could not find an Outlook REST token in the MSAL cache.\n" +
+    "Make sure Outlook is fully loaded (inbox visible) in the Alfred window, then retry."
+  );
+}
+
 const OUTLOOK_API = "https://outlook.office.com/api/v2.0/me";
 
 // ---------------------------------------------------------------------------
-// Outlook REST v2 fetch using Bearer token (kept for Teams Graph API usage)
+// Outlook REST v2 fetch using Outlook REST Bearer token
 // ---------------------------------------------------------------------------
 
 async function outlookApiFetch(path: string, token: string, progress?: ProgressFn, _retryCount = 0): Promise<Record<string, unknown>> {
@@ -303,10 +438,10 @@ async function outlookApiFetch(path: string, token: string, progress?: ProgressF
   }
 
   if (res.status === 401) {
-    tokenCache = null;
-    clearCachedAuthFile("graphToken");
-    progress?.("🔄 Graph token expired — re-acquiring...");
-    const freshToken = await acquireGraphToken(progress ?? (() => {}));
+    outlookRestTokenCache = null;
+    clearCachedAuthFile("outlookRestToken");
+    progress?.("🔄 Outlook REST token expired — re-acquiring...");
+    const freshToken = await acquireOutlookRestToken(progress ?? (() => {}));
     const retry = await fetch(`${OUTLOOK_API}${path}`, {
       headers: { Authorization: `Bearer ${freshToken}`, Accept: "application/json" },
       signal: AbortSignal.timeout(30_000),
@@ -497,7 +632,7 @@ export async function getEmails(opts: {
     path = `/mailfolders/${folder}/messages?${p}`;
   }
 
-  const token = await acquireGraphToken(progress);
+  const token = await acquireOutlookRestToken(progress);
   const data = await outlookApiFetch(path, token, progress);
   const messages = (data.value as Record<string, unknown>[] ?? []).map(m => {
     const fromEA = (m.From as { EmailAddress: { Name: string; Address: string } })?.EmailAddress;
@@ -539,7 +674,7 @@ export interface MailFolder {
 
 export async function listMailFolders(progress: ProgressFn = () => {}): Promise<MailFolder[]> {
   progress("📁 Fetching mail folders...");
-  const token = await acquireGraphToken(progress);
+  const token = await acquireOutlookRestToken(progress);
   const data = await outlookApiFetch(
     "/mailfolders?$select=id,displayName,parentFolderId,childFolderCount,totalItemCount,unreadItemCount&$top=100",
     token, progress
