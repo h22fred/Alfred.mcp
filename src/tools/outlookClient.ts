@@ -186,16 +186,19 @@ async function acquireGraphTokenRawCDP(progress: ProgressFn): Promise<string> {
       try {
         const msg = JSON.parse(event.data as string) as { id?: number; method?: string; params?: Record<string, unknown> };
         if (msg.id === 1) {
-          // Network enabled — trigger an OWA mail fetch which adds Authorization via JS interceptor
+          // Network enabled — trigger a Graph API call (NOT Outlook REST) so the
+          // captured Bearer token has audience graph.microsoft.com
           send("Runtime.evaluate", {
-            expression: `fetch('/api/v2.0/me/calendarview?$top=1&$select=Id&startDateTime=${new Date().toISOString()}&endDateTime=${new Date(Date.now()+86400000).toISOString()}', { credentials: 'include' }).catch(()=>{})`,
+            expression: `fetch('https://graph.microsoft.com/v1.0/me?$select=id', { credentials: 'include' }).catch(()=>{})`,
             awaitPromise: false,
           });
         }
         if (msg.method === "Network.requestWillBeSent") {
+          const reqUrl = (msg.params?.request as Record<string, unknown>)?.url as string ?? "";
           const headers = ((msg.params?.request as Record<string, unknown>)?.headers ?? {}) as Record<string, string>;
           const auth = headers["Authorization"] ?? headers["authorization"] ?? "";
-          if (!capturedToken && auth.startsWith("Bearer ")) {
+          // Only capture tokens destined for Graph API — skip Outlook REST tokens
+          if (!capturedToken && auth.startsWith("Bearer ") && reqUrl.includes("graph.microsoft.com")) {
             capturedToken = auth.slice(7);
             done(capturedToken);
           }
@@ -236,7 +239,8 @@ async function acquireGraphToken(progress: ProgressFn): Promise<string> {
       }
 
       let capturedToken: string | null = null;
-      await page.route("**/*", async (route) => {
+      // Only capture Bearer tokens destined for Graph API — skip Outlook REST tokens
+      await page.route("**/graph.microsoft.com/**", async (route) => {
         const auth = route.request().headers()["authorization"] ?? "";
         if (!capturedToken && auth.startsWith("Bearer ")) capturedToken = auth.slice(7);
         await route.continue();
@@ -253,7 +257,7 @@ async function acquireGraphToken(progress: ProgressFn): Promise<string> {
       while (!capturedToken && Date.now() < deadline) await page.waitForTimeout(500);
 
       // Clean up route interceptor
-      await page.unroute("**/*").catch((e) => { process.stderr.write(`[alfred:warn] unroute failed: ${e instanceof Error ? e.message : String(e)}\n`); });
+      await page.unroute("**/graph.microsoft.com/**").catch((e) => { process.stderr.write(`[alfred:warn] unroute failed: ${e instanceof Error ? e.message : String(e)}\n`); });
       // Only close pages we created
       if (isNewPage) await page.close();
 
