@@ -37,7 +37,7 @@ function isChromeProcessRunning(): boolean {
 
 function isAlfredgable(): boolean {
   try {
-    execFileSync("curl", ["-s", "--max-time", "1", `http://localhost:${CDP_PORT}/json/version`], { timeout: 2_000 });
+    execFileSync("curl", ["-s", "--max-time", "3", `http://localhost:${CDP_PORT}/json/version`], { timeout: 5_000 });
     return true;
   } catch {
     return false;
@@ -70,19 +70,26 @@ async function waitForChrome(timeoutMs = 15_000): Promise<void> {
   throw new Error("Alfred did not start in time. Try opening Alfred.app manually.");
 }
 
-export function clearAuthCache(): void {
+/** Clear in-memory auth state only (file cache survives for cross-restart resilience). */
+export function clearMemoryAuthCache(): void {
   cachedAuth = null;
   cachedOutlookAuth = null;
   inflightDynamics = null;
   inflightOutlook = null;
+}
+
+/** Full wipe — in-memory + file cache. Only call on confirmed 401/403. */
+export function clearAuthCache(): void {
+  clearMemoryAuthCache();
   clearCachedAuthFile("dynamics");
   clearCachedAuthFile("outlook");
 }
 
 export async function ensureAlfred(progress: ProgressFn = () => {}): Promise<void> {
   if (isAlfredgable()) return;
-  // Chrome is not running — clear stale caches before launching fresh session
-  clearAuthCache();
+  // Chrome is not running — clear in-memory state only; file cache survives
+  // so persisted tokens can still be used if they haven't expired.
+  clearMemoryAuthCache();
   progress("🚀 Launching Alfred automatically...");
   launchAlfred();
   await waitForChrome();
