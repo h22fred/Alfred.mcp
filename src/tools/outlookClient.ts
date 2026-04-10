@@ -103,7 +103,11 @@ async function acquireGraphTokenRawCDP(progress: ProgressFn): Promise<string> {
   // Step 1: try reading token directly from MSAL storage — fast, no network interception
   const msalResult = await new Promise<{ token: string; expiresAt: number } | null>((resolve) => {
     const ws = new WebSocket(target.webSocketDebuggerUrl!);
-    const timer = setTimeout(() => { try { ws.close(); } catch {} resolve(null); }, 5_000);
+    const timer = setTimeout(() => {
+      process.stderr.write("[alfred:warn] MSAL extraction timed out (5s) — Outlook tab may be unresponsive\n");
+      try { ws.close(); } catch {}
+      resolve(null);
+    }, 5_000);
 
     ws.addEventListener("open", () => {
       ws.send(JSON.stringify({ id: 1, method: "Runtime.evaluate", params: { expression: MSAL_EXTRACT_JS, returnByValue: true } }));
@@ -114,9 +118,17 @@ async function acquireGraphTokenRawCDP(progress: ProgressFn): Promise<string> {
       try {
         const msg = JSON.parse(event.data as string) as { result?: { result?: { value?: { token: string; expiresAt: number } | null } } };
         resolve(msg.result?.result?.value ?? null);
-      } catch { resolve(null); }
+      } catch (e) {
+        process.stderr.write(`[alfred:warn] MSAL extraction parse error: ${e instanceof Error ? e.message : String(e)}\n`);
+        resolve(null);
+      }
     });
-    ws.addEventListener("error", () => { clearTimeout(timer); try { ws.close(); } catch {} resolve(null); });
+    ws.addEventListener("error", (ev) => {
+      clearTimeout(timer);
+      process.stderr.write(`[alfred:warn] MSAL extraction WebSocket error on Outlook tab\n`);
+      try { ws.close(); } catch {}
+      resolve(null);
+    });
   });
 
   if (msalResult) {
@@ -243,7 +255,8 @@ async function acquireGraphToken(progress: ProgressFn): Promise<string> {
       progress("✅ Graph token acquired via Playwright");
       return capturedToken;
     } finally {
-      await browser.close();
+      // Do NOT call browser.close() — it kills the user's actual Alfred Chrome process.
+      // The CDP connection wrapper is GC'd; Alfred Chrome keeps running.
     }
   }
 }
