@@ -245,20 +245,9 @@ async function acquireGraphTokenRawCDP(progress: ProgressFn): Promise<string> {
       try {
         const msg = JSON.parse(event.data as string) as { id?: number; method?: string; params?: Record<string, unknown> };
         if (msg.id === 1) {
-          // Network enabled — trigger API calls to capture a Bearer token.
-          // Try multiple approaches: same-origin OWA endpoints + XHR reload.
-          // On outlook.cloud.microsoft.com the API paths differ from outlook.office.com,
-          // so we also trigger a soft page reload to capture whatever the app fetches.
-          send("Runtime.evaluate", {
-            expression: [
-              `fetch(location.origin + '/owa/service.svc?action=GetConversationItems', { method: 'POST', body: '{}', headers: {'Content-Type':'application/json'}, credentials: 'include' }).catch(()=>{})`,
-              `fetch(location.origin + '/api/v2.0/me/messages?$top=1', { credentials: 'include' }).catch(()=>{})`,
-              `fetch(location.origin + '/mail/api/v1/me/mailboxsettings', { credentials: 'include' }).catch(()=>{})`,
-              // Trigger a soft reload to make the page issue its natural API calls
-              `setTimeout(()=>{ try { const x = new XMLHttpRequest(); x.open('GET', location.origin + '/owa/'); x.withCredentials = true; x.send(); } catch(e){} }, 500)`,
-            ].join(';'),
-            awaitPromise: false,
-          });
+          // Network enabled — reload the page so the app makes its own API calls
+          // with MSAL-managed Bearer tokens (manual fetch() won't have them)
+          send("Page.reload");
         }
         if (msg.method === "Network.requestWillBeSent") {
           const headers = ((msg.params?.request as Record<string, unknown>)?.headers ?? {}) as Record<string, string>;
@@ -488,17 +477,9 @@ async function acquireOutlookRestToken(progress: ProgressFn): Promise<string> {
       try {
         const msg = JSON.parse(event.data as string) as { id?: number; method?: string; params?: Record<string, unknown> };
         if (msg.id === 1) {
-          // Network enabled — trigger Outlook API calls to force Bearer token emission
-          send("Runtime.evaluate", {
-            expression: [
-              `fetch(location.origin + '/owa/service.svc?action=GetConversationItems', { method: 'POST', body: '{}', headers: {'Content-Type':'application/json'}, credentials: 'include' }).catch(()=>{})`,
-              `fetch(location.origin + '/api/v2.0/me/messages?$top=1', { credentials: 'include' }).catch(()=>{})`,
-              `fetch(location.origin + '/mail/api/v1/me/mailboxsettings', { credentials: 'include' }).catch(()=>{})`,
-              `fetch('https://outlook.office.com/api/v2.0/me/messages?$top=1', { credentials: 'include' }).catch(()=>{})`,
-              `fetch('https://outlook.office365.com/api/v2.0/me/messages?$top=1', { credentials: 'include' }).catch(()=>{})`,
-            ].join(';'),
-            awaitPromise: false,
-          });
+          // Network enabled — reload the page so Outlook's OWN code makes API calls
+          // with MSAL-managed Bearer tokens (our fetch() calls won't have them).
+          send("Page.reload");
         }
         if (msg.method === "Network.requestWillBeSent") {
           const headers = ((msg.params?.request as Record<string, unknown>)?.headers ?? {}) as Record<string, string>;
