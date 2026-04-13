@@ -731,15 +731,22 @@ export async function getEmails(opts: {
   unreadOnly?: boolean;
   fullBody?: boolean;
 }, progress: ProgressFn = () => {}): Promise<EmailMessage[]> {
-  const { search, folder: rawFolder = "inbox", top = 25, unreadOnly, fullBody } = opts;
+  const { search, folder: rawFolder, top = 25, unreadOnly, fullBody } = opts;
   progress("📧 Fetching emails...");
 
-  // Resolve custom folder names (e.g. "SITA", "PMI") to Graph folder IDs
-  const folder = await resolveMailFolder(rawFolder, progress);
+  // When searching with no folder specified, search ALL mail (not just inbox).
+  // When browsing (no search), default to inbox.
+  const hasExplicitFolder = rawFolder !== undefined && rawFolder !== "";
+  const folder = hasExplicitFolder
+    ? await resolveMailFolder(rawFolder, progress)
+    : null;
 
   const selectFields = fullBody
     ? "Id,Subject,From,ReceivedDateTime,BodyPreview,IsRead,HasAttachments,Body"
     : "Id,Subject,From,ReceivedDateTime,BodyPreview,IsRead,HasAttachments";
+
+  // Build folder path prefix: empty string = all mail, "/mailfolders/{id}" = specific folder
+  const folderPrefix = folder ? `/mailfolders/${encodeURIComponent(folder)}` : "";
 
   let path: string;
   if (search) {
@@ -748,9 +755,11 @@ export async function getEmails(opts: {
       $select: selectFields,
       $top: String(top),
     });
-    // Search within the specified folder, not across all mail
-    path = `/mailfolders/${encodeURIComponent(folder)}/messages?${p}`;
+    // No folder = search across ALL folders (inbox, sent, custom client folders, etc.)
+    path = `${folderPrefix}/messages?${p}`;
   } else {
+    // Browsing without search — default to inbox if no folder specified
+    const browsePrefix = folderPrefix || "/mailfolders/inbox";
     const filters: string[] = [];
     if (unreadOnly) filters.push("IsRead eq false");
     const p = new URLSearchParams({
@@ -759,7 +768,7 @@ export async function getEmails(opts: {
       $orderby: "ReceivedDateTime desc",
       ...(filters.length ? { $filter: filters.join(" and ") } : {}),
     });
-    path = `/mailfolders/${encodeURIComponent(folder)}/messages?${p}`;
+    path = `${browsePrefix}/messages?${p}`;
   }
 
   const token = await acquireOutlookRestToken(progress);

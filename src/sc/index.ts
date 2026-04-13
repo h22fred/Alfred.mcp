@@ -906,8 +906,8 @@ Use list_mail_folders first if you need to see available folder names.
 
 IMPORTANT: This user organises emails into folders named after clients/accounts. When they ask about emails related to a customer (e.g. "emails about SITA"), ALWAYS set the folder param to the customer name — the user's client folder is the best source. You can also combine folder + search to search within a client folder.`,
   {
-    search:      z.string().optional().describe("Full-text search query (e.g. 'PMI renewal', 'budget'). Searches within the specified folder."),
-    folder:      z.string().optional().describe("Folder name: 'inbox' (default), 'sentitems', 'drafts', or any custom folder name (e.g. 'SITA', 'PMI'). Resolved by display name."),
+    search:      z.string().optional().describe("Full-text search query (e.g. 'PMI renewal', 'budget'). Without a folder, searches ALL mail across every folder."),
+    folder:      z.string().optional().describe("Folder to search/browse. Omit to search ALL mail. Use 'inbox', 'sentitems', 'drafts', or a custom folder name (e.g. 'SITA', 'PMI'). Resolved by display name."),
     top:         z.number().optional().describe("Max number of messages to return (default 25)"),
     unread_only: z.boolean().optional().describe("If true, return only unread messages (only applies when not searching)"),
     full_body:   z.boolean().optional().describe("If true, fetch the full email body (HTML stripped to clean plain text). Default false — returns preview only."),
@@ -915,7 +915,7 @@ IMPORTANT: This user organises emails into folders named after clients/accounts.
   async ({ search, folder, top, unread_only, full_body }) => {
     const progress = makeProgress(server);
     const messages = await getEmails(
-      { search, folder: folder ?? "inbox", top: top ?? 25, unreadOnly: unread_only, fullBody: full_body },
+      { search, folder, top: top ?? 25, unreadOnly: unread_only, fullBody: full_body },
       progress
     );
     return {
