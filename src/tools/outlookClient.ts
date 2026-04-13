@@ -3,6 +3,7 @@ import type { ProgressFn } from "../auth/tokenExtractor.js";
 import { loadCachedAuth, saveCachedAuth, clearCachedAuthFile } from "../auth/authFileCache.js";
 import { stripHtml, urlHostMatches } from "../shared.js";
 import { sanitizeODataSearch } from "./dynamicsClient.js";
+import { acquireTeamsGraphToken } from "./teamsClient.js";
 
 const CDP_PORT = 9222;
 const OUTLOOK_ORIGIN = "https://outlook.office.com";
@@ -510,7 +511,8 @@ export async function getCalendarEvents(
     }
   }
 
-  const token = await acquireGraphToken(progress);
+  // Use Teams Graph token (proven to work for graph.microsoft.com audience)
+  const token = await acquireTeamsGraphToken(progress);
   let res = await fetch(`https://graph.microsoft.com/v1.0/me/calendarview?${params}`, {
     headers: { Authorization: `Bearer ${token}`, Accept: "application/json" },
     signal: AbortSignal.timeout(30_000),

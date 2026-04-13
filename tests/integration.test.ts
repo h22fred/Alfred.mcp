@@ -188,15 +188,16 @@ describe("getCalendarEvents Graph API error handling", () => {
       clearCachedAuthFile: vi.fn(),
     }));
 
+    // Mock teamsClient — calendar now uses acquireTeamsGraphToken for Graph API tokens
+    vi.doMock("../src/tools/teamsClient.js", () => ({
+      acquireTeamsGraphToken: vi.fn().mockResolvedValue("mock-graph-token"),
+    }));
+
     fetchSpy = vi.fn();
     vi.stubGlobal("fetch", fetchSpy);
 
     const mod = await import("../src/tools/outlookClient.js");
     getCalendarEvents = mod.getCalendarEvents;
-
-    // Pre-seed the Graph token cache so acquireGraphToken returns immediately
-    // without hitting CDP or Playwright.
-    mod._seedGraphTokenCache("mock-graph-token");
   });
 
   afterEach(() => {
