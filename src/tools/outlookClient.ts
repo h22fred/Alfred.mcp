@@ -6,6 +6,11 @@ import { sanitizeODataSearch } from "./dynamicsClient.js";
 
 const CDP_PORT = 9222;
 const OUTLOOK_ORIGIN = "https://outlook.office.com";
+
+/** Match both legacy (outlook.office.com) and new (outlook.cloud.microsoft.com) Outlook domains */
+function isOutlookUrl(url: string): boolean {
+  return urlHostMatches(url, "outlook.office.com") || urlHostMatches(url, "outlook.cloud.microsoft.com");
+}
 const TOKEN_CACHE_FALLBACK_MS = 45 * 60 * 1000; // 45 min — fallback when MSAL doesn't report expiry
 const TOKEN_REFRESH_MARGIN_MS = 5 * 60 * 1000;  // refresh 5 min before expiry
 
@@ -43,7 +48,7 @@ export function _seedOutlookRestTokenCache(token: string, ttlMs = TOKEN_CACHE_FA
 // ---------------------------------------------------------------------------
 
 // JS snippet injected into a browser tab to extract a Bearer token from MSAL cache.
-// Grabs the first non-expired AccessToken whose scopes include 'mail'.
+// Grabs the first non-expired AccessToken whose scopes include 'mail' or 'calendar'.
 // No audience filtering — the Outlook MSAL cache token works for both
 // graph.microsoft.com and outlook.office.com endpoints.
 const MSAL_EXTRACT_JS = `(function() {
@@ -52,8 +57,9 @@ const MSAL_EXTRACT_JS = `(function() {
       for (const key of Object.keys(s)) {
         try {
           const val = JSON.parse(s.getItem(key));
-          if (val && val.credentialType === 'AccessToken' && val.secret &&
-              (val.target || '').toLowerCase().includes('mail')) {
+          if (val && val.credentialType === 'AccessToken' && val.secret) {
+            const target = (val.target || '').toLowerCase();
+            if (!target.includes('mail') && !target.includes('calendar')) continue;
             const exp = Number(val.expiresOn || val.extended_expires_on || 0);
             if (!exp || exp * 1000 > Date.now()) {
               return { token: val.secret, expiresAt: exp ? exp * 1000 : 0 };
@@ -92,7 +98,7 @@ async function acquireGraphTokenRawCDP(progress: ProgressFn): Promise<string> {
   // Outlook uses the Outlook REST API (outlook.office.com), so its MSAL cache
   // rarely has Graph-audience tokens. Try Outlook only as fallback.
   const teamsTarget   = targets.find(t => t.type === "page" && t.url && urlHostMatches(t.url, "teams.microsoft.com") && t.webSocketDebuggerUrl);
-  const outlookTarget = targets.find(t => t.type === "page" && t.url && urlHostMatches(t.url, "outlook.office.com") && t.webSocketDebuggerUrl);
+  const outlookTarget = targets.find(t => t.type === "page" && t.url && isOutlookUrl(t.url) && t.webSocketDebuggerUrl);
   const anyTarget     = targets.find(t => t.type === "page" && t.webSocketDebuggerUrl);
   const target        = teamsTarget ?? outlookTarget ?? anyTarget;
 
@@ -235,7 +241,7 @@ async function acquireGraphToken(progress: ProgressFn): Promise<string> {
       const existingPages = ctx.pages();
       // Prefer Teams — it actually uses Graph API. Outlook uses its own REST API.
       let page = existingPages.find(p => urlHostMatches(p.url(), "teams.microsoft.com"))
-              ?? existingPages.find(p => urlHostMatches(p.url(), "outlook.office.com"));
+              ?? existingPages.find(p => isOutlookUrl(p.url()));
 
       let isNewPage = false;
       if (!page) {
@@ -334,7 +340,7 @@ async function acquireOutlookRestToken(progress: ProgressFn): Promise<string> {
   const targets = await listRes.json() as Array<{ webSocketDebuggerUrl?: string; type?: string; url?: string }>;
 
   // Outlook REST tokens live in the Outlook tab's MSAL cache
-  const outlookTarget = targets.find(t => t.type === "page" && t.url && urlHostMatches(t.url, "outlook.office.com") && t.webSocketDebuggerUrl);
+  const outlookTarget = targets.find(t => t.type === "page" && t.url && isOutlookUrl(t.url) && t.webSocketDebuggerUrl);
   const anyTarget = targets.find(t => t.type === "page" && t.webSocketDebuggerUrl);
   const target = outlookTarget ?? anyTarget;
 
