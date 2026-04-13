@@ -188,16 +188,14 @@ describe("getCalendarEvents Graph API error handling", () => {
       clearCachedAuthFile: vi.fn(),
     }));
 
-    // Mock teamsClient — calendar now uses acquireTeamsGraphToken for Graph API tokens
-    vi.doMock("../src/tools/teamsClient.js", () => ({
-      acquireTeamsGraphToken: vi.fn().mockResolvedValue("mock-graph-token"),
-    }));
-
     fetchSpy = vi.fn();
     vi.stubGlobal("fetch", fetchSpy);
 
     const mod = await import("../src/tools/outlookClient.js");
     getCalendarEvents = mod.getCalendarEvents;
+
+    // Pre-seed Outlook REST token — calendar now uses the same path as email
+    mod._seedOutlookRestTokenCache("mock-outlook-rest-token");
   });
 
   afterEach(() => {
@@ -236,13 +234,14 @@ describe("getCalendarEvents Graph API error handling", () => {
   });
 
   it("throws on non-OK response", async () => {
+    // Use 500 to hit the !res.ok branch directly (401 triggers a token-refresh retry)
     fetchSpy.mockResolvedValueOnce(
-      mockResponse("Unauthorized", { status: 401, statusText: "Unauthorized", contentType: "text/plain" })
+      mockResponse("Internal Server Error", { status: 500, statusText: "Internal Server Error", contentType: "text/plain" })
     );
 
     await expect(
       getCalendarEvents("2026-03-31", "2026-03-31", undefined, () => {})
-    ).rejects.toThrow(/401/);
+    ).rejects.toThrow(/500/);
   });
 
   it("retries without $filter when server rejects it", async () => {
