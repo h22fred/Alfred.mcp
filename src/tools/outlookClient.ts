@@ -806,16 +806,16 @@ export async function listMailFolders(progress: ProgressFn = () => {}): Promise<
   progress("📁 Fetching mail folders...");
   const token = await acquireOutlookRestToken(progress);
   const data = await outlookApiFetch(
-    "/mailfolders?$select=id,displayName,parentFolderId,childFolderCount,totalItemCount,unreadItemCount&$top=100",
+    "/mailfolders?$select=Id,DisplayName,ParentFolderId,ChildFolderCount,TotalItemCount,UnreadItemCount&$top=100",
     token, progress
   );
   const folders = (data.value as Record<string, unknown>[] ?? []).map(f => ({
-    id:               f.id as string,
-    displayName:      f.displayName as string,
-    parentFolderId:   f.parentFolderId as string,
-    childFolderCount: f.childFolderCount as number,
-    totalItemCount:   f.totalItemCount as number,
-    unreadItemCount:  f.unreadItemCount as number,
+    id:               (f.Id ?? f.id) as string,
+    displayName:      (f.DisplayName ?? f.displayName) as string,
+    parentFolderId:   (f.ParentFolderId ?? f.parentFolderId) as string,
+    childFolderCount: (f.ChildFolderCount ?? f.childFolderCount ?? 0) as number,
+    totalItemCount:   (f.TotalItemCount ?? f.totalItemCount ?? 0) as number,
+    unreadItemCount:  (f.UnreadItemCount ?? f.unreadItemCount ?? 0) as number,
   }));
 
   // Also fetch child folders for any folder that has children
@@ -823,16 +823,16 @@ export async function listMailFolders(progress: ProgressFn = () => {}): Promise<
   for (const parent of withChildren) {
     try {
       const childData = await outlookApiFetch(
-        `/mailfolders/${parent.id}/childfolders?$select=id,displayName,parentFolderId,childFolderCount,totalItemCount,unreadItemCount&$top=100`,
+        `/mailfolders/${parent.id}/childfolders?$select=Id,DisplayName,ParentFolderId,ChildFolderCount,TotalItemCount,UnreadItemCount&$top=100`,
         token, progress
       );
       const children = (childData.value as Record<string, unknown>[] ?? []).map(f => ({
-        id:               f.id as string,
-        displayName:      f.displayName as string,
-        parentFolderId:   f.parentFolderId as string,
-        childFolderCount: f.childFolderCount as number,
-        totalItemCount:   f.totalItemCount as number,
-        unreadItemCount:  f.unreadItemCount as number,
+        id:               (f.Id ?? f.id) as string,
+        displayName:      (f.DisplayName ?? f.displayName) as string,
+        parentFolderId:   (f.ParentFolderId ?? f.parentFolderId) as string,
+        childFolderCount: (f.ChildFolderCount ?? f.childFolderCount ?? 0) as number,
+        totalItemCount:   (f.TotalItemCount ?? f.totalItemCount ?? 0) as number,
+        unreadItemCount:  (f.UnreadItemCount ?? f.unreadItemCount ?? 0) as number,
       }));
       folders.push(...children);
     } catch (e) { process.stderr.write(`[alfred:warn] child folder fetch failed for ${parent.id}: ${e instanceof Error ? e.message : String(e)}\n`); }
