@@ -42,39 +42,25 @@ export function _seedOutlookRestTokenCache(token: string, ttlMs = TOKEN_CACHE_FA
 // service call, and captures the outgoing Authorization header.
 // ---------------------------------------------------------------------------
 
-// JS snippet injected into a browser tab to extract a Graph API Bearer token + expiry from MSAL cache.
-// Returns { token, expiresAt } or null.
-// Accepts any AccessToken with graph.microsoft.com audience (not just 'mail' scoped).
-// Prefers tokens with calendar/mail scopes, falls back to any Graph token.
+// JS snippet injected into a browser tab to extract a Bearer token from MSAL cache.
+// Grabs the first non-expired AccessToken whose scopes include 'mail'.
+// No audience filtering — the Outlook MSAL cache token works for both
+// graph.microsoft.com and outlook.office.com endpoints.
 const MSAL_EXTRACT_JS = `(function() {
-  const decodeAud = (jwt) => {
-    try {
-      const payload = JSON.parse(atob(jwt.split('.')[1].replace(/-/g,'+').replace(/_/g,'/')));
-      return (payload.aud || '').toLowerCase();
-    } catch { return ''; }
-  };
   const tryStorage = (s) => {
     try {
-      let bestMatch = null;
       for (const key of Object.keys(s)) {
         try {
           const val = JSON.parse(s.getItem(key));
-          if (val && val.credentialType === 'AccessToken' && val.secret) {
-            const aud = decodeAud(val.secret);
-            if (!aud.includes('graph.microsoft.com')) continue;
+          if (val && val.credentialType === 'AccessToken' && val.secret &&
+              (val.target || '').toLowerCase().includes('mail')) {
             const exp = Number(val.expiresOn || val.extended_expires_on || 0);
-            if (exp && exp * 1000 < Date.now()) continue;
-            const target = (val.target || '').toLowerCase();
-            // Prefer tokens with calendar or mail scopes
-            if (target.includes('calendars') || target.includes('mail')) {
+            if (!exp || exp * 1000 > Date.now()) {
               return { token: val.secret, expiresAt: exp ? exp * 1000 : 0 };
             }
-            // Keep any Graph token as fallback
-            if (!bestMatch) bestMatch = { token: val.secret, expiresAt: exp ? exp * 1000 : 0 };
           }
         } catch {}
       }
-      return bestMatch;
     } catch {}
     return null;
   };
@@ -494,9 +480,9 @@ export async function getCalendarEvents(
   const params = new URLSearchParams({
     startDateTime: `${startDate}T00:00:00Z`,
     endDateTime:   `${endDate}T23:59:59Z`,
-    $select: "Subject,Start,End,Location,Organizer,Attendees,IsOnlineMeeting,WebLink",
+    $select: "subject,start,end,location,organizer,attendees,isOnlineMeeting,webLink",
     $top: String(top),
-    $orderby: "Start/DateTime",
+    $orderby: "start/dateTime",
   });
 
   // If search filter is present, use $filter contains(subject,...) where supported,
@@ -504,19 +490,14 @@ export async function getCalendarEvents(
   if (search) {
     try {
       const safe = sanitizeODataSearch(search);
-      params.set("$filter", `contains(Subject,'${safe}')`);
+      params.set("$filter", `contains(subject,'${safe}')`);
     } catch (e) {
       process.stderr.write(`[alfred:warn] OData search sanitize failed, using client-side filter: ${e instanceof Error ? e.message : String(e)}\n`);
     }
   }
 
-  // Use Outlook REST token — same proven path as email. Avoids the Graph API
-  // audience issues that plagued acquireGraphToken / acquireTeamsGraphToken.
-  const token = await acquireOutlookRestToken(progress);
-
-  // Outlook REST v2.0 calendarview endpoint
-  const calendarUrl = `${OUTLOOK_API}/calendarview?${params}`;
-  let res = await fetch(calendarUrl, {
+  const token = await acquireGraphToken(progress);
+  let res = await fetch(`https://graph.microsoft.com/v1.0/me/calendarview?${params}`, {
     headers: { Authorization: `Bearer ${token}`, Accept: "application/json" },
     signal: AbortSignal.timeout(30_000),
   });
@@ -525,20 +506,8 @@ export async function getCalendarEvents(
   if (!res.ok && search && params.has("$filter")) {
     progress("⚠️ Server-side filter not supported on calendarView — falling back to client-side filter...");
     params.delete("$filter");
-    res = await fetch(`${OUTLOOK_API}/calendarview?${params}`, {
+    res = await fetch(`https://graph.microsoft.com/v1.0/me/calendarview?${params}`, {
       headers: { Authorization: `Bearer ${token}`, Accept: "application/json" },
-      signal: AbortSignal.timeout(30_000),
-    });
-  }
-
-  if (res.status === 401) {
-    // Token expired — clear and retry once
-    outlookRestTokenCache = null;
-    clearCachedAuthFile("outlookRestToken");
-    progress("🔄 Outlook REST token expired — re-acquiring...");
-    const freshToken = await acquireOutlookRestToken(progress);
-    res = await fetch(`${OUTLOOK_API}/calendarview?${params}`, {
-      headers: { Authorization: `Bearer ${freshToken}`, Accept: "application/json" },
       signal: AbortSignal.timeout(30_000),
     });
   }
@@ -549,34 +518,25 @@ export async function getCalendarEvents(
   }
   const data = await res.json() as { value?: Record<string, unknown>[] };
 
-  // Outlook REST v2.0 uses PascalCase; Graph API uses camelCase. Handle both.
   let events = (data.value ?? []).map(e => {
-    const orgField = (e.Organizer ?? e.organizer) as { EmailAddress?: { Name: string; Address: string }; emailAddress?: { name: string; address: string } } | undefined;
-    const org = orgField?.EmailAddress
-      ? { name: orgField.EmailAddress.Name, address: orgField.EmailAddress.Address }
-      : orgField?.emailAddress
-      ? { name: orgField.emailAddress.name, address: orgField.emailAddress.address }
-      : undefined;
-    const rawAttendees = ((e.Attendees ?? e.attendees) as Array<{ EmailAddress?: { Name: string; Address: string }; emailAddress?: { name: string; address: string } }>) ?? [];
+    const org = (e.organizer as { emailAddress: { name: string; address: string } } | undefined)?.emailAddress;
+    const rawAttendees = e.attendees as Array<{ emailAddress: { name: string; address: string } }> ?? [];
     const attendees = rawAttendees.map(a => ({
-      name:  a.EmailAddress?.Name  ?? a.emailAddress?.name  ?? "",
-      email: a.EmailAddress?.Address ?? a.emailAddress?.address ?? "",
+      name:  a.emailAddress?.name  ?? "",
+      email: a.emailAddress?.address ?? "",
     }));
-    const startField = (e.Start ?? e.start) as { DateTime?: string; dateTime?: string } | undefined;
-    const endField   = (e.End ?? e.end) as { DateTime?: string; dateTime?: string } | undefined;
-    const locationField = (e.Location ?? e.location) as { DisplayName?: string; displayName?: string } | undefined;
     return {
-      id:              ((e.Id ?? e.id) as string) || "",
-      subject:         ((e.Subject ?? e.subject) as string) || "",
-      start:           startField?.DateTime ?? startField?.dateTime ?? "",
-      end:             endField?.DateTime ?? endField?.dateTime ?? "",
-      location:        locationField?.DisplayName ?? locationField?.displayName ?? undefined,
+      id:              "",
+      subject:         e.subject as string,
+      start:           (e.start as { dateTime: string })?.dateTime ?? "",
+      end:             (e.end   as { dateTime: string })?.dateTime ?? "",
+      location:        (e.location as { displayName: string })?.displayName || undefined,
       organizer:       org?.name || undefined,
       organizerEmail:  org?.address || undefined,
       attendees,
-      isOnlineMeeting: (e.IsOnlineMeeting ?? e.isOnlineMeeting) as boolean,
+      isOnlineMeeting: e.isOnlineMeeting as boolean,
       bodyPreview:     undefined,
-      webLink:         ((e.WebLink ?? e.webLink) as string) || undefined,
+      webLink:         (e.webLink as string) || undefined,
     };
   });
 
