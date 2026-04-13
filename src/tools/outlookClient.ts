@@ -3,7 +3,6 @@ import type { ProgressFn } from "../auth/tokenExtractor.js";
 import { loadCachedAuth, saveCachedAuth, clearCachedAuthFile } from "../auth/authFileCache.js";
 import { stripHtml, urlHostMatches } from "../shared.js";
 import { sanitizeODataSearch } from "./dynamicsClient.js";
-import { acquireTeamsGraphToken } from "./teamsClient.js";
 
 const CDP_PORT = 9222;
 const OUTLOOK_ORIGIN = "https://outlook.office.com";
@@ -511,9 +510,13 @@ export async function getCalendarEvents(
     }
   }
 
-  // Use Teams Graph token (proven to work for graph.microsoft.com audience)
-  const token = await acquireTeamsGraphToken(progress);
-  let res = await fetch(`https://graph.microsoft.com/v1.0/me/calendarview?${params}`, {
+  // Use Outlook REST token — same proven path as email. Avoids the Graph API
+  // audience issues that plagued acquireGraphToken / acquireTeamsGraphToken.
+  const token = await acquireOutlookRestToken(progress);
+
+  // Outlook REST v2.0 calendarview endpoint
+  const calendarUrl = `${OUTLOOK_API}/calendarview?${params}`;
+  let res = await fetch(calendarUrl, {
     headers: { Authorization: `Bearer ${token}`, Accept: "application/json" },
     signal: AbortSignal.timeout(30_000),
   });
@@ -522,8 +525,20 @@ export async function getCalendarEvents(
   if (!res.ok && search && params.has("$filter")) {
     progress("⚠️ Server-side filter not supported on calendarView — falling back to client-side filter...");
     params.delete("$filter");
-    res = await fetch(`https://graph.microsoft.com/v1.0/me/calendarview?${params}`, {
+    res = await fetch(`${OUTLOOK_API}/calendarview?${params}`, {
       headers: { Authorization: `Bearer ${token}`, Accept: "application/json" },
+      signal: AbortSignal.timeout(30_000),
+    });
+  }
+
+  if (res.status === 401) {
+    // Token expired — clear and retry once
+    outlookRestTokenCache = null;
+    clearCachedAuthFile("outlookRestToken");
+    progress("🔄 Outlook REST token expired — re-acquiring...");
+    const freshToken = await acquireOutlookRestToken(progress);
+    res = await fetch(`${OUTLOOK_API}/calendarview?${params}`, {
+      headers: { Authorization: `Bearer ${freshToken}`, Accept: "application/json" },
       signal: AbortSignal.timeout(30_000),
     });
   }
@@ -534,25 +549,34 @@ export async function getCalendarEvents(
   }
   const data = await res.json() as { value?: Record<string, unknown>[] };
 
+  // Outlook REST v2.0 uses PascalCase; Graph API uses camelCase. Handle both.
   let events = (data.value ?? []).map(e => {
-    const org = (e.organizer as { emailAddress: { name: string; address: string } } | undefined)?.emailAddress;
-    const rawAttendees = e.attendees as Array<{ emailAddress: { name: string; address: string } }> ?? [];
+    const orgField = (e.Organizer ?? e.organizer) as { EmailAddress?: { Name: string; Address: string }; emailAddress?: { name: string; address: string } } | undefined;
+    const org = orgField?.EmailAddress
+      ? { name: orgField.EmailAddress.Name, address: orgField.EmailAddress.Address }
+      : orgField?.emailAddress
+      ? { name: orgField.emailAddress.name, address: orgField.emailAddress.address }
+      : undefined;
+    const rawAttendees = ((e.Attendees ?? e.attendees) as Array<{ EmailAddress?: { Name: string; Address: string }; emailAddress?: { name: string; address: string } }>) ?? [];
     const attendees = rawAttendees.map(a => ({
-      name:  a.emailAddress?.name  ?? "",
-      email: a.emailAddress?.address ?? "",
+      name:  a.EmailAddress?.Name  ?? a.emailAddress?.name  ?? "",
+      email: a.EmailAddress?.Address ?? a.emailAddress?.address ?? "",
     }));
+    const startField = (e.Start ?? e.start) as { DateTime?: string; dateTime?: string } | undefined;
+    const endField   = (e.End ?? e.end) as { DateTime?: string; dateTime?: string } | undefined;
+    const locationField = (e.Location ?? e.location) as { DisplayName?: string; displayName?: string } | undefined;
     return {
-      id:              "", // intentionally omitted — Graph IDs are ~200 char base64, not needed downstream
-      subject:         e.subject as string,
-      start:           (e.start as { dateTime: string })?.dateTime,
-      end:             (e.end   as { dateTime: string })?.dateTime,
-      location:        (e.location as { displayName: string })?.displayName || undefined,
+      id:              ((e.Id ?? e.id) as string) || "",
+      subject:         ((e.Subject ?? e.subject) as string) || "",
+      start:           startField?.DateTime ?? startField?.dateTime ?? "",
+      end:             endField?.DateTime ?? endField?.dateTime ?? "",
+      location:        locationField?.DisplayName ?? locationField?.displayName ?? undefined,
       organizer:       org?.name || undefined,
       organizerEmail:  org?.address || undefined,
       attendees,
-      isOnlineMeeting: e.isOnlineMeeting as boolean,
-      bodyPreview:     undefined, // dropped to save context — use search_emails for full content
-      webLink:         (e.webLink as string) || undefined,
+      isOnlineMeeting: (e.IsOnlineMeeting ?? e.isOnlineMeeting) as boolean,
+      bodyPreview:     undefined,
+      webLink:         ((e.WebLink ?? e.webLink) as string) || undefined,
     };
   });
 
