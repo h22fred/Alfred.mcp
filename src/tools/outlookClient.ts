@@ -749,7 +749,7 @@ export async function getEmails(opts: {
       $top: String(top),
     });
     // Search within the specified folder, not across all mail
-    path = `/mailfolders/${folder}/messages?${p}`;
+    path = `/mailfolders/${encodeURIComponent(folder)}/messages?${p}`;
   } else {
     const filters: string[] = [];
     if (unreadOnly) filters.push("IsRead eq false");
@@ -759,7 +759,7 @@ export async function getEmails(opts: {
       $orderby: "ReceivedDateTime desc",
       ...(filters.length ? { $filter: filters.join(" and ") } : {}),
     });
-    path = `/mailfolders/${folder}/messages?${p}`;
+    path = `/mailfolders/${encodeURIComponent(folder)}/messages?${p}`;
   }
 
   const token = await acquireOutlookRestToken(progress);
@@ -823,7 +823,7 @@ export async function listMailFolders(progress: ProgressFn = () => {}): Promise<
   for (const parent of withChildren) {
     try {
       const childData = await outlookApiFetch(
-        `/mailfolders/${parent.id}/childfolders?$select=Id,DisplayName,ParentFolderId,ChildFolderCount,TotalItemCount,UnreadItemCount&$top=100`,
+        `/mailfolders/${encodeURIComponent(parent.id)}/childfolders?$select=Id,DisplayName,ParentFolderId,ChildFolderCount,TotalItemCount,UnreadItemCount&$top=100`,
         token, progress
       );
       const children = (childData.value as Record<string, unknown>[] ?? []).map(f => ({
