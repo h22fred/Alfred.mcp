@@ -814,57 +814,64 @@ export interface MailFolder {
 export async function listMailFolders(progress: ProgressFn = () => {}): Promise<MailFolder[]> {
   progress("📁 Fetching mail folders...");
   const token = await acquireOutlookRestToken(progress);
-  const data = await outlookApiFetch(
-    "/mailfolders?$select=Id,DisplayName,ParentFolderId,ChildFolderCount,TotalItemCount,UnreadItemCount&$top=100",
-    token, progress
-  );
-  const folders = (data.value as Record<string, unknown>[] ?? []).map(f => ({
+  const SELECT = "$select=Id,DisplayName,ParentFolderId,ChildFolderCount,TotalItemCount,UnreadItemCount&$top=100";
+  const data = await outlookApiFetch(`/mailfolders?${SELECT}`, token, progress);
+
+  const mapFolder = (f: Record<string, unknown>): MailFolder => ({
     id:               (f.Id ?? f.id) as string,
     displayName:      (f.DisplayName ?? f.displayName) as string,
     parentFolderId:   (f.ParentFolderId ?? f.parentFolderId) as string,
     childFolderCount: (f.ChildFolderCount ?? f.childFolderCount ?? 0) as number,
     totalItemCount:   (f.TotalItemCount ?? f.totalItemCount ?? 0) as number,
     unreadItemCount:  (f.UnreadItemCount ?? f.unreadItemCount ?? 0) as number,
-  }));
+  });
 
-  // Also fetch child folders for any folder that has children
-  const withChildren = folders.filter(f => f.childFolderCount > 0);
-  for (const parent of withChildren) {
-    try {
-      const childData = await outlookApiFetch(
-        `/mailfolders/${encodeURIComponent(parent.id)}/childfolders?$select=Id,DisplayName,ParentFolderId,ChildFolderCount,TotalItemCount,UnreadItemCount&$top=100`,
-        token, progress
-      );
-      const children = (childData.value as Record<string, unknown>[] ?? []).map(f => ({
-        id:               (f.Id ?? f.id) as string,
-        displayName:      (f.DisplayName ?? f.displayName) as string,
-        parentFolderId:   (f.ParentFolderId ?? f.parentFolderId) as string,
-        childFolderCount: (f.ChildFolderCount ?? f.childFolderCount ?? 0) as number,
-        totalItemCount:   (f.TotalItemCount ?? f.totalItemCount ?? 0) as number,
-        unreadItemCount:  (f.UnreadItemCount ?? f.unreadItemCount ?? 0) as number,
-      }));
-      folders.push(...children);
-    } catch (e) { process.stderr.write(`[alfred:warn] child folder fetch failed for ${parent.id}: ${e instanceof Error ? e.message : String(e)}\n`); }
-  }
+  const folders = (data.value as Record<string, unknown>[] ?? []).map(mapFolder);
+
+  // Recursively fetch child folders (Clients → PMI - Philip Morris → …)
+  const MAX_DEPTH = 4;
+  const fetchChildren = async (parents: MailFolder[], depth: number) => {
+    if (depth >= MAX_DEPTH) return;
+    const withChildren = parents.filter(f => f.childFolderCount > 0);
+    for (const parent of withChildren) {
+      try {
+        const childData = await outlookApiFetch(
+          `/mailfolders/${encodeURIComponent(parent.id)}/childfolders?${SELECT}`,
+          token, progress
+        );
+        const children = (childData.value as Record<string, unknown>[] ?? []).map(mapFolder);
+        folders.push(...children);
+        // Recurse into children that also have subfolders
+        await fetchChildren(children, depth + 1);
+      } catch (e) {
+        process.stderr.write(`[alfred:warn] child folder fetch failed for "${parent.displayName}" (${parent.id}): ${e instanceof Error ? e.message : String(e)}\n`);
+      }
+    }
+  };
+  await fetchChildren(folders, 0);
 
   progress(`✅ Found ${folders.length} mail folder(s)`);
   return folders;
 }
 
-/** Resolve a folder name to its Graph ID. Tries well-known names first, then searches user folders. */
+/** Resolve a folder name to its Outlook REST folder ID. Tries well-known names first, then searches user folders. */
 export async function resolveMailFolder(folder: string, progress: ProgressFn = () => {}): Promise<string> {
   const wellKnown = ["inbox", "sentitems", "drafts", "deleteditems", "junkemail", "archive"];
   if (wellKnown.includes(folder.toLowerCase())) return folder.toLowerCase();
 
-  // Search by display name (case-insensitive)
+  progress(`📁 Looking up folder "${folder}"...`);
+  // Search by display name across all folders including subfolders (case-insensitive)
   const folders = await listMailFolders(progress);
   const match = folders.find(f => f.displayName.toLowerCase() === folder.toLowerCase());
-  if (match) return match.id;
+  if (match) {
+    progress(`📁 Exact match: "${match.displayName}" (${match.totalItemCount} items)`);
+    return match.id;
+  }
 
-  // Partial match fallback
+  // Partial match fallback (e.g. "PMI" matches "PMI - Philip Morris")
   const partial = folders.find(f => f.displayName.toLowerCase().includes(folder.toLowerCase()));
   if (partial) {
-    progress(`📁 Matched folder: "${partial.displayName}"`);
+    progress(`📁 Partial match: "${partial.displayName}" (${partial.totalItemCount} items)`);
     return partial.id;
   }
 
