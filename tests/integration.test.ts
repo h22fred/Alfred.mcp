@@ -194,8 +194,8 @@ describe("getCalendarEvents Graph API error handling", () => {
     const mod = await import("../src/tools/outlookClient.js");
     getCalendarEvents = mod.getCalendarEvents;
 
-    // Pre-seed Outlook REST token — calendar now uses the same path as email
-    mod._seedOutlookRestTokenCache("mock-outlook-rest-token");
+    // Pre-seed Graph token — calendar uses acquireGraphToken (same as original working code)
+    mod._seedGraphTokenCache("mock-graph-token");
   });
 
   afterEach(() => {

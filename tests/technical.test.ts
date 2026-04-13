@@ -102,10 +102,10 @@ describe("auth resilience", () => {
     expect(outlookSrc).toContain("session has expired");
   });
 
-  it("Outlook MSAL extraction returns token + expiresAt and validates Graph audience", () => {
+  it("Outlook MSAL extraction returns token + expiresAt and filters by mail scope", () => {
     expect(outlookSrc).toContain("return { token: val.secret, expiresAt:");
-    expect(outlookSrc).toContain("graph.microsoft.com");
-    expect(outlookSrc).toContain("decodeAud");
+    expect(outlookSrc).toContain("credentialType === 'AccessToken'");
+    expect(outlookSrc).toContain(".includes('mail')");
   });
 
   it("Outlook Graph token cache uses refresh margin before expiry", () => {
