@@ -543,52 +543,28 @@ export async function getCalendarEvents(
   progress(`📅 Fetching calendar events ${startDate} → ${endDate}${search ? ` (filter: "${search}")` : ""}...`);
 
   // NOTE: /calendarview does NOT support $search — we filter client-side below.
-  // Also skip the massive Graph "id" field to reduce payload size.
+  // Use Outlook REST API — same proven token path as emails.
+  // Outlook REST v2.0 uses PascalCase field names.
   const params = new URLSearchParams({
     startDateTime: `${startDate}T00:00:00Z`,
     endDateTime:   `${endDate}T23:59:59Z`,
-    $select: "subject,start,end,location,organizer,attendees,isOnlineMeeting,webLink",
+    $select: "Subject,Start,End,Location,Organizer,Attendees,IsOnlineMeeting,WebLink",
     $top: String(top),
-    $orderby: "start/dateTime",
+    $orderby: "Start/DateTime",
   });
 
-  // If search filter is present, use $filter contains(subject,...) where supported,
-  // but calendarView may not support it — so we always apply client-side filter as fallback.
   if (search) {
     try {
       const safe = sanitizeODataSearch(search);
-      params.set("$filter", `contains(subject,'${safe}')`);
+      params.set("$filter", `contains(Subject,'${safe}')`);
     } catch (e) {
       process.stderr.write(`[alfred:warn] OData search sanitize failed, using client-side filter: ${e instanceof Error ? e.message : String(e)}\n`);
     }
   }
 
-  // Try Graph API first (works when Graph-audience token is available),
-  // then fall back to Outlook REST API (works with the Outlook-audience token
-  // that's reliably available on both outlook.office.com and outlook.cloud.microsoft.com).
-  let token: string;
-  let apiBase: string;
-  let isOutlookRest = false;
-  try {
-    token = await acquireGraphToken(progress);
-    apiBase = "https://graph.microsoft.com/v1.0/me/calendarview";
-  } catch {
-    progress("⚠️ Graph token unavailable — using Outlook REST API for calendar...");
-    token = await acquireOutlookRestToken(progress);
-    apiBase = `${OUTLOOK_API}/calendarview`;
-    isOutlookRest = true;
-    // Outlook REST uses PascalCase for $select/$orderby/$filter
-    params.set("$select", "Subject,Start,End,Location,Organizer,Attendees,IsOnlineMeeting,WebLink");
-    params.set("$orderby", "Start/DateTime");
-    if (params.has("$filter") && search) {
-      try {
-        const safe = sanitizeODataSearch(search);
-        params.set("$filter", `contains(Subject,'${safe}')`);
-      } catch { params.delete("$filter"); }
-    }
-  }
+  const token = await acquireOutlookRestToken(progress);
 
-  let res = await fetch(`${apiBase}?${params}`, {
+  let res = await fetch(`${OUTLOOK_API}/calendarview?${params}`, {
     headers: { Authorization: `Bearer ${token}`, Accept: "application/json" },
     signal: AbortSignal.timeout(30_000),
   });
@@ -597,7 +573,7 @@ export async function getCalendarEvents(
   if (!res.ok && search && params.has("$filter")) {
     progress("⚠️ Server-side filter not supported on calendarView — falling back to client-side filter...");
     params.delete("$filter");
-    res = await fetch(`${apiBase}?${params}`, {
+    res = await fetch(`${OUTLOOK_API}/calendarview?${params}`, {
       headers: { Authorization: `Bearer ${token}`, Accept: "application/json" },
       signal: AbortSignal.timeout(30_000),
     });
