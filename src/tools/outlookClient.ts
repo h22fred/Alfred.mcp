@@ -492,11 +492,11 @@ export async function getCalendarEvents(
   // NOTE: /calendarview does NOT support $search — we filter client-side below.
   // Also skip the massive Graph "id" field to reduce payload size.
   const params = new URLSearchParams({
-    startDateTime: `${startDate}T00:00:00Z`,
-    endDateTime:   `${endDate}T23:59:59Z`,
-    $select: "subject,start,end,location,organizer,attendees,isOnlineMeeting,webLink",
+    startdatetime: `${startDate}T00:00:00Z`,
+    enddatetime:   `${endDate}T23:59:59Z`,
+    $select: "Subject,Start,End,Location,Organizer,Attendees,IsOnlineMeeting,WebLink",
     $top: String(top),
-    $orderby: "start/dateTime",
+    $orderby: "Start/DateTime",
   });
 
   // If search filter is present, use $filter contains(subject,...) where supported,
@@ -504,7 +504,7 @@ export async function getCalendarEvents(
   if (search) {
     try {
       const safe = sanitizeODataSearch(search);
-      params.set("$filter", `contains(subject,'${safe}')`);
+      params.set("$filter", `contains(Subject,'${safe}')`);
     } catch (e) {
       process.stderr.write(`[alfred:warn] OData search sanitize failed, using client-side filter: ${e instanceof Error ? e.message : String(e)}\n`);
     }
