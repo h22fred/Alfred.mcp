@@ -136,8 +136,12 @@ async function acquireGraphTokenRawCDP(progress: ProgressFn): Promise<string> {
     throw new Error("No page targets found in Alfred. Open Alfred.app and log into Teams or Outlook.");
   }
 
+  // Log which tab we're using so the user can see what's happening
+  const tabLabel = teamsTarget ? "Teams" : outlookTarget ? "Outlook" : "other";
+  const tabUrl = target.url ?? "unknown";
+  process.stderr.write(`[alfred] CDP: using ${tabLabel} tab (${tabUrl.slice(0, 80)})\n`);
   if (!teamsTarget) {
-    process.stderr.write(`[alfred] CDP: no Teams tab found — trying ${outlookTarget ? "Outlook" : "other"} tab for MSAL cache (may lack Graph audience)\n`);
+    process.stderr.write(`[alfred] CDP: no Teams tab found — trying ${outlookTarget ? "Outlook" : "other"} tab for MSAL cache\n`);
   }
 
   // Detect if tabs are stuck on login pages
@@ -151,7 +155,7 @@ async function acquireGraphTokenRawCDP(progress: ProgressFn): Promise<string> {
   }
 
   // Step 1: try reading token directly from MSAL storage — fast, no network interception
-  interface MsalDiag { sessionKeys: number; localKeys: number; accessTokens: number; matched: Array<{ target: string; exp: number; sName: string }>; skippedExpired: number }
+  interface MsalDiag { sessionKeys: number; localKeys: number; accessTokens: number; matched: Array<{ key: string; target: string; exp: number; sName: string }>; skippedExpired: number; origin: string }
   const msalResult = await new Promise<{ token: string | null; expiresAt: number; debug?: MsalDiag } | null>((resolve) => {
     const ws = new WebSocket(target.webSocketDebuggerUrl!);
     const timer = setTimeout(() => {
@@ -182,13 +186,17 @@ async function acquireGraphTokenRawCDP(progress: ProgressFn): Promise<string> {
     });
   });
 
-  // Log diagnostics regardless of outcome
+  // Log diagnostics regardless of outcome — both stderr and user-facing progress
   if (msalResult?.debug) {
     const d = msalResult.debug;
-    process.stderr.write(`[alfred:diag] MSAL cache scan: ${d.sessionKeys} session keys, ${d.localKeys} local keys, ${d.accessTokens} AccessTokens found, ${d.skippedExpired} expired\n`);
+    const diagMsg = `MSAL scan on ${d.origin}: ${d.sessionKeys} session keys, ${d.localKeys} local keys, ${d.accessTokens} AccessTokens, ${d.skippedExpired} expired`;
+    process.stderr.write(`[alfred:diag] ${diagMsg}\n`);
+    progress(`🔍 ${diagMsg}`);
     for (const m of d.matched.slice(0, 5)) {
-      process.stderr.write(`[alfred:diag]   token target="${m.target}" exp=${m.exp} storage=${m.sName}\n`);
+      process.stderr.write(`[alfred:diag]   key="${m.key}" target="${m.target}" exp=${m.exp} storage=${m.sName}\n`);
     }
+  } else if (!msalResult) {
+    progress("⚠️ MSAL extraction returned no result (timeout or WebSocket error)");
   }
 
   if (msalResult?.token) {
@@ -237,11 +245,18 @@ async function acquireGraphTokenRawCDP(progress: ProgressFn): Promise<string> {
       try {
         const msg = JSON.parse(event.data as string) as { id?: number; method?: string; params?: Record<string, unknown> };
         if (msg.id === 1) {
-          // Network enabled — trigger a lightweight Outlook API call to force the
-          // browser to send a Bearer token we can capture.
-          // Use the page's own origin API (works on both outlook.office.com and outlook.cloud.microsoft.com)
+          // Network enabled — trigger API calls to capture a Bearer token.
+          // Try multiple approaches: same-origin OWA endpoints + XHR reload.
+          // On outlook.cloud.microsoft.com the API paths differ from outlook.office.com,
+          // so we also trigger a soft page reload to capture whatever the app fetches.
           send("Runtime.evaluate", {
-            expression: `fetch(location.origin + '/owa/service.svc?action=GetConversationItems', { method: 'POST', body: '{}', headers: {'Content-Type':'application/json'}, credentials: 'include' }).catch(()=>{});fetch(location.origin + '/api/v2.0/me/messages?$top=1', { credentials: 'include' }).catch(()=>{})`,
+            expression: [
+              `fetch(location.origin + '/owa/service.svc?action=GetConversationItems', { method: 'POST', body: '{}', headers: {'Content-Type':'application/json'}, credentials: 'include' }).catch(()=>{})`,
+              `fetch(location.origin + '/api/v2.0/me/messages?$top=1', { credentials: 'include' }).catch(()=>{})`,
+              `fetch(location.origin + '/mail/api/v1/me/mailboxsettings', { credentials: 'include' }).catch(()=>{})`,
+              // Trigger a soft reload to make the page issue its natural API calls
+              `setTimeout(()=>{ try { const x = new XMLHttpRequest(); x.open('GET', location.origin + '/owa/'); x.withCredentials = true; x.send(); } catch(e){} }, 500)`,
+            ].join(';'),
             awaitPromise: false,
           });
         }
