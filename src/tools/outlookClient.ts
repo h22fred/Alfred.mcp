@@ -245,14 +245,23 @@ async function acquireGraphTokenRawCDP(progress: ProgressFn): Promise<string> {
       try {
         const msg = JSON.parse(event.data as string) as { id?: number; method?: string; params?: Record<string, unknown> };
         if (msg.id === 1) {
-          // Network enabled — reload the page so the app makes its own API calls
-          // with MSAL-managed Bearer tokens (manual fetch() won't have them)
-          send("Page.reload");
+          // Network enabled — trigger API calls against all known Outlook API domains
+          const now = new Date().toISOString();
+          const tomorrow = new Date(Date.now()+86400000).toISOString();
+          send("Runtime.evaluate", {
+            expression: [
+              `fetch('https://outlook.microsoft.com/api/v2.0/me/messages?$top=1', { credentials: 'include' }).catch(()=>{})`,
+              `fetch('https://outlook.cloud.microsoft.com/api/v2.0/me/messages?$top=1', { credentials: 'include' }).catch(()=>{})`,
+              `fetch('https://outlook.office.com/api/v2.0/me/messages?$top=1', { credentials: 'include' }).catch(()=>{})`,
+              `fetch('/api/v2.0/me/calendarview?$top=1&$select=Id&startDateTime=${now}&endDateTime=${tomorrow}', { credentials: 'include' }).catch(()=>{})`,
+            ].join(';'),
+            awaitPromise: false,
+          });
+          setTimeout(() => { if (!capturedToken) send("Page.reload"); }, 3_000);
         }
         if (msg.method === "Network.requestWillBeSent") {
           const headers = ((msg.params?.request as Record<string, unknown>)?.headers ?? {}) as Record<string, string>;
           const auth = headers["Authorization"] ?? headers["authorization"] ?? "";
-          // Capture any Bearer token — the Outlook tab's own API calls use valid tokens
           if (!capturedToken && auth.startsWith("Bearer ")) {
             capturedToken = auth.slice(7);
             done(capturedToken);
@@ -477,9 +486,21 @@ async function acquireOutlookRestToken(progress: ProgressFn): Promise<string> {
       try {
         const msg = JSON.parse(event.data as string) as { id?: number; method?: string; params?: Record<string, unknown> };
         if (msg.id === 1) {
-          // Network enabled — reload the page so Outlook's OWN code makes API calls
-          // with MSAL-managed Bearer tokens (our fetch() calls won't have them).
-          send("Page.reload");
+          // Network enabled — trigger API calls against all known Outlook API domains.
+          // The page is on outlook.cloud.microsoft.com but API goes to outlook.microsoft.com.
+          const now = new Date().toISOString();
+          const tomorrow = new Date(Date.now()+86400000).toISOString();
+          send("Runtime.evaluate", {
+            expression: [
+              `fetch('https://outlook.microsoft.com/api/v2.0/me/messages?$top=1', { credentials: 'include' }).catch(()=>{})`,
+              `fetch('https://outlook.cloud.microsoft.com/api/v2.0/me/messages?$top=1', { credentials: 'include' }).catch(()=>{})`,
+              `fetch('https://outlook.office.com/api/v2.0/me/messages?$top=1', { credentials: 'include' }).catch(()=>{})`,
+              `fetch('/api/v2.0/me/calendarview?$top=1&$select=Id&startDateTime=${now}&endDateTime=${tomorrow}', { credentials: 'include' }).catch(()=>{})`,
+            ].join(';'),
+            awaitPromise: false,
+          });
+          // Backup: if no token captured in 3s, reload page
+          setTimeout(() => { if (!found) send("Page.reload"); }, 3_000);
         }
         if (msg.method === "Network.requestWillBeSent") {
           const headers = ((msg.params?.request as Record<string, unknown>)?.headers ?? {}) as Record<string, string>;
@@ -516,6 +537,7 @@ async function acquireOutlookRestToken(progress: ProgressFn): Promise<string> {
   );
 }
 
+// outlook.microsoft.com is browser-only (CORS-gated); outlook.office.com works for server-side Bearer calls
 const OUTLOOK_API = "https://outlook.office.com/api/v2.0/me";
 
 // ---------------------------------------------------------------------------
