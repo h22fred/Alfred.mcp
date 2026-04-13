@@ -492,8 +492,8 @@ export async function getCalendarEvents(
   // NOTE: /calendarview does NOT support $search — we filter client-side below.
   // Also skip the massive Graph "id" field to reduce payload size.
   const params = new URLSearchParams({
-    startdatetime: `${startDate}T00:00:00Z`,
-    enddatetime:   `${endDate}T23:59:59Z`,
+    startDateTime: `${startDate}T00:00:00Z`,
+    endDateTime:   `${endDate}T23:59:59Z`,
     $select: "Subject,Start,End,Location,Organizer,Attendees,IsOnlineMeeting,WebLink",
     $top: String(top),
     $orderby: "Start/DateTime",
