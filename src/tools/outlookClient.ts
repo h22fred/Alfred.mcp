@@ -464,8 +464,73 @@ async function acquireOutlookRestToken(progress: ProgressFn): Promise<string> {
     return msalResult.token;
   }
 
+  // MSAL cache may be encrypted (outlook.cloud.microsoft.com uses AES-GCM).
+  // Fallback: capture Bearer token from the Outlook tab's own API requests.
+  progress("🔑 MSAL cache unreadable — capturing token via network interception...");
+
+  const capturedToken = await new Promise<string | null>((resolve) => {
+    const ws = new WebSocket(target.webSocketDebuggerUrl!);
+    let found: string | null = null;
+
+    const timer = setTimeout(() => {
+      process.stderr.write("[alfred:warn] Outlook REST network interception timed out (10s)\n");
+      try { ws.close(); } catch {}
+      resolve(null);
+    }, 10_000);
+
+    let msgId = 0;
+    const send = (method: string, params?: Record<string, unknown>) =>
+      ws.send(JSON.stringify({ id: ++msgId, method, params }));
+
+    ws.addEventListener("open", () => send("Network.enable"));
+
+    ws.addEventListener("message", (event: MessageEvent) => {
+      try {
+        const msg = JSON.parse(event.data as string) as { id?: number; method?: string; params?: Record<string, unknown> };
+        if (msg.id === 1) {
+          // Network enabled — trigger Outlook API calls to force Bearer token emission
+          send("Runtime.evaluate", {
+            expression: [
+              `fetch(location.origin + '/owa/service.svc?action=GetConversationItems', { method: 'POST', body: '{}', headers: {'Content-Type':'application/json'}, credentials: 'include' }).catch(()=>{})`,
+              `fetch(location.origin + '/api/v2.0/me/messages?$top=1', { credentials: 'include' }).catch(()=>{})`,
+              `fetch(location.origin + '/mail/api/v1/me/mailboxsettings', { credentials: 'include' }).catch(()=>{})`,
+              `fetch('https://outlook.office.com/api/v2.0/me/messages?$top=1', { credentials: 'include' }).catch(()=>{})`,
+              `fetch('https://outlook.office365.com/api/v2.0/me/messages?$top=1', { credentials: 'include' }).catch(()=>{})`,
+            ].join(';'),
+            awaitPromise: false,
+          });
+        }
+        if (msg.method === "Network.requestWillBeSent") {
+          const headers = ((msg.params?.request as Record<string, unknown>)?.headers ?? {}) as Record<string, string>;
+          const auth = headers["Authorization"] ?? headers["authorization"] ?? "";
+          if (!found && auth.startsWith("Bearer ")) {
+            found = auth.slice(7);
+            clearTimeout(timer);
+            try { ws.close(); } catch {}
+            resolve(found);
+          }
+        }
+      } catch (e) { process.stderr.write(`[alfred:warn] CDP network interception error: ${e instanceof Error ? e.message : String(e)}\n`); }
+    });
+
+    ws.addEventListener("error", () => {
+      clearTimeout(timer);
+      process.stderr.write("[alfred:warn] Outlook REST network interception WebSocket error\n");
+      try { ws.close(); } catch {}
+      resolve(null);
+    });
+  });
+
+  if (capturedToken) {
+    const expiresAt = Date.now() + TOKEN_CACHE_FALLBACK_MS;
+    outlookRestTokenCache = { token: capturedToken, expiresAt };
+    saveCachedAuth("outlookRestToken", capturedToken, expiresAt);
+    progress("✅ Outlook REST token captured via network interception");
+    return capturedToken;
+  }
+
   throw new Error(
-    "Could not find an Outlook REST token in the MSAL cache.\n" +
+    "Could not capture Outlook token.\n" +
     "Make sure Outlook is fully loaded (inbox visible) in the Alfred window, then retry."
   );
 }
