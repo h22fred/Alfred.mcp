@@ -48,29 +48,45 @@ export function _seedOutlookRestTokenCache(token: string, ttlMs = TOKEN_CACHE_FA
 // ---------------------------------------------------------------------------
 
 // JS snippet injected into a browser tab to extract a Bearer token from MSAL cache.
-// Grabs the first non-expired AccessToken whose scopes include 'mail' or 'calendar'.
-// No audience filtering — the Outlook MSAL cache token works for both
-// graph.microsoft.com and outlook.office.com endpoints.
+// Tries mail/calendar scoped tokens first, then falls back to ANY AccessToken.
+// Returns { token, expiresAt, debug } — debug contains diagnostics on cache contents.
 const MSAL_EXTRACT_JS = `(function() {
-  const tryStorage = (s) => {
+  const diag = { sessionKeys: 0, localKeys: 0, accessTokens: 0, matched: [], skippedExpired: 0 };
+  const tryStorage = (s, sName) => {
     try {
+      const keyCount = Object.keys(s).length;
+      if (sName === 'session') diag.sessionKeys = keyCount;
+      else diag.localKeys = keyCount;
+      let bestScoped = null;
+      let bestAny = null;
       for (const key of Object.keys(s)) {
         try {
           const val = JSON.parse(s.getItem(key));
           if (val && val.credentialType === 'AccessToken' && val.secret) {
+            diag.accessTokens++;
             const target = (val.target || '').toLowerCase();
-            if (!target.includes('mail') && !target.includes('calendar')) continue;
             const exp = Number(val.expiresOn || val.extended_expires_on || 0);
-            if (!exp || exp * 1000 > Date.now()) {
-              return { token: val.secret, expiresAt: exp ? exp * 1000 : 0 };
+            diag.matched.push({ target: target.slice(0, 80), exp, sName });
+            if (exp && exp * 1000 < Date.now()) { diag.skippedExpired++; continue; }
+            const result = { token: val.secret, expiresAt: exp ? exp * 1000 : 0 };
+            if (target.includes('mail') || target.includes('calendar')) {
+              if (!bestScoped) bestScoped = result;
+            } else {
+              if (!bestAny) bestAny = result;
             }
           }
         } catch {}
       }
+      return bestScoped || bestAny;
     } catch {}
     return null;
   };
-  return tryStorage(sessionStorage) || tryStorage(localStorage);
+  const token = tryStorage(sessionStorage, 'session') || tryStorage(localStorage, 'local');
+  if (token) {
+    token.debug = diag;
+    return token;
+  }
+  return { token: null, expiresAt: 0, debug: diag };
 })()`;
 
 async function acquireGraphTokenRawCDP(progress: ProgressFn): Promise<string> {
@@ -121,10 +137,11 @@ async function acquireGraphTokenRawCDP(progress: ProgressFn): Promise<string> {
   }
 
   // Step 1: try reading token directly from MSAL storage — fast, no network interception
-  const msalResult = await new Promise<{ token: string; expiresAt: number } | null>((resolve) => {
+  interface MsalDiag { sessionKeys: number; localKeys: number; accessTokens: number; matched: Array<{ target: string; exp: number; sName: string }>; skippedExpired: number }
+  const msalResult = await new Promise<{ token: string | null; expiresAt: number; debug?: MsalDiag } | null>((resolve) => {
     const ws = new WebSocket(target.webSocketDebuggerUrl!);
     const timer = setTimeout(() => {
-      process.stderr.write("[alfred:warn] MSAL extraction timed out (5s) — Outlook tab may be unresponsive\n");
+      process.stderr.write("[alfred:warn] MSAL extraction timed out (5s) — tab may be unresponsive\n");
       try { ws.close(); } catch {}
       resolve(null);
     }, 5_000);
@@ -136,22 +153,31 @@ async function acquireGraphTokenRawCDP(progress: ProgressFn): Promise<string> {
       clearTimeout(timer);
       try { ws.close(); } catch {}
       try {
-        const msg = JSON.parse(event.data as string) as { result?: { result?: { value?: { token: string; expiresAt: number } | null } } };
+        const msg = JSON.parse(event.data as string) as { result?: { result?: { value?: { token: string | null; expiresAt: number; debug?: MsalDiag } | null } } };
         resolve(msg.result?.result?.value ?? null);
       } catch (e) {
         process.stderr.write(`[alfred:warn] MSAL extraction parse error: ${e instanceof Error ? e.message : String(e)}\n`);
         resolve(null);
       }
     });
-    ws.addEventListener("error", (ev) => {
+    ws.addEventListener("error", () => {
       clearTimeout(timer);
-      process.stderr.write(`[alfred:warn] MSAL extraction WebSocket error on Outlook tab\n`);
+      process.stderr.write(`[alfred:warn] MSAL extraction WebSocket error on tab\n`);
       try { ws.close(); } catch {}
       resolve(null);
     });
   });
 
-  if (msalResult) {
+  // Log diagnostics regardless of outcome
+  if (msalResult?.debug) {
+    const d = msalResult.debug;
+    process.stderr.write(`[alfred:diag] MSAL cache scan: ${d.sessionKeys} session keys, ${d.localKeys} local keys, ${d.accessTokens} AccessTokens found, ${d.skippedExpired} expired\n`);
+    for (const m of d.matched.slice(0, 5)) {
+      process.stderr.write(`[alfred:diag]   token target="${m.target}" exp=${m.exp} storage=${m.sName}\n`);
+    }
+  }
+
+  if (msalResult?.token) {
     // Use real MSAL expiry when available, otherwise fall back to 45 min
     const expiresAt = msalResult.expiresAt > 0 ? msalResult.expiresAt : Date.now() + TOKEN_CACHE_FALLBACK_MS;
     tokenCache = { token: msalResult.token, expiresAt };
