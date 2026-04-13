@@ -897,14 +897,22 @@ server.tool(
   "search_emails",
   `Search or list emails from Outlook via the debug Chrome window.
 
-Requires the user to be logged into https://outlook.office.com in the Alfred Chrome window.
+Requires the user to be logged into Outlook in the Alfred Chrome window.
 No Azure registration needed — the request runs inside the already-authenticated browser tab.
 
-Can search across all mail by keyword, or browse a specific folder by name.
-Supports custom folders (e.g. client name folders like "SITA", "PMI") — not just inbox/sent.
-Use list_mail_folders first if you need to see available folder names.
+SEARCH STRATEGY — pick the right approach based on context:
 
-IMPORTANT: This user organises emails into folders named after clients/accounts. When they ask about emails related to a customer (e.g. "emails about SITA"), ALWAYS set the folder param to the customer name — the user's client folder is the best source. You can also combine folder + search to search within a client folder.`,
+1. **Client/account query** (e.g. "emails about SITA", "PMI correspondence"):
+   → First try folder = client name (this user organises into client folders like "SITA", "PMI").
+   → If folder search fails or returns nothing, retry WITHOUT folder to search all mail.
+
+2. **General keyword search** (e.g. "budget Q3", "renewal"):
+   → Omit folder — searches ALL mail across every folder including client folders.
+
+3. **Browse recent mail** (e.g. "latest emails", "unread"):
+   → Omit folder + omit search — defaults to inbox.
+
+Use list_mail_folders first if unsure whether a client folder exists. Keep search keywords SHORT (1-3 words) — the full-text index handles short terms best.`,
   {
     search:      z.string().optional().describe("Full-text search query (e.g. 'PMI renewal', 'budget'). Without a folder, searches ALL mail across every folder."),
     folder:      z.string().optional().describe("Folder to search/browse. Omit to search ALL mail. Use 'inbox', 'sentitems', 'drafts', or a custom folder name (e.g. 'SITA', 'PMI'). Resolved by display name."),
