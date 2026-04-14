@@ -856,28 +856,57 @@ export async function listMailFolders(progress: ProgressFn = () => {}): Promise<
   return folders;
 }
 
+/** Normalize folder name for matching: collapse whitespace, normalize dashes (em/en dash → hyphen), lowercase */
+function normFolder(s: string): string {
+  return s.toLowerCase().replace(/[\u2013\u2014]/g, "-").replace(/\s+/g, " ").trim();
+}
+
 /** Resolve a folder name to its Outlook REST folder ID. Tries well-known names first, then searches user folders. */
 export async function resolveMailFolder(folder: string, progress: ProgressFn = () => {}): Promise<string> {
   const wellKnown = ["inbox", "sentitems", "drafts", "deleteditems", "junkemail", "archive"];
   if (wellKnown.includes(folder.toLowerCase())) return folder.toLowerCase();
 
   progress(`📁 Looking up folder "${folder}"...`);
-  // Search by display name across all folders including subfolders (case-insensitive)
   const folders = await listMailFolders(progress);
-  const match = folders.find(f => f.displayName.toLowerCase() === folder.toLowerCase());
-  if (match) {
-    progress(`📁 Exact match: "${match.displayName}" (${match.totalItemCount} items)`);
-    return match.id;
+  const needle = normFolder(folder);
+
+  // 1. Exact match (normalized)
+  const exact = folders.find(f => normFolder(f.displayName) === needle);
+  if (exact) {
+    progress(`📁 Exact match: "${exact.displayName}" (${exact.totalItemCount} items)`);
+    return exact.id;
   }
 
-  // Partial match fallback (e.g. "PMI" matches "PMI - Philip Morris")
-  const partial = folders.find(f => f.displayName.toLowerCase().includes(folder.toLowerCase()));
+  // 2. Partial: folder name contained in display name (e.g. "PMI" matches "PMI - Philip Morris")
+  const partial = folders.find(f => normFolder(f.displayName).includes(needle));
   if (partial) {
     progress(`📁 Partial match: "${partial.displayName}" (${partial.totalItemCount} items)`);
     return partial.id;
   }
 
-  // Return as-is — let Graph API error if invalid
-  return folder;
+  // 3. Reverse partial: display name contained in folder name (e.g. "PMI - Philip Morris International"
+  //    matches a folder named "PMI - Philip Morris")
+  const reverse = folders.find(f => needle.includes(normFolder(f.displayName)));
+  if (reverse) {
+    progress(`📁 Reverse match: "${reverse.displayName}" (${reverse.totalItemCount} items)`);
+    return reverse.id;
+  }
+
+  // 4. Token match: split on " - " and match first segment (e.g. "PMI - Philip Morris" → "PMI")
+  const firstToken = needle.split(" - ")[0]?.trim();
+  if (firstToken && firstToken !== needle) {
+    const tokenMatch = folders.find(f => normFolder(f.displayName).includes(firstToken));
+    if (tokenMatch) {
+      progress(`📁 Token match on "${firstToken}": "${tokenMatch.displayName}" (${tokenMatch.totalItemCount} items)`);
+      return tokenMatch.id;
+    }
+  }
+
+  progress(`⚠️ No folder match for "${folder}" — available: ${folders.map(f => f.displayName).slice(0, 10).join(", ")}`);
+  throw new Error(
+    `Mail folder "${folder}" not found.\n` +
+    `Available folders: ${folders.map(f => f.displayName).join(", ")}\n` +
+    `Use list_mail_folders to see all available folders.`
+  );
 }
 
