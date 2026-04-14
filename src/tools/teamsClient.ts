@@ -5,6 +5,11 @@ import { loadCachedAuth, saveCachedAuth, clearCachedAuthFile } from "../auth/aut
 import { stripHtml, urlHostMatches } from "../shared.js";
 
 const CDP_PORT = 9222;
+
+/** Match both legacy and new Outlook domains */
+function isOutlookUrl(url: string): boolean {
+  return urlHostMatches(url, "outlook.office.com") || urlHostMatches(url, "outlook.cloud.microsoft.com");
+}
 const TOKEN_CACHE_FALLBACK_MS = 45 * 60 * 1000; // fallback when MSAL doesn't report expiry
 const TOKEN_REFRESH_MARGIN_MS = 5 * 60 * 1000;  // refresh 5 min before expiry
 
@@ -237,29 +242,108 @@ export async function acquireTeamsGraphToken(progress: ProgressFn): Promise<stri
   progress("🔐 Acquiring Graph token via Teams/Outlook in Alfred...");
 
   // Step 1: try to read Graph token directly from MSAL cache in open tabs (fast, no new page)
-  // Retry a few times — on fresh Chrome launch, Teams/Outlook need a moment to populate MSAL cache
   const listRes = await fetch(`http://localhost:${CDP_PORT}/json/list`).catch(() => null);
-  if (listRes?.ok) {
-    const targets = await listRes.json() as Array<{ webSocketDebuggerUrl?: string; type?: string; url?: string }>;
-    const candidates = targets.filter(t => t.type === "page" && t.webSocketDebuggerUrl &&
-      (t.url && (urlHostMatches(t.url, "teams.microsoft.com") || urlHostMatches(t.url, "outlook.office.com"))));
-    for (let attempt = 0; attempt < 4; attempt++) {
-      for (const t of candidates) {
-        const token = await extractGraphTokenFromTab(t.webSocketDebuggerUrl!);
-        if (token) {
-          const expiresAt = Date.now() + TOKEN_CACHE_FALLBACK_MS;
-          teamsTokenCache = { token, expiresAt };
-          saveCachedAuth("teamsGraphToken", token, expiresAt);
-          progress("✅ Graph token acquired from MSAL cache");
-          return token;
-        }
+  const targets = listRes?.ok
+    ? await listRes.json() as Array<{ webSocketDebuggerUrl?: string; type?: string; url?: string }>
+    : [];
+
+  // Prefer Teams tab — it has broader Graph scopes (Chat.Read etc.)
+  const teamsTarget = targets.find(t => t.type === "page" && t.webSocketDebuggerUrl &&
+    t.url && urlHostMatches(t.url, "teams.microsoft.com"));
+  const outlookTarget = targets.find(t => t.type === "page" && t.webSocketDebuggerUrl &&
+    t.url && isOutlookUrl(t.url));
+  const candidates = [teamsTarget, outlookTarget].filter(Boolean) as typeof targets;
+
+  if (!teamsTarget) {
+    process.stderr.write("[alfred] No Teams tab found in Alfred — Graph token capture may fail. Open teams.microsoft.com in Alfred.\n");
+  }
+
+  // Try MSAL extraction from each candidate tab
+  for (let attempt = 0; attempt < 3; attempt++) {
+    for (const t of candidates) {
+      const token = await extractGraphTokenFromTab(t.webSocketDebuggerUrl!);
+      if (token) {
+        const expiresAt = Date.now() + TOKEN_CACHE_FALLBACK_MS;
+        teamsTokenCache = { token, expiresAt };
+        saveCachedAuth("teamsGraphToken", token, expiresAt);
+        progress("✅ Graph token acquired from MSAL cache");
+        return token;
       }
-      if (attempt < 3) await new Promise(r => setTimeout(r, 3_000));
+    }
+    if (attempt < 2) await new Promise(r => setTimeout(r, 2_000));
+  }
+
+  // Step 2: MSAL miss (likely encrypted on outlook.cloud.microsoft.com) —
+  // use raw CDP network interception with Page.reload to capture Graph token
+  const interceptTarget = teamsTarget ?? outlookTarget;
+  if (interceptTarget?.webSocketDebuggerUrl) {
+    progress("🔑 MSAL cache miss — capturing Graph token via network interception...");
+    const capturedToken = await new Promise<string | null>((resolve) => {
+      const ws = new WebSocket(interceptTarget.webSocketDebuggerUrl!);
+      let found: string | null = null;
+
+      const timer = setTimeout(() => {
+        process.stderr.write("[alfred:warn] Graph token network interception timed out (12s)\n");
+        try { ws.close(); } catch {}
+        resolve(null);
+      }, 12_000);
+
+      let msgId = 0;
+      const send = (method: string, params?: Record<string, unknown>) =>
+        ws.send(JSON.stringify({ id: ++msgId, method, params }));
+
+      ws.addEventListener("open", () => send("Network.enable"));
+
+      ws.addEventListener("message", (event: MessageEvent) => {
+        try {
+          const msg = JSON.parse(event.data as string) as { id?: number; method?: string; params?: Record<string, unknown> };
+          if (msg.id === 1) {
+            // Network enabled — trigger Graph API calls + Page.reload as backup
+            send("Runtime.evaluate", {
+              expression: [
+                `fetch('https://graph.microsoft.com/v1.0/me', { credentials: 'include' }).catch(()=>{})`,
+                `fetch('https://graph.microsoft.com/v1.0/me/chats?$top=1', { credentials: 'include' }).catch(()=>{})`,
+              ].join(';'),
+              awaitPromise: false,
+            });
+            // Reload page after 3s to trigger app's own Graph API calls with MSAL tokens
+            setTimeout(() => { if (!found) send("Page.reload"); }, 3_000);
+          }
+          if (msg.method === "Network.requestWillBeSent") {
+            const reqUrl = ((msg.params?.request as Record<string, unknown>)?.url ?? "") as string;
+            // Only capture tokens from graph.microsoft.com requests (not Outlook REST)
+            if (!reqUrl.includes("graph.microsoft.com")) return;
+            const headers = ((msg.params?.request as Record<string, unknown>)?.headers ?? {}) as Record<string, string>;
+            const auth = headers["Authorization"] ?? headers["authorization"] ?? "";
+            if (!found && auth.startsWith("Bearer ")) {
+              found = auth.slice(7);
+              clearTimeout(timer);
+              try { ws.close(); } catch {}
+              resolve(found);
+            }
+          }
+        } catch (e) { process.stderr.write(`[alfred:warn] Graph CDP interception error: ${e instanceof Error ? e.message : String(e)}\n`); }
+      });
+
+      ws.addEventListener("error", () => {
+        clearTimeout(timer);
+        process.stderr.write("[alfred:warn] Graph network interception WebSocket error\n");
+        try { ws.close(); } catch {}
+        resolve(null);
+      });
+    });
+
+    if (capturedToken) {
+      const expiresAt = Date.now() + TOKEN_CACHE_FALLBACK_MS;
+      teamsTokenCache = { token: capturedToken, expiresAt };
+      saveCachedAuth("teamsGraphToken", capturedToken, expiresAt);
+      progress("✅ Graph token captured via network interception");
+      return capturedToken;
     }
   }
 
-  // Step 2: MSAL miss — use Playwright to capture token from existing Teams tab
-  // (avoids opening a new browser window)
+  // Step 3: fallback — use Playwright to capture token from existing Teams tab
+  progress("📡 Falling back to Playwright for Graph token capture...");
   const browser = await connectWithRetry();
 
   try {
@@ -272,8 +356,8 @@ export async function acquireTeamsGraphToken(progress: ProgressFn): Promise<stri
 
     let isNewPage = false;
     if (!page) {
-      // No Teams tab — try Outlook tab (it may have broad scopes), else reuse any tab
-      page = existingPages.find(p => urlHostMatches(p.url(), "outlook.office.com"))
+      // No Teams tab — try Outlook tab (both domains), else reuse any tab
+      page = existingPages.find(p => isOutlookUrl(p.url()))
           ?? existingPages.find(p => p.url().startsWith("http"))
           ?? await ctx.newPage();
       isNewPage = !existingPages.includes(page);
@@ -300,7 +384,11 @@ export async function acquireTeamsGraphToken(progress: ProgressFn): Promise<stri
     await page.unroute("**/graph.microsoft.com/**").catch((e) => { process.stderr.write(`[alfred:warn] unroute failed: ${e instanceof Error ? e.message : String(e)}\n`); });
     if (isNewPage) await page.close();
 
-    if (!capturedToken) throw new Error("Could not capture Graph token. Make sure Teams or Outlook is loaded in Alfred.");
+    if (!capturedToken) throw new Error(
+      "Could not capture Graph token.\n" +
+      "Open https://teams.microsoft.com in the Alfred Chrome window and log in, then retry.\n" +
+      "Teams tokens have the broad Graph scopes needed for transcripts and chats."
+    );
 
     const expiresAt = Date.now() + TOKEN_CACHE_FALLBACK_MS;
     teamsTokenCache = { token: capturedToken, expiresAt };
