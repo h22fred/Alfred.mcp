@@ -746,7 +746,9 @@ export async function getEmails(opts: {
     : "Id,Subject,From,ReceivedDateTime,BodyPreview,IsRead,HasAttachments";
 
   // Build folder path prefix: empty string = all mail, "/mailfolders/{id}" = specific folder
-  const folderPrefix = folder ? `/mailfolders/${encodeURIComponent(folder)}` : "";
+  // Outlook REST folder IDs are API-generated (base64-like) — do NOT encodeURIComponent
+  // as it turns '=' into '%3D' which causes ErrorInvalidIdMalformed.
+  const folderPrefix = folder ? `/mailfolders/${folder}` : "";
 
   let path: string;
   if (search) {
@@ -836,7 +838,7 @@ export async function listMailFolders(progress: ProgressFn = () => {}): Promise<
     for (const parent of withChildren) {
       try {
         const childData = await outlookApiFetch(
-          `/mailfolders/${encodeURIComponent(parent.id)}/childfolders?${SELECT}`,
+          `/mailfolders/${parent.id}/childfolders?${SELECT}`,
           token, progress
         );
         const children = (childData.value as Record<string, unknown>[] ?? []).map(mapFolder);
