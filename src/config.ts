@@ -37,8 +37,19 @@ if (existsSync(configPath)) {
 }
 
 /** Base URL of the customer's Dynamics 365 instance, e.g. https://acme.crm.dynamics.com */
-export const DYNAMICS_HOST: string =
-  raw.dynamicsUrl ?? "https://servicenow.crm.dynamics.com";
+const rawDynamicsUrl = typeof raw.dynamicsUrl === "string" ? raw.dynamicsUrl : "https://servicenow.crm.dynamics.com";
+
+// Validate URL format — catch bad config early
+if (!/^https?:\/\/[\w.-]+\.crm[\d]*\.dynamics\.com$/i.test(rawDynamicsUrl)) {
+  const msg = `[alfred] WARNING: dynamicsUrl "${rawDynamicsUrl}" doesn't look like a valid Dynamics 365 URL. Expected format: https://COMPANY.crm.dynamics.com`;
+  process.stderr.write(msg + "\n");
+  // If it's clearly broken (contains brackets, spaces, etc.), fall back to default
+  if (/[\[\]{}()\s]/.test(rawDynamicsUrl)) {
+    process.stderr.write(`[alfred] Falling back to default: https://servicenow.crm.dynamics.com\n`);
+  }
+}
+
+export const DYNAMICS_HOST: string = rawDynamicsUrl;
 
 export const alfredConfig = raw;
 

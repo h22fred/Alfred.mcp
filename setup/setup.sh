@@ -114,6 +114,8 @@ if [ -n "$EXISTING_DYNAMICS_URL" ]; then
   printf "   Change company name? (press Enter to keep): "
   read -r NEW_COMPANY </dev/tty
   if [ -n "$NEW_COMPANY" ]; then
+    NEW_COMPANY=$(echo "$NEW_COMPANY" | tr -cd 'a-zA-Z0-9.-')
+    [ -z "$NEW_COMPANY" ] && NEW_COMPANY="servicenow"
     NEW_DYNAMICS_URL="https://${NEW_COMPANY}.crm.dynamics.com"
   else
     NEW_DYNAMICS_URL="$EXISTING_DYNAMICS_URL"
@@ -121,6 +123,9 @@ if [ -n "$EXISTING_DYNAMICS_URL" ]; then
 else
   printf "   What is your company name? (press Enter for 'servicenow'): "
   read -r NEW_COMPANY </dev/tty
+  [ -z "$NEW_COMPANY" ] && NEW_COMPANY="servicenow"
+  # Strip anything that isn't a valid hostname character
+  NEW_COMPANY=$(echo "$NEW_COMPANY" | tr -cd 'a-zA-Z0-9.-')
   [ -z "$NEW_COMPANY" ] && NEW_COMPANY="servicenow"
   NEW_DYNAMICS_URL="https://${NEW_COMPANY}.crm.dynamics.com"
 fi
