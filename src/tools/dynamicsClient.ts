@@ -6,6 +6,9 @@ import { FORECAST_NAMES, requireGuid, SN_INTERNAL_DOMAINS } from "../shared.js";
 
 const DYNAMICS_BASE = `${DYNAMICS_HOST}/api/data/v9.2`;
 
+// Startup diagnostic — log the resolved base URL to stderr so config issues are visible
+process.stderr.write(`[alfred:config] Dynamics base URL: ${DYNAMICS_BASE}\n`);
+
 // ---------------------------------------------------------------------------
 // Security helpers
 // ---------------------------------------------------------------------------

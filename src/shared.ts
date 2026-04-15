@@ -1,4 +1,7 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { existsSync, readFileSync, writeFileSync, copyFileSync } from "fs";
+import { homedir } from "os";
+import { join } from "path";
 
 const GUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -113,17 +116,15 @@ export const FORECAST_NAMES: Record<number, string> = {
 export function regenerateAlfredApp(installDir: string): string | null {
   if (process.platform !== "darwin") return null;
 
-  const { existsSync: ex, readFileSync: rf, writeFileSync: wf, copyFileSync: cf } = require("fs") as typeof import("fs");
-  const { homedir: hd } = require("os") as typeof import("os");
-  const { join: pj } = require("path") as typeof import("path");
+  const home = homedir();
+  const appScript = join(home, "Desktop", "Alfred.app", "Contents", "MacOS", "Alfred");
+  if (!existsSync(appScript)) return null;
 
-  const home = hd();
-  const appScript = pj(home, "Desktop", "Alfred.app", "Contents", "MacOS", "Alfred");
-  if (!ex(appScript)) return null;
-
-  const configPath = pj(home, ".alfred-config.json");
-  const cfg = ex(configPath) ? JSON.parse(rf(configPath, "utf8")) : {};
-  const company = cfg.dynamicsCompany ?? "servicenow";
+  const configPath = join(home, ".alfred-config.json");
+  const cfg = existsSync(configPath) ? JSON.parse(readFileSync(configPath, "utf8")) : {};
+  // Extract company name from the full dynamicsUrl (e.g. "https://servicenow.crm.dynamics.com" → "servicenow")
+  const urlMatch = (cfg.dynamicsUrl as string | undefined)?.match(/^https?:\/\/([^.]+)\.crm/);
+  const company = urlMatch?.[1] ?? "servicenow";
   if (!/^[a-zA-Z0-9-]+$/.test(company)) {
     throw new Error(
       `[alfred] Invalid dynamicsCompany "${company}" in ~/.alfred-config.json: must contain only alphanumeric characters and hyphens.`
@@ -191,16 +192,16 @@ exec "\$CHROME" \\
   "https://teams.microsoft.com/v2/"
 `;
 
-  wf(appScript, script, { mode: 0o755 });
+  writeFileSync(appScript, script, { mode: 0o755 });
 
   // Refresh icon in case it changed
-  const iconSrc = pj(installDir, "setup", "assets", "alfred.icns");
-  const iconDst = pj(home, "Desktop", "Alfred.app", "Contents", "Resources", "alfred.icns");
-  if (ex(iconSrc)) cf(iconSrc, iconDst);
+  const iconSrc = join(installDir, "setup", "assets", "alfred.icns");
+  const iconDst = join(home, "Desktop", "Alfred.app", "Contents", "Resources", "alfred.icns");
+  if (existsSync(iconSrc)) copyFileSync(iconSrc, iconDst);
 
   // Regenerate Info.plist (removes LSUIElement so Alfred shows in Dock with its icon)
-  const plistPath = pj(home, "Desktop", "Alfred.app", "Contents", "Info.plist");
-  wf(plistPath, `<?xml version="1.0" encoding="UTF-8"?>
+  const plistPath = join(home, "Desktop", "Alfred.app", "Contents", "Info.plist");
+  writeFileSync(plistPath, `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
