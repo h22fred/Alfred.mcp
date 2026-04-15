@@ -30,10 +30,12 @@ import {
   fetchMyEngagementAssignments,
   fetchMyCollaborationOpportunities,
   resolveOpportunityId,
+  listCollaborationNotes,
+  createCollaborationNote,
   type EngagementType,
   type EngagementDescription,
 } from "../tools/dynamicsClient.js";
-import { ensureAlfred, clearAuthCache } from "../auth/tokenExtractor.js";
+import { ensureAlfred, exitAlfred, restartAlfred, clearAuthCache } from "../auth/tokenExtractor.js";
 import { getCalendarEvents, getEmails, listMailFolders, clearGraphTokenCache } from "../tools/outlookClient.js";
 import { setTeamsWebhook, postTeamsNotification, getTeamsTranscript, getTeamsChats } from "../tools/teamsClient.js";
 import { runHygieneSweep, formatHygieneReport } from "../tools/hygieneClient.js";
@@ -171,10 +173,10 @@ server.tool(
   isSalesSpecialist
     ? `List open opportunities from Dynamics 365.
 
-This user is a Sales Specialist — they do not own opportunities directly. Always search across ALL opportunities (my_opportunities_only=false) and use the search field to filter by account or opportunity name.
+This user is a Sales Specialist — they do not own opportunities directly. Default to searching across ALL opportunities (my_opportunities_only=false). If the user says "show MY opportunities" or "my pipeline", set my_opportunities_only=true — this filters to opportunities where they are on the collaboration team.
 
 IMPORTANT: Before calling this tool, always ask:
-1. "Which account or opportunity are you looking for?"
+1. "Which account or opportunity are you looking for?" (or "your collaboration team opps?" if they said "my")
 2. "100K+ NNACV only, or all sizes?" (default: 100K+ only)
 
 NOTE: $0 NNACV opportunities are excluded by default (noise). If the user explicitly asks for $0 deals, set include_zero_value=true.
@@ -212,7 +214,7 @@ CROSS-REFERENCE: After presenting pipeline results, compare with the Data_Analyt
     include_zero_value: z.boolean().optional().describe("Include $0 NNACV opportunities — default false (excluded as noise). Set true only if user explicitly asks for $0 deals."),
     my_opportunities_only: z.boolean().optional().describe(
       isSalesSpecialist
-        ? "Specialist mode — default false (search all). Set true only if explicitly asked."
+        ? "Specialist mode — default false (search all). Set true when user says 'my opportunities' — filters to their collaboration team."
         : isSalesManager
         ? "Manager mode — default false (team-wide). Set true for your personal pipeline only."
         : "Filter to your owned opportunities — default true."
@@ -220,11 +222,13 @@ CROSS-REFERENCE: After presenting pipeline results, compare with the Data_Analyt
   },
   async ({ search, min_nnacv, top, include_closed, include_zero_value, my_opportunities_only }) => {
     const progress = makeProgress(server);
+    const myOpps = my_opportunities_only ?? (isSalesSpecialist || isSalesManager ? false : true);
     const opps = await fetchOpportunities({
       search,
       minNnacv: min_nnacv,
-      myOpportunitiesOnly: my_opportunities_only ?? (isSalesSpecialist || isSalesManager ? false : true),
-      myOppsFilterField: "owner",
+      myOpportunitiesOnly: myOpps,
+      // Sales Specialist: filter by collaboration team; AE/Manager: filter by owner
+      myOppsFilterField: isSalesSpecialist && myOpps ? "collab" : "owner",
       includeClosed: include_closed ?? false,
       includeZeroValue: include_zero_value ?? false,
       top: top ?? 50,
@@ -503,37 +507,102 @@ server.tool(
 );
 
 // ---------------------------------------------------------------------------
+// Tool: list_collaboration_notes
+// ---------------------------------------------------------------------------
+server.tool(
+  "list_collaboration_notes",
+  `List collaboration notes on an opportunity. These are the notes from the "Collaboration Notes" activity type in Dynamics (General Notes, Next Steps, Sales Ops Update, Renewal Update, Prime Notes) — NOT the same as timeline annotations.
+
+Always read collaboration notes BEFORE creating/updating them to avoid duplicates.`,
+  { opportunity_id: z.string().describe("Dynamics opportunity GUID or OPTY number (e.g. OPTY5328326)") },
+  async ({ opportunity_id }) => {
+    const progress = makeProgress(server);
+    const id = await resolveOpportunityId(opportunity_id, progress);
+    const notes = await listCollaborationNotes(id, progress);
+    return { content: [{ type: "text", text: JSON.stringify(notes, null, 2) }] };
+  }
+);
+
+// ---------------------------------------------------------------------------
+// Tool: create_collaboration_note
+// ---------------------------------------------------------------------------
+server.tool(
+  "create_collaboration_note",
+  `Create a Collaboration Note on an opportunity in Dynamics 365.
+
+Note types: General Notes, Sales Ops Update, Renewal Update, Next Steps, Prime Notes.
+
+IMPORTANT:
+- Always call list_collaboration_notes first to check what already exists
+- Use bullet-point format for the note content, not prose paragraphs
+- Keep notes concise and actionable`,
+  {
+    opportunity_id: z.string().describe("Dynamics opportunity GUID or OPTY number"),
+    note_type: z.enum(["General Notes", "Sales Ops Update", "Renewal Update", "Next Steps", "Prime Notes"]).describe("Type of collaboration note"),
+    notes: z.string().describe("The note content — use bullet points, keep concise"),
+  },
+  async ({ opportunity_id, note_type, notes }) => {
+    engagementWriteLimiter.check("create_collaboration_note");
+    const progress = makeProgress(server);
+    const id = await resolveOpportunityId(opportunity_id, progress);
+    const note = await createCollaborationNote({ opportunityId: id, noteType: note_type, notes }, progress);
+    return { content: [{ type: "text", text: `✅ Created **${note.noteType}** collaboration note on opportunity.\n\n${note.notes}` }] };
+  }
+);
+
+// ---------------------------------------------------------------------------
 // Tool: get_territory_pipeline
 // ---------------------------------------------------------------------------
 server.tool(
   "get_territory_pipeline",
-  `Get a pipeline health overview across your territory — for Sales Managers and AEs who want the full picture.
+  isSalesSpecialist
+    ? `Get a pipeline health overview — for Sales Specialists who support AEs.
 
-Shows all open opportunities grouped by forecast category with health flags:
+Shows all open opportunities grouped by forecast category with health flags.
+Default: all open opportunities. Use account_name or owner_name to narrow down.
+Set my_opps_only=true to see only opportunities where you are on the collaboration team.`
+    : isSalesManager
+    ? `Get a pipeline health overview across your territory — team-wide view.
+
+Shows all open opportunities grouped by forecast category with health flags.
+Default: all open opportunities. Filter by owner_name to drill into a specific AE's pipeline.`
+    : `Get a pipeline health overview for your territory.
+
+Shows your open opportunities grouped by forecast category with health flags:
 - Missing SC assignment
 - Close date in the past or very soon (<30 days)
 - No value set (NNACV = 0)
 
-Sales AE: leave owner blank to see your own pipeline. Filter by account name to drill into an account.
-Sales Manager: use owner_name to filter by one of your reps (e.g. "John"), or leave blank for all open opps in the territory.`,
+Default: your own pipeline (my_opps_only=true). Set my_opps_only=false to see all opps.
+Filter by account_name to drill into a specific account.`,
   {
-    owner_name:  z.string().optional().describe("Filter by rep name (partial match). Leave blank for all."),
+    owner_name:  z.string().optional().describe("Filter by rep/AE name (partial match). Leave blank for all."),
     account_name: z.string().optional().describe("Filter by account name (partial match)."),
     min_value:   z.number().optional().describe("Only include opps above this USD value."),
-    my_opps_only: z.boolean().optional().describe("Set true to see only your own opportunities. Default false (territory view)."),
-    top:         z.number().optional().describe("Max results (default 100)."),
+    my_opps_only: z.boolean().optional().describe(
+      isSalesSpecialist
+        ? "Set true to see only your collaboration team opps. Default false."
+        : isSalesManager
+        ? "Set true to see only your personally owned opps. Default false (team view)."
+        : "Filter to your owned opps. Default true for AE. Set false for all."
+    ),
+    top:         z.number().optional().describe("Max results (default 200)."),
   },
   async ({ owner_name, account_name, min_value, my_opps_only, top }) => {
     const progress = makeProgress(server);
 
+    // AE defaults to own pipeline; Manager/Specialist default to broad view
+    const myOpps = my_opps_only ?? (isSalesSpecialist || isSalesManager ? false : true);
+
     const opps = await fetchOpportunities({
       search: account_name,
       minNnacv: min_value,
-      myOpportunitiesOnly: my_opps_only ?? false,
-      myOppsFilterField: "owner",
+      myOpportunitiesOnly: myOpps,
+      myOppsFilterField: isSalesSpecialist && myOpps ? "collab" : "owner",
       ownerSearch: owner_name,
       includeClosed: false,
-      top: top ?? 100,
+      includeZeroValue: true, // Territory view includes everything — health flags warn about zeros
+      top: top ?? 200,
     }, progress);
 
     if (opps.length === 0) {
@@ -1399,6 +1468,58 @@ IMPORTANT AFTER CALLING THIS TOOL:
     await ensureAlfred(progress);
     return {
       content: [{ type: "text", text: "✅ Alfred is open. Please log into Dynamics, Outlook and Teams in the Chrome window, then tell me when you're ready and I'll continue." }],
+    };
+  }
+);
+
+// ---------------------------------------------------------------------------
+// Tool: exit_alfred
+// ---------------------------------------------------------------------------
+server.tool(
+  "exit_alfred",
+  `Close the Alfred browser window. This only closes the Alfred Chrome instance (with the debug profile) — your regular Chrome is untouched.
+
+Use this when:
+- The user says "close Alfred", "exit Alfred", "stop Alfred", or "shut down Alfred"
+- You need to free up resources
+- The session is done
+
+After exiting, all cached auth tokens are cleared. The user will need to relaunch Alfred from the Desktop to use CRM tools again.`,
+  {},
+  async () => {
+    const progress = makeProgress(server);
+    clearGraphTokenCache();
+    const wasRunning = exitAlfred(progress);
+    return {
+      content: [{ type: "text", text: wasRunning
+        ? "✅ Alfred closed. To use CRM tools again, double-click Alfred on your Desktop."
+        : "ℹ️ Alfred was not running." }],
+    };
+  }
+);
+
+// ---------------------------------------------------------------------------
+// Tool: restart_alfred
+// ---------------------------------------------------------------------------
+server.tool(
+  "restart_alfred",
+  `Restart the Alfred browser — closes and relaunches it with a fresh session.
+
+Use this when:
+- Auth tokens are stale or expired (401/403 errors)
+- The user says "restart Alfred" or "refresh Alfred"
+- Multiple tools are failing with connection errors
+- After "exit Alfred" if the user wants to start fresh
+
+This only restarts the Alfred Chrome instance — your regular Chrome is untouched.
+The Alfred icon is preserved on relaunch.`,
+  {},
+  async () => {
+    const progress = makeProgress(server);
+    clearGraphTokenCache();
+    await restartAlfred(progress);
+    return {
+      content: [{ type: "text", text: "✅ Alfred restarted. Please log into Dynamics, Outlook and Teams in the new window, then tell me when you're ready." }],
     };
   }
 );

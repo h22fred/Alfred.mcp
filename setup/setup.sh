@@ -71,11 +71,11 @@ if [ "$CURRENT_SUM" = "$STORED_SUM" ] && [ -f "$REPO_DIR/node_modules/.package-l
 else
   echo "   📦 Installing dependencies..."
   PATH="$NODE_DIR:$PATH" npm ci --prefix "$REPO_DIR" --no-fund
-  python3 -c "
+  ALFRED_LOCKSUM="$CURRENT_SUM" python3 -c "
 import json, os
 f = os.path.expanduser('~/.alfred-config.json')
 d = json.load(open(f)) if os.path.exists(f) else {}
-d['lockSum'] = '$CURRENT_SUM'
+d['lockSum'] = os.environ['ALFRED_LOCKSUM']
 json.dump(d, open(f, 'w'), indent=2)
 "
   echo "   ✅ 97 packages installed"
@@ -90,11 +90,11 @@ echo "   ✅ Build complete"
 INSTALLED_SHA=$(git -C "$REPO_DIR" rev-parse --short HEAD 2>/dev/null || echo "")
 if [ -n "$INSTALLED_SHA" ]; then
   CONFIG_FILE_EARLY="$HOME/.alfred-config.json"
-  python3 -c "
+  ALFRED_VERSION="$INSTALLED_SHA" python3 -c "
 import json, os
 f = os.path.expanduser('~/.alfred-config.json')
 d = json.load(open(f)) if os.path.exists(f) else {}
-d['installedVersion'] = '$INSTALLED_SHA'
+d['installedVersion'] = os.environ['ALFRED_VERSION']
 json.dump(d, open(f, 'w'), indent=2)
 " 2>/dev/null
   chmod 600 "$HOME/.alfred-config.json" 2>/dev/null || true
@@ -125,11 +125,11 @@ else
   NEW_DYNAMICS_URL="https://${NEW_COMPANY}.crm.dynamics.com"
 fi
 
-python3 -c "
+ALFRED_DYNAMICS_URL="$NEW_DYNAMICS_URL" python3 -c "
 import json, os
 f = os.path.expanduser('~/.alfred-config.json')
 d = json.load(open(f)) if os.path.exists(f) else {}
-d['dynamicsUrl'] = '$NEW_DYNAMICS_URL'
+d['dynamicsUrl'] = os.environ['ALFRED_DYNAMICS_URL']
 json.dump(d, open(f, 'w'), indent=2)
 "
 chmod 600 "$HOME/.alfred-config.json"
@@ -241,6 +241,7 @@ fi
 # Become Chrome — Alfred.app's Dock icon persists on the process
 exec "\$CHROME" \
   --remote-debugging-port=9222 \
+  --remote-debugging-address=127.0.0.1 \
   --user-data-dir="\$HOME/.alfred-profile" \
   --no-first-run \
   --no-default-browser-check \
@@ -288,7 +289,7 @@ echo "▶ Setting up Teams webhook for hygiene sweep notifications..."
 CONFIG_FILE="$HOME/.alfred-config.json"
 EXISTING_WEBHOOK=""
 if [ -f "$CONFIG_FILE" ]; then
-  EXISTING_WEBHOOK=$(python3 -c "import json; d=json.load(open('$CONFIG_FILE')); print(d.get('teamsWebhook',''))" 2>/dev/null)
+  EXISTING_WEBHOOK=$(ALFRED_CONFIG="$CONFIG_FILE" python3 -c "import json,os; d=json.load(open(os.environ['ALFRED_CONFIG'])); print(d.get('teamsWebhook',''))" 2>/dev/null)
 fi
 
 if [ -n "$EXISTING_WEBHOOK" ]; then
@@ -299,7 +300,7 @@ if [ -n "$EXISTING_WEBHOOK" ]; then
   read -r NEW_WEBHOOK </dev/tty
   if [ -n "$NEW_WEBHOOK" ]; then
     EXISTING_WEBHOOK="$NEW_WEBHOOK"
-    python3 -c "import json; f='$CONFIG_FILE'; d=json.load(open(f)) if __import__('os').path.exists(f) else {}; d['teamsWebhook']='$NEW_WEBHOOK'; json.dump(d,open(f,'w'),indent=2)"
+    ALFRED_CONFIG="$CONFIG_FILE" ALFRED_WEBHOOK="$NEW_WEBHOOK" python3 -c "import json,os; f=os.environ['ALFRED_CONFIG']; d=json.load(open(f)) if os.path.exists(f) else {}; d['teamsWebhook']=os.environ['ALFRED_WEBHOOK']; json.dump(d,open(f,'w'),indent=2)"
     chmod 600 "$CONFIG_FILE"
     echo "   ✅ Webhook updated"
   fi
@@ -311,7 +312,7 @@ else
   printf "   Paste your Teams incoming webhook URL (or press Enter to skip): "
   read -r NEW_WEBHOOK </dev/tty
   if [ -n "$NEW_WEBHOOK" ]; then
-    python3 -c "import json; f='$CONFIG_FILE'; d=json.load(open(f)) if __import__('os').path.exists(f) else {}; d['teamsWebhook']='$NEW_WEBHOOK'; json.dump(d,open(f,'w'),indent=2)"
+    ALFRED_CONFIG="$CONFIG_FILE" ALFRED_WEBHOOK="$NEW_WEBHOOK" python3 -c "import json,os; f=os.environ['ALFRED_CONFIG']; d=json.load(open(f)) if os.path.exists(f) else {}; d['teamsWebhook']=os.environ['ALFRED_WEBHOOK']; json.dump(d,open(f,'w'),indent=2)"
     chmod 600 "$CONFIG_FILE"
     echo "   ✅ Webhook saved to $CONFIG_FILE"
   else
@@ -353,11 +354,11 @@ else
     *) USER_ROLE="sc";      echo "   ✅ Role set to SC — Alfred will default to your own pipeline" ;;
   esac
 fi
-python3 -c "
+ALFRED_ROLE="$USER_ROLE" python3 -c "
 import json, os
 f = os.path.expanduser('~/.alfred-config.json')
 d = json.load(open(f)) if os.path.exists(f) else {}
-d['role'] = '$USER_ROLE'
+d['role'] = os.environ['ALFRED_ROLE']
 json.dump(d, open(f, 'w'), indent=2)
 "
 chmod 600 "$HOME/.alfred-config.json"
@@ -379,13 +380,13 @@ if [ "$ALFRED_VARIANT" = "sales" ]; then
   printf "   Your selection (e.g. 1 2 3), or Enter for all: "
   read -r TYPE_SELECTION </dev/tty
 
-  python3 - <<PYEOF
+  ALFRED_TYPE_SEL="$TYPE_SELECTION" python3 -c "
 import json, os
 all_types = [
-  "Discovery", "Opportunity Summary", "Mutual Plan",
-  "Budget", "Implementation Plan", "Stakeholder Alignment"
+  'Discovery', 'Opportunity Summary', 'Mutual Plan',
+  'Budget', 'Implementation Plan', 'Stakeholder Alignment'
 ]
-sel = "$TYPE_SELECTION".strip()
+sel = os.environ.get('ALFRED_TYPE_SEL', '').strip()
 if sel:
     indices = [int(x)-1 for x in sel.split() if x.isdigit() and 1 <= int(x) <= len(all_types)]
     selected = [all_types[i] for i in indices] if indices else all_types
@@ -395,8 +396,8 @@ f = os.path.expanduser('~/.alfred-config.json')
 d = json.load(open(f)) if os.path.exists(f) else {}
 d['engagementTypes'] = selected
 json.dump(d, open(f, 'w'), indent=2)
-print("   ✅ Milestones: " + ", ".join(selected))
-PYEOF
+print('   ✅ Milestones: ' + ', '.join(selected))
+"
 else
   # SC/SSC/Manager-owned engagement types
   echo "    1) Business Case            6) Post Sale Engagement"
@@ -408,13 +409,13 @@ else
   printf "   Your selection (e.g. 3 4 8 9), or Enter for all: "
   read -r TYPE_SELECTION </dev/tty
 
-  python3 - <<PYEOF
+  ALFRED_TYPE_SEL="$TYPE_SELECTION" python3 -c "
 import json, os
 all_types = [
-  "Business Case", "Customer Business Review", "Demo", "Discovery", "EBC",
-  "Post Sale Engagement", "POV", "RFx", "Technical Win", "Workshop"
+  'Business Case', 'Customer Business Review', 'Demo', 'Discovery', 'EBC',
+  'Post Sale Engagement', 'POV', 'RFx', 'Technical Win', 'Workshop'
 ]
-sel = "$TYPE_SELECTION".strip()
+sel = os.environ.get('ALFRED_TYPE_SEL', '').strip()
 if sel:
     indices = [int(x)-1 for x in sel.split() if x.isdigit() and 1 <= int(x) <= len(all_types)]
     selected = [all_types[i] for i in indices] if indices else all_types
@@ -424,8 +425,8 @@ f = os.path.expanduser('~/.alfred-config.json')
 d = json.load(open(f)) if os.path.exists(f) else {}
 d['engagementTypes'] = selected
 json.dump(d, open(f, 'w'), indent=2)
-print("   ✅ Engagement types: " + ", ".join(selected))
-PYEOF
+print('   ✅ Engagement types: ' + ', '.join(selected))
+"
 fi
 chmod 600 "$HOME/.alfred-config.json"
 

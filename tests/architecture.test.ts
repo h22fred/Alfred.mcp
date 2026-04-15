@@ -62,8 +62,12 @@ describe("SC / Sales tool parity", () => {
     "search_contacts",
     "get_collaboration_team",
     "open_chrome_debug",
+    "exit_alfred",
+    "restart_alfred",
     "update_alfred",
     "uninstall_alfred",
+    "list_collaboration_notes",
+    "create_collaboration_note",
   ];
 
   for (const tool of REQUIRED_SHARED) {
