@@ -159,7 +159,11 @@ export async function restartAlfred(progress: ProgressFn = () => {}): Promise<vo
 }
 
 export async function ensureAlfred(progress: ProgressFn = () => {}): Promise<void> {
-  if (isAlfredgable()) return;
+  if (isAlfredgable()) {
+    // Alfred is running — verify sessions are still alive
+    await verifySessionHealth(progress);
+    return;
+  }
   // Chrome is not running — clear in-memory state only; file cache survives
   // so persisted tokens can still be used if they haven't expired.
   clearMemoryAuthCache();
@@ -171,6 +175,25 @@ export async function ensureAlfred(progress: ProgressFn = () => {}): Promise<voi
     await fetch(`http://localhost:${CDP_PORT}/json/new?${url}`).catch((e) => { process.stderr.write(`[alfred:warn] failed to open tab ${url}: ${e instanceof Error ? e.message : String(e)}\n`); });
   }
   progress("✅ Alfred ready — please log into Dynamics, Outlook and Teams in the new window");
+}
+
+/** Probe Dynamics and Outlook cookies to warn if sessions are expired or missing. */
+async function verifySessionHealth(progress: ProgressFn): Promise<void> {
+  try {
+    const cookies = await getCookiesViaRawCDP([DYNAMICS_URL, OUTLOOK_URL]);
+    const hasDynamics = cookies.some(c => AUTH_COOKIE_NAMES.includes(c.name));
+    const hasOutlook = cookies.some(c => c.domain?.includes("outlook") || c.domain?.includes("office"));
+
+    const warnings: string[] = [];
+    if (!hasDynamics) warnings.push("Dynamics (not logged in)");
+    if (!hasOutlook)  warnings.push("Outlook (not logged in)");
+
+    if (warnings.length > 0) {
+      progress(`⚠️ Alfred is running but missing sessions: ${warnings.join(", ")}. Please log in.`);
+    }
+  } catch {
+    // Non-fatal — CDP might be temporarily busy
+  }
 }
 
 export async function freshCdpEndpoint(): Promise<string> {
