@@ -76,6 +76,10 @@ describe("SC / Sales tool parity", () => {
     "list_opportunity_contacts",
     "create_contact",
     "add_contact_to_opportunity",
+    "list_closing_plan",
+    "add_closing_plan_milestone",
+    "update_closing_plan_milestone",
+    "get_forecast_summary",
   ];
 
   for (const tool of REQUIRED_SHARED) {

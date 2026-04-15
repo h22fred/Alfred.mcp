@@ -64,6 +64,7 @@ export interface Opportunity {
   isCompetitive?: boolean;
   winLossReason?: string;
   winLossNotes?: string;
+  territoryName?: string;           // e.g. "CHLPC-TER-6" or "LUX-CPG-Switzerland"
   /** True when scName doesn't match the authenticated user — field may be stale */
   scNameMismatch?: boolean;
 }
@@ -227,6 +228,7 @@ function mapOpportunity(r: Record<string, unknown>): Opportunity {
     isCompetitive:       r.sn_noncompetitive != null ? !(r.sn_noncompetitive as boolean) : undefined,
     winLossReason:       r["sn_winlossnodecisionreason@OData.Community.Display.V1.FormattedValue"] as string | undefined,
     winLossNotes:        r.sn_winlossnodecisionnotes as string | undefined,
+    territoryName:       r["_sn_territory_value@OData.Community.Display.V1.FormattedValue"] as string | undefined,
   };
 }
 
@@ -240,6 +242,8 @@ export interface OpportunityFilter {
   includeClosed?: boolean; // include won/lost/closed opps — default false (open only)
   excludeStale?: boolean; // exclude opps with close date > 6 months past — default true
   ownerSearch?: string; // filter by owner (AE) name — resolves to user IDs
+  territoryCode?: string; // filter by territory code (e.g. "CHLPC-TER-6")
+  excludeAppStoreRenewals?: boolean; // exclude $0 "App Store Renewal" opps — default false (set true for pipeline views)
 }
 
 export async function fetchCurrentUserId(progress: ProgressFn = () => {}): Promise<string> {
@@ -273,6 +277,37 @@ export async function fetchOpportunities(filter: OpportunityFilter = {}, progres
     sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6);
     const staleDate = sixMonthsAgo.toISOString().slice(0, 10);
     filterClause += ` and (estimatedclosedate eq null or estimatedclosedate ge ${staleDate})`;
+  }
+  // Territory code filter — resolved to GUID for OData, or post-filtered if resolution fails
+  let territoryGuid: string | null = null;
+  if (filter.territoryCode) {
+    const safeTerr = sanitizeODataSearch(filter.territoryCode);
+    // Try to resolve territory code → GUID via the territory entity
+    try {
+      const terrRes = await dynamicsFetch(
+        `/territories?$select=territoryid,name&$filter=contains(name,'${safeTerr}')&$top=3`,
+        {}, progress
+      );
+      if (terrRes.ok) {
+        const terrData = await terrRes.json() as { value: { territoryid: string; name: string }[] };
+        if (terrData.value?.length === 1) {
+          territoryGuid = terrData.value[0]!.territoryid;
+          filterClause += ` and _sn_territory_value eq ${territoryGuid}`;
+          progress(`📍 Territory: ${terrData.value[0]!.name} (${territoryGuid})`);
+        } else if (terrData.value?.length > 1) {
+          // Multiple matches — use all
+          const ids = terrData.value.map(t => `_sn_territory_value eq ${t.territoryid}`).join(" or ");
+          filterClause += ` and (${ids})`;
+          progress(`📍 Matched ${terrData.value.length} territories`);
+        } else {
+          progress(`⚠️ Territory "${filter.territoryCode}" not found — will post-filter`);
+        }
+      }
+    } catch { /* territory entity may not exist — will post-filter */ }
+  }
+  // Exclude $0 App Store Renewal opps — noise in pipeline views
+  if (filter.excludeAppStoreRenewals) {
+    filterClause += ` and not(contains(name,'App Store Renewal') and (sn_netnewacv eq null or sn_netnewacv eq 0))`;
   }
   // Track whether we already filtered by collab team (skip post-validation if so)
   let filteredByCollab = false;
@@ -320,7 +355,7 @@ export async function fetchOpportunities(filter: OpportunityFilter = {}, progres
     }
   }
 
-  const selectFields = "opportunityid,sn_number,name,_accountid_value,_ownerid_value,_sn_solutionconsultant_value,statuscode,estimatedclosedate,totalamount,sn_netnewacv,msdyn_forecastcategory,stepname,closeprobability,sn_opportunitytype,sn_opportunitybusinessunitlist";
+  const selectFields = "opportunityid,sn_number,name,_accountid_value,_ownerid_value,_sn_solutionconsultant_value,_sn_territory_value,statuscode,estimatedclosedate,totalamount,sn_netnewacv,msdyn_forecastcategory,stepname,closeprobability,sn_opportunitytype,sn_opportunitybusinessunitlist";
 
   const path =
     `/opportunities` +
@@ -356,6 +391,16 @@ export async function fetchOpportunities(filter: OpportunityFilter = {}, progres
     }
   }
 
+  // Post-filter: territory name fallback (when GUID resolution didn't find the territory)
+  if (filter.territoryCode && !territoryGuid) {
+    const terrLower = filter.territoryCode.toLowerCase();
+    const beforeTerr = results.length;
+    results = results.filter((o: Opportunity) => o.territoryName?.toLowerCase().includes(terrLower));
+    if (beforeTerr > results.length) {
+      progress(`📍 Territory post-filter: ${results.length} of ${beforeTerr} opps match "${filter.territoryCode}"`);
+    }
+  }
+
   progress(`✅ Found ${results.length} opportunities`);
   return results;
 }
@@ -380,7 +425,7 @@ export async function resolveOpportunityId(input: string, progress: ProgressFn =
 
 export async function fetchOpportunityById(id: string, progress: ProgressFn = () => {}): Promise<Opportunity> {
   progress(`📡 Fetching opportunity ${id}...`);
-  const baseFields = "opportunityid,sn_number,name,_accountid_value,_ownerid_value,_sn_solutionconsultant_value,statuscode,estimatedclosedate,totalamount,sn_netnewacv,msdyn_forecastcategory,stepname,closeprobability,sn_opportunitytype,sn_opportunitybusinessunitlist";
+  const baseFields = "opportunityid,sn_number,name,_accountid_value,_ownerid_value,_sn_solutionconsultant_value,_sn_territory_value,statuscode,estimatedclosedate,totalamount,sn_netnewacv,msdyn_forecastcategory,stepname,closeprobability,sn_opportunitytype,sn_opportunitybusinessunitlist";
   // Enrichment fields for single-opp detail view — may not exist in all instances
   // sn_industrysolution is Virtual — excluded from $select, may come through via annotations
   const enrichFields = ",_sn_executivesponsor_value,description,sn_noncompetitive,sn_winlossnodecisionreason,sn_winlossnodecisionnotes";
@@ -1612,7 +1657,7 @@ export async function fetchMyCollaborationOpportunities(
   for (let i = 0; i < oppIds.length; i += 15) {
     const batch = oppIds.slice(i, i + 15);
     const idFilter = batch.map(id => `opportunityid eq ${id}`).join(" or ");
-    const selectFields = "opportunityid,sn_number,name,_accountid_value,_ownerid_value,_sn_solutionconsultant_value,statuscode,estimatedclosedate,totalamount,sn_netnewacv,msdyn_forecastcategory,stepname,closeprobability,sn_opportunitytype,sn_opportunitybusinessunitlist";
+    const selectFields = "opportunityid,sn_number,name,_accountid_value,_ownerid_value,_sn_solutionconsultant_value,_sn_territory_value,statuscode,estimatedclosedate,totalamount,sn_netnewacv,msdyn_forecastcategory,stepname,closeprobability,sn_opportunitytype,sn_opportunitybusinessunitlist";
     const path =
       `/opportunities?$select=${selectFields}` +
       `&$expand=parentaccountid($select=accountid,name)` +
@@ -1861,4 +1906,363 @@ export async function addAttendeesToEngagement(
   }
 
   return results;
+}
+
+// ---------------------------------------------------------------------------
+// Closing Plan — entity auto-discovery + CRUD
+// ---------------------------------------------------------------------------
+
+const CLOSING_PLAN_ENTITY_CANDIDATES = [
+  "sn_closingplans",             // plural (standard SN pattern)
+  "sn_closingplan",              // singular
+  "sn_closingplanmilestones",    // might be milestone entity
+  "sn_closingplanmilestone",     // singular milestone
+  "sn_closingplanactivities",    // alternate naming
+  "sn_closingplanactivity",
+];
+let resolvedClosingPlanEntity: string | null = null;
+
+async function getClosingPlanEntity(progress: ProgressFn): Promise<string> {
+  if (resolvedClosingPlanEntity) return resolvedClosingPlanEntity;
+
+  for (const entity of CLOSING_PLAN_ENTITY_CANDIDATES) {
+    try {
+      const res = await dynamicsFetch(`/${entity}?$top=1`, {}, () => {});
+      if (res.ok) {
+        resolvedClosingPlanEntity = entity;
+        progress(`✅ Discovered closing plan entity: ${entity}`);
+        return entity;
+      }
+    } catch { /* try next */ }
+  }
+
+  // Metadata discovery fallback
+  try {
+    progress("🔍 Searching Dynamics metadata for Closing Plan entity...");
+    const metaRes = await dynamicsFetch(
+      `/EntityDefinitions?$filter=contains(DisplayName/UserLocalizedLabel/Label,'Closing Plan')&$select=LogicalName,EntitySetName&$top=5`,
+      {}, () => {}
+    );
+    if (metaRes.ok) {
+      const metaData = await metaRes.json() as { value: { LogicalName: string; EntitySetName: string }[] };
+      if (metaData.value?.[0]?.EntitySetName) {
+        resolvedClosingPlanEntity = metaData.value[0].EntitySetName;
+        progress(`✅ Found via metadata: ${resolvedClosingPlanEntity}`);
+        return resolvedClosingPlanEntity;
+      }
+    }
+  } catch { /* metadata discovery failed */ }
+
+  throw new Error(
+    "Could not find the Closing Plan entity in Dynamics. " +
+    "Please open a Closing Plan in Dynamics 365, check the URL for the entity name, " +
+    "and let Fred know so he can update Alfred."
+  );
+}
+
+export interface ClosingPlanMilestone {
+  id: string;
+  title: string;
+  dueDate?: string;
+  status: string;         // e.g. "Open", "Complete", "At Risk"
+  statusCode: number;
+  stateCode: number;
+  owner?: string;
+  description?: string;
+  createdOn?: string;
+  modifiedOn?: string;
+  opportunityId?: string;
+  opportunityName?: string;
+}
+
+function mapClosingPlanMilestone(r: Record<string, unknown>): ClosingPlanMilestone {
+  // Adapt to whichever fields the entity uses — try common patterns
+  const id = (r.sn_closingplanid ?? r.sn_closingplanmilestoneid ?? r.activityid ?? r[Object.keys(r).find(k => k.endsWith("id") && !k.startsWith("_")) ?? ""] ?? "") as string;
+  return {
+    id,
+    title: (r.sn_name ?? r.sn_title ?? r.subject ?? r.sn_milestonename ?? "") as string,
+    dueDate: (r.sn_duedate ?? r.scheduledend ?? r.sn_targetdate ?? "") as string || undefined,
+    status: (r["statecode@OData.Community.Display.V1.FormattedValue"] ?? r["statuscode@OData.Community.Display.V1.FormattedValue"] ?? (r.statecode === 0 ? "Open" : r.statecode === 1 ? "Complete" : "Unknown")) as string,
+    statusCode: (r.statuscode ?? 0) as number,
+    stateCode: (r.statecode ?? 0) as number,
+    owner: (r["_ownerid_value@OData.Community.Display.V1.FormattedValue"] ?? "") as string || undefined,
+    description: (r.sn_description ?? r.description ?? "") as string || undefined,
+    createdOn: (r.createdon ?? "") as string || undefined,
+    modifiedOn: (r.modifiedon ?? "") as string || undefined,
+    opportunityId: (r._regardingobjectid_value ?? r._sn_opportunityid_value ?? "") as string || undefined,
+    opportunityName: (r["_regardingobjectid_value@OData.Community.Display.V1.FormattedValue"] ?? r["_sn_opportunityid_value@OData.Community.Display.V1.FormattedValue"] ?? "") as string || undefined,
+  };
+}
+
+export async function listClosingPlan(
+  opportunityId: string,
+  progress: ProgressFn = () => {},
+  options: { includeCompleted?: boolean } = {}
+): Promise<ClosingPlanMilestone[]> {
+  requireGuid(opportunityId, "opportunityId");
+  progress(`📋 Fetching closing plan for opportunity ${opportunityId}...`);
+
+  const entity = await getClosingPlanEntity(progress);
+
+  // Try common lookup patterns — the entity may link to opportunity via different fields
+  const lookupFields = [
+    `_regardingobjectid_value eq ${opportunityId}`,
+    `_sn_opportunityid_value eq ${opportunityId}`,
+    `_sn_opportunity_value eq ${opportunityId}`,
+  ];
+
+  let milestones: ClosingPlanMilestone[] = [];
+
+  for (const filter of lookupFields) {
+    try {
+      const stateFilter = options.includeCompleted ? "" : " and statecode eq 0";
+      const path =
+        `/${entity}` +
+        `?$filter=${encodeURIComponent(filter + stateFilter)}` +
+        `&$orderby=sn_duedate asc,createdon asc` +
+        `&$top=100`;
+
+      const res = await dynamicsFetch(path, {}, progress);
+      if (!res.ok) continue;
+      const data = await res.json() as { value: Record<string, unknown>[] };
+      if (data.value?.length > 0) {
+        milestones = data.value.map(mapClosingPlanMilestone);
+        break;
+      }
+    } catch { /* try next lookup field */ }
+  }
+
+  progress(`✅ Found ${milestones.length} closing plan milestone(s)`);
+  return milestones;
+}
+
+export interface CreateMilestoneInput {
+  opportunityId: string;
+  title: string;
+  dueDate?: string;       // ISO date string
+  description?: string;
+}
+
+export async function createClosingPlanMilestone(
+  input: CreateMilestoneInput,
+  progress: ProgressFn = () => {}
+): Promise<ClosingPlanMilestone> {
+  requireGuid(input.opportunityId, "opportunityId");
+  auditLog("create_closing_plan_milestone", { opportunityId: input.opportunityId, title: input.title });
+  progress(`📌 Creating closing plan milestone: ${input.title}...`);
+
+  const entity = await getClosingPlanEntity(progress);
+
+  // Build body — try multiple binding patterns
+  const body: Record<string, unknown> = {
+    sn_name: input.title,
+  };
+  if (input.dueDate) body.sn_duedate = input.dueDate;
+  if (input.description) body.sn_description = input.description;
+
+  // Try regarding object binding first (activity pattern), then direct lookup
+  const bindingAttempts = [
+    { ...body, "regardingobjectid_opportunity@odata.bind": `/opportunities(${input.opportunityId})` },
+    { ...body, "sn_opportunityid@odata.bind": `/opportunities(${input.opportunityId})` },
+    { ...body, "sn_opportunity@odata.bind": `/opportunities(${input.opportunityId})` },
+  ];
+
+  let created: Record<string, unknown> | null = null;
+  for (const attempt of bindingAttempts) {
+    try {
+      const res = await dynamicsFetch(`/${entity}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Prefer: "return=representation" },
+        body: JSON.stringify(attempt),
+      }, progress);
+
+      if (res.ok) {
+        created = await res.json() as Record<string, unknown>;
+        break;
+      }
+    } catch { /* try next binding */ }
+  }
+
+  if (!created) {
+    throw new Error(`Failed to create closing plan milestone. The entity "${entity}" may use a different opportunity binding.`);
+  }
+
+  progress(`✅ Milestone created: ${input.title}`);
+  return mapClosingPlanMilestone(created);
+}
+
+export async function updateClosingPlanMilestone(
+  milestoneId: string,
+  updates: { complete?: boolean; atRisk?: boolean; title?: string; dueDate?: string; description?: string },
+  progress: ProgressFn = () => {}
+): Promise<void> {
+  requireGuid(milestoneId, "milestoneId");
+  auditLog("update_closing_plan_milestone", { milestoneId, updates });
+
+  const entity = await getClosingPlanEntity(progress);
+  const body: Record<string, unknown> = {};
+
+  if (updates.complete) {
+    body.statecode = 1;    // Complete / Inactive
+    body.statuscode = 2;   // Completed
+    progress(`✅ Marking milestone as complete...`);
+  }
+  if (updates.atRisk !== undefined) {
+    body.sn_atrisk = updates.atRisk;
+    progress(updates.atRisk ? `⚠️ Flagging milestone as at risk...` : `✅ Removing risk flag...`);
+  }
+  if (updates.title) body.sn_name = updates.title;
+  if (updates.dueDate) body.sn_duedate = updates.dueDate;
+  if (updates.description) body.sn_description = updates.description;
+
+  const res = await dynamicsFetch(`/${entity}(${milestoneId})`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  }, progress);
+
+  if (!res.ok && res.status !== 204) {
+    throw new Error(`Failed to update milestone ${milestoneId}: ${res.status} ${res.statusText}`);
+  }
+
+  progress(`✅ Milestone updated`);
+}
+
+// ---------------------------------------------------------------------------
+// Forecast Summary — aggregate pipeline by forecast category
+// ---------------------------------------------------------------------------
+
+export interface ForecastSummary {
+  totalPipeline: number;
+  committed: number;
+  bestCase: number;
+  pipeline: number;
+  omitted: number;
+  oppCount: number;
+  byCategory: Array<{
+    category: string;
+    categoryCode: number;
+    count: number;
+    nnacv: number;
+    opps: Array<{ name: string; account: string; nnacv: number; closeDate?: string; owner?: string }>;
+  }>;
+  closingThisQuarter: number;
+  closingNextQuarter: number;
+  atRiskCount: number;
+}
+
+export async function getForecastSummary(
+  options: {
+    myOppsOnly?: boolean;
+    myOppsFilterField?: "owner" | "collab";
+    ownerSearch?: string;
+    accountSearch?: string;
+    quarter?: string;          // e.g. "Q2 2026" — filters by close date within that quarter
+  },
+  progress: ProgressFn = () => {}
+): Promise<ForecastSummary> {
+  progress("📊 Building forecast summary...");
+
+  const opps = await fetchOpportunities({
+    search: options.accountSearch,
+    myOpportunitiesOnly: options.myOppsOnly ?? true,
+    myOppsFilterField: options.myOppsFilterField ?? "owner",
+    ownerSearch: options.ownerSearch,
+    includeClosed: false,
+    includeZeroValue: true,
+    top: 500,
+  }, progress);
+
+  // Quarter filtering
+  let filtered = opps;
+  if (options.quarter) {
+    const qMatch = options.quarter.match(/Q([1-4])\s*(\d{4})/i);
+    if (qMatch) {
+      const q = parseInt(qMatch[1]!);
+      const y = parseInt(qMatch[2]!);
+      const qStart = new Date(y, (q - 1) * 3, 1);
+      const qEnd = new Date(y, q * 3, 0); // last day of quarter
+      filtered = opps.filter(o => {
+        if (!o.estimatedclosedate) return false;
+        const d = new Date(o.estimatedclosedate);
+        return d >= qStart && d <= qEnd;
+      });
+      progress(`📅 Filtered to ${options.quarter}: ${filtered.length} opps`);
+    }
+  }
+
+  const today = new Date();
+  const soon = new Date(today.getTime() + 30 * 24 * 60 * 60 * 1000);
+
+  // Current quarter boundaries
+  const currentQ = Math.floor(today.getMonth() / 3);
+  const currentQEnd = new Date(today.getFullYear(), (currentQ + 1) * 3, 0);
+  const nextQEnd = new Date(today.getFullYear(), (currentQ + 2) * 3, 0);
+
+  let committed = 0, bestCase = 0, pipelineVal = 0, omitted = 0;
+  let closingThisQ = 0, closingNextQ = 0, atRisk = 0;
+
+  const catMap: Record<string, { code: number; count: number; nnacv: number; opps: ForecastSummary["byCategory"][0]["opps"] }> = {};
+
+  for (const o of filtered) {
+    const val = o.nnacv ?? 0;
+    const catName = o.forecastCategoryName ?? "Unknown";
+    const catCode = o.msdyn_forecastcategory ?? 0;
+
+    switch (catCode) {
+      case 100000003: committed += val; break;
+      case 100000002: bestCase += val; break;
+      case 100000001: pipelineVal += val; break;
+      case 100000004: omitted += val; break;
+    }
+
+    if (!catMap[catName]) catMap[catName] = { code: catCode, count: 0, nnacv: 0, opps: [] };
+    catMap[catName].count++;
+    catMap[catName].nnacv += val;
+    catMap[catName].opps.push({
+      name: o.name,
+      account: o.accountName,
+      nnacv: val,
+      closeDate: o.estimatedclosedate,
+      owner: o.ownerName,
+    });
+
+    // Timing checks
+    if (o.estimatedclosedate) {
+      const close = new Date(o.estimatedclosedate);
+      if (close <= currentQEnd) closingThisQ++;
+      else if (close <= nextQEnd) closingNextQ++;
+      if (close < today || (close < soon && close >= today)) atRisk++;
+    } else {
+      atRisk++; // No close date = at risk
+    }
+  }
+
+  const byCategory = Object.entries(catMap)
+    .sort((a, b) => {
+      const order = [100000003, 100000002, 100000001, 100000004, 0];
+      return order.indexOf(a[1].code) - order.indexOf(b[1].code);
+    })
+    .map(([category, data]) => ({
+      category,
+      categoryCode: data.code,
+      count: data.count,
+      nnacv: data.nnacv,
+      opps: data.opps.sort((a, b) => (b.nnacv ?? 0) - (a.nnacv ?? 0)),
+    }));
+
+  progress(`✅ Forecast: ${filtered.length} opps | Committed $${committed.toLocaleString()} | Best Case $${bestCase.toLocaleString()} | Pipeline $${pipelineVal.toLocaleString()}`);
+
+  return {
+    totalPipeline: committed + bestCase + pipelineVal,
+    committed,
+    bestCase,
+    pipeline: pipelineVal,
+    omitted,
+    oppCount: filtered.length,
+    byCategory,
+    closingThisQuarter: closingThisQ,
+    closingNextQuarter: closingNextQ,
+    atRiskCount: atRisk,
+  };
 }
