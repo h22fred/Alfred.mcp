@@ -1204,6 +1204,8 @@ export interface UpdateOpportunityInput {
   ownerId?: string;
   scId?: string;
   notes?: string;
+  winLossNotes?: string;        // sn_winlossnodecisionnotes — why the deal was won/lost
+  probability?: number;         // closeprobability — e.g. 80
 }
 
 export async function createOpportunity(
@@ -1258,6 +1260,8 @@ export async function updateOpportunity(
     ...(input.ownerId     ? { "ownerid@odata.bind": `/systemusers(${input.ownerId})` } : {}),
     ...(input.scId        ? { "sn_solutionconsultant@odata.bind": `/systemusers(${input.scId})` } : {}),
     ...(input.notes       ? { description: input.notes } : {}),
+    ...(input.winLossNotes ? { sn_winlossnodecisionnotes: input.winLossNotes } : {}),
+    ...(input.probability !== undefined ? { closeprobability: input.probability } : {}),
   };
 
   await dynamicsFetch(`/opportunities(${input.opportunityId})`, {
@@ -2265,4 +2269,279 @@ export async function getForecastSummary(
     closingNextQuarter: closingNextQ,
     atRiskCount: atRisk,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Opportunity Summary — read/write the summary tab (annotations or custom entity)
+// ---------------------------------------------------------------------------
+
+const OPP_SUMMARY_ENTITY_CANDIDATES = [
+  "sn_opportunitysummaries",
+  "sn_opportunitysummary",
+  "sn_dealreviews",
+  "sn_dealreview",
+];
+let resolvedOppSummaryEntity: string | null = null;
+
+async function getOppSummaryEntity(progress: ProgressFn): Promise<string | null> {
+  if (resolvedOppSummaryEntity) return resolvedOppSummaryEntity;
+
+  for (const entity of OPP_SUMMARY_ENTITY_CANDIDATES) {
+    try {
+      const res = await dynamicsFetch(`/${entity}?$top=1`, {}, () => {});
+      if (res.ok) {
+        resolvedOppSummaryEntity = entity;
+        progress(`✅ Discovered opportunity summary entity: ${entity}`);
+        return entity;
+      }
+    } catch { /* try next */ }
+  }
+
+  // Metadata discovery fallback
+  try {
+    const metaRes = await dynamicsFetch(
+      `/EntityDefinitions?$filter=contains(DisplayName/UserLocalizedLabel/Label,'Opportunity Summary') or contains(DisplayName/UserLocalizedLabel/Label,'Deal Review')&$select=LogicalName,EntitySetName&$top=5`,
+      {}, () => {}
+    );
+    if (metaRes.ok) {
+      const metaData = await metaRes.json() as { value: { LogicalName: string; EntitySetName: string }[] };
+      if (metaData.value?.[0]?.EntitySetName) {
+        resolvedOppSummaryEntity = metaData.value[0].EntitySetName;
+        progress(`✅ Found via metadata: ${resolvedOppSummaryEntity}`);
+        return resolvedOppSummaryEntity;
+      }
+    }
+  } catch { /* metadata failed */ }
+
+  return null; // No custom entity — fall back to annotations
+}
+
+export interface OpportunitySummary {
+  id: string;
+  title: string;
+  content: string;
+  createdOn?: string;
+  modifiedOn?: string;
+  owner?: string;
+}
+
+export async function getOpportunitySummary(
+  opportunityId: string,
+  progress: ProgressFn = () => {}
+): Promise<OpportunitySummary[]> {
+  requireGuid(opportunityId, "opportunityId");
+  progress(`📄 Fetching opportunity summary for ${opportunityId}...`);
+
+  // Try custom summary entity first
+  const entity = await getOppSummaryEntity(progress);
+  if (entity) {
+    const lookupFields = [
+      `_regardingobjectid_value eq ${opportunityId}`,
+      `_sn_opportunityid_value eq ${opportunityId}`,
+      `_sn_opportunity_value eq ${opportunityId}`,
+    ];
+    for (const filter of lookupFields) {
+      try {
+        const res = await dynamicsFetch(
+          `/${entity}?$filter=${encodeURIComponent(filter)}&$orderby=modifiedon desc&$top=20`,
+          {}, progress
+        );
+        if (!res.ok) continue;
+        const data = await res.json() as { value: Record<string, unknown>[] };
+        if (data.value?.length > 0) {
+          const summaries = data.value.map((r): OpportunitySummary => ({
+            id: (r[Object.keys(r).find(k => k.endsWith("id") && !k.startsWith("_") && !k.includes("value")) ?? ""] ?? "") as string,
+            title: (r.sn_name ?? r.sn_title ?? r.subject ?? "") as string,
+            content: (r.sn_summary ?? r.sn_description ?? r.sn_notes ?? r.description ?? r.notetext ?? "") as string,
+            createdOn: r.createdon as string | undefined,
+            modifiedOn: r.modifiedon as string | undefined,
+            owner: r["_ownerid_value@OData.Community.Display.V1.FormattedValue"] as string | undefined,
+          }));
+          progress(`✅ Found ${summaries.length} summary record(s)`);
+          return summaries;
+        }
+      } catch { /* try next lookup */ }
+    }
+  }
+
+  // Fallback: read annotations (standard Dynamics notes on the opportunity)
+  progress("📝 No custom summary entity — reading opportunity notes (annotations)...");
+  const annotRes = await dynamicsFetch(
+    `/annotations?$select=annotationid,subject,notetext,createdon,modifiedon,_ownerid_value` +
+    `&$filter=_objectid_value eq ${opportunityId} and isdocument eq false` +
+    `&$orderby=modifiedon desc&$top=20`,
+    {}, progress
+  );
+  const annotData = await annotRes.json() as { value: Record<string, unknown>[] };
+  const summaries = (annotData.value ?? []).map((r): OpportunitySummary => ({
+    id: r.annotationid as string,
+    title: (r.subject ?? "") as string,
+    content: (r.notetext ?? "") as string,
+    createdOn: r.createdon as string | undefined,
+    modifiedOn: r.modifiedon as string | undefined,
+    owner: r["_ownerid_value@OData.Community.Display.V1.FormattedValue"] as string | undefined,
+  }));
+  progress(`✅ Found ${summaries.length} note(s)`);
+  return summaries;
+}
+
+export async function updateOpportunitySummary(
+  opportunityId: string,
+  summary: string,
+  title?: string,
+  progress: ProgressFn = () => {}
+): Promise<OpportunitySummary> {
+  requireGuid(opportunityId, "opportunityId");
+  auditLog("update_opportunity_summary", { opportunityId });
+  progress(`📝 Writing opportunity summary...`);
+
+  // Try custom entity first
+  const entity = await getOppSummaryEntity(progress);
+  if (entity) {
+    // Check for existing summary to update in place
+    const existing = await getOpportunitySummary(opportunityId, progress);
+    if (existing.length > 0 && existing[0]!.id) {
+      // Update existing
+      const body: Record<string, unknown> = {
+        sn_summary: summary,
+        sn_description: summary,
+        sn_notes: summary,
+      };
+      if (title) { body.sn_name = title; body.sn_title = title; }
+      await dynamicsFetch(`/${entity}(${existing[0]!.id})`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      }, progress);
+      progress(`✅ Updated existing summary`);
+      return { ...existing[0]!, content: summary, title: title ?? existing[0]!.title };
+    }
+    // Create new
+    const body: Record<string, unknown> = {
+      sn_summary: summary,
+      sn_description: summary,
+      sn_notes: summary,
+      sn_name: title ?? "Opportunity Summary",
+      "regardingobjectid_opportunity@odata.bind": `/opportunities(${opportunityId})`,
+    };
+    try {
+      const res = await dynamicsFetch(`/${entity}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Prefer: "return=representation" },
+        body: JSON.stringify(body),
+      }, progress);
+      if (res.ok) {
+        progress(`✅ Created summary on custom entity`);
+        const created = await res.json() as Record<string, unknown>;
+        return {
+          id: Object.values(created).find(v => typeof v === "string" && /^[0-9a-f-]{36}$/.test(v)) as string ?? "",
+          title: title ?? "Opportunity Summary",
+          content: summary,
+          createdOn: created.createdon as string | undefined,
+          modifiedOn: created.modifiedon as string | undefined,
+        };
+      }
+    } catch { /* fall through to annotation */ }
+  }
+
+  // Fallback: create/update as annotation (standard note)
+  const existing = await getOpportunitySummary(opportunityId, progress);
+  const summaryNote = existing.find(n => n.title.toLowerCase().includes("summary"));
+
+  if (summaryNote?.id) {
+    // Update existing note
+    await dynamicsFetch(`/annotations(${summaryNote.id})`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        subject: title ?? summaryNote.title ?? "Opportunity Summary",
+        notetext: summary,
+      }),
+    }, progress);
+    progress(`✅ Updated existing summary note`);
+    return { ...summaryNote, content: summary, title: title ?? summaryNote.title };
+  }
+
+  // Create new annotation
+  const res = await dynamicsFetch("/annotations", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Prefer: "return=representation" },
+    body: JSON.stringify({
+      subject: title ?? "Opportunity Summary",
+      notetext: summary,
+      "objectid_opportunity@odata.bind": `/opportunities(${opportunityId})`,
+    }),
+  }, progress);
+  const created = await res.json() as Record<string, unknown>;
+  progress(`✅ Created summary note`);
+  return {
+    id: created.annotationid as string,
+    title: title ?? "Opportunity Summary",
+    content: summary,
+    createdOn: created.createdon as string | undefined,
+    modifiedOn: created.modifiedon as string | undefined,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Quotes — read quotes linked to an opportunity
+// ---------------------------------------------------------------------------
+
+export interface Quote {
+  quoteid: string;
+  name: string;
+  quoteNumber?: string;
+  status: string;
+  statusCode: number;
+  totalAmount?: number;
+  createdOn?: string;
+  modifiedOn?: string;
+  effectiveFrom?: string;
+  effectiveTo?: string;
+  description?: string;
+  owner?: string;
+}
+
+export async function listQuotes(
+  opportunityId: string,
+  progress: ProgressFn = () => {}
+): Promise<Quote[]> {
+  requireGuid(opportunityId, "opportunityId");
+  progress(`📋 Fetching quotes for opportunity ${opportunityId}...`);
+
+  const path =
+    `/quotes` +
+    `?$select=quoteid,name,quotenumber,statuscode,statecode,totalamount,createdon,modifiedon,effectivefrom,effectiveto,description,_ownerid_value` +
+    `&$filter=_opportunityid_value eq ${opportunityId}` +
+    `&$orderby=modifiedon desc` +
+    `&$top=50`;
+
+  let quotes: Quote[] = [];
+  try {
+    const res = await dynamicsFetch(path, {}, progress);
+    if (res.ok) {
+      const data = await res.json() as { value: Record<string, unknown>[] };
+      quotes = (data.value ?? []).map((r): Quote => ({
+        quoteid: r.quoteid as string,
+        name: (r.name ?? "") as string,
+        quoteNumber: r.quotenumber as string | undefined,
+        status: (r["statuscode@OData.Community.Display.V1.FormattedValue"] ?? (r.statecode === 0 ? "Draft" : r.statecode === 1 ? "Active" : r.statecode === 2 ? "Won" : r.statecode === 3 ? "Closed" : "Unknown")) as string,
+        statusCode: (r.statuscode ?? 0) as number,
+        totalAmount: r.totalamount as number | undefined,
+        createdOn: r.createdon as string | undefined,
+        modifiedOn: r.modifiedon as string | undefined,
+        effectiveFrom: r.effectivefrom as string | undefined,
+        effectiveTo: r.effectiveto as string | undefined,
+        description: r.description as string | undefined,
+        owner: r["_ownerid_value@OData.Community.Display.V1.FormattedValue"] as string | undefined,
+      }));
+    }
+  } catch (e) {
+    // Quotes entity may not exist or be accessible
+    progress(`⚠️ Could not fetch quotes: ${e instanceof Error ? e.message : String(e)}`);
+    return [];
+  }
+
+  progress(`✅ Found ${quotes.length} quote(s)`);
+  return quotes;
 }

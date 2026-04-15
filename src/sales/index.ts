@@ -44,6 +44,9 @@ import {
   createClosingPlanMilestone,
   updateClosingPlanMilestone,
   getForecastSummary,
+  getOpportunitySummary,
+  updateOpportunitySummary,
+  listQuotes,
   type EngagementType,
   type EngagementDescription,
 } from "../tools/dynamicsClient.js";
@@ -419,7 +422,7 @@ Workflow:
 // ---------------------------------------------------------------------------
 server.tool(
   "update_opportunity",
-  `Update an existing opportunity in Dynamics 365 — close date, forecast category, owner, SC, or name.
+  `Update an existing opportunity in Dynamics 365 — close date, forecast category, owner, SC, name, probability, or win/loss notes.
 
 Always show the current values and the proposed changes, then confirm before calling with confirmed=true.`,
   {
@@ -430,9 +433,11 @@ Always show the current values and the proposed changes, then confirm before cal
     owner_id:          z.string().optional().describe("New Sales Rep systemuser GUID"),
     sc_id:             z.string().optional().describe("New SC systemuser GUID"),
     notes:             z.string().optional().describe("Updated description/notes"),
+    win_loss_notes:    z.string().optional().describe("Win/loss/no-decision reason notes — log why the deal was won, lost, or stalled"),
+    probability:       z.number().optional().describe("Close probability percentage (0-100)"),
     confirmed:         z.boolean().optional().describe("MUST be true to actually update. Omit for dry-run."),
   },
-  async ({ opportunity_id, name, close_date, forecast_category, owner_id, sc_id, notes, confirmed }) => {
+  async ({ opportunity_id, name, close_date, forecast_category, owner_id, sc_id, notes, win_loss_notes, probability, confirmed }) => {
     requireGuid(opportunity_id, "opportunity_id");
     if (owner_id) requireGuid(owner_id, "owner_id");
     if (sc_id)    requireGuid(sc_id, "sc_id");
@@ -455,6 +460,8 @@ Always show the current values and the proposed changes, then confirm before cal
       if (owner_id)         changes.push(`Owner: → ${owner_id}`);
       if (sc_id)            changes.push(`SC: → ${sc_id}`);
       if (notes)            changes.push(`Notes updated`);
+      if (win_loss_notes)   changes.push(`Win/Loss notes: ${win_loss_notes.slice(0, 80)}${win_loss_notes.length > 80 ? "..." : ""}`);
+      if (probability !== undefined) changes.push(`Probability: ${current.probability ?? "—"}% → ${probability}%`);
 
       return { content: [{ type: "text", text:
         `📋 **Dry-run — nothing updated yet.**\n\n` +
@@ -470,6 +477,7 @@ Always show the current values and the proposed changes, then confirm before cal
       opportunityId: opportunity_id,
       name, closeDate: close_date, forecastCategory: forecastCode,
       ownerId: owner_id, scId: sc_id, notes,
+      winLossNotes: win_loss_notes, probability,
     }, progress);
 
     const link = `${DYNAMICS_BASE_URL}/main.aspx?etn=opportunity&pagetype=entityrecord&id=${updated.opportunityid}`;
@@ -892,6 +900,75 @@ Always show the nnacv field as the primary deal value. Display format: NNACV: $X
       if (cat.opps.length > 10) lines.push(`- _...and ${cat.opps.length - 10} more_`);
     }
 
+    return { content: [{ type: "text", text: lines.join("\n") }] };
+  }
+);
+
+// ---------------------------------------------------------------------------
+// Tool: get_opportunity_summary
+// ---------------------------------------------------------------------------
+server.tool(
+  "get_opportunity_summary",
+  `Read the opportunity summary / deal review notes.
+
+Returns summary content, notes, and annotations attached to the opportunity.
+Useful for understanding deal context, history, and current status.`,
+  { opportunity_id: z.string().describe("Dynamics opportunity GUID or OPTY number") },
+  async ({ opportunity_id }) => {
+    const progress = makeProgress(server);
+    const id = await resolveOpportunityId(opportunity_id, progress);
+    const summaries = await getOpportunitySummary(id, progress);
+    if (summaries.length === 0) {
+      return { content: [{ type: "text", text: "No opportunity summary or notes found." }] };
+    }
+    return { content: [{ type: "text", text: JSON.stringify(summaries, null, 2) }] };
+  }
+);
+
+// ---------------------------------------------------------------------------
+// Tool: update_opportunity_summary
+// ---------------------------------------------------------------------------
+server.tool(
+  "update_opportunity_summary",
+  `Write or update the opportunity summary / deal review.
+
+Updates an existing summary if one exists, or creates a new one.
+Confirm with the user before writing.`,
+  {
+    opportunity_id: z.string().describe("Dynamics opportunity GUID or OPTY number"),
+    summary: z.string().describe("The summary content to write"),
+    title: z.string().optional().describe("Summary title (default: 'Opportunity Summary')"),
+    confirmed: z.boolean().describe("User must confirm before writing"),
+  },
+  async ({ opportunity_id, summary, title, confirmed }) => {
+    if (!confirmed) return { content: [{ type: "text", text: "⚠️ Please confirm to write this summary." }] };
+    engagementWriteLimiter.check("update_opportunity_summary");
+    const progress = makeProgress(server);
+    const id = await resolveOpportunityId(opportunity_id, progress);
+    const result = await updateOpportunitySummary(id, summary, title, progress);
+    return { content: [{ type: "text", text: `✅ Summary saved: **${result.title}**` }] };
+  }
+);
+
+// ---------------------------------------------------------------------------
+// Tool: list_quotes
+// ---------------------------------------------------------------------------
+server.tool(
+  "list_quotes",
+  `List quotes linked to an opportunity. Shows quote name, status, value, and dates.`,
+  { opportunity_id: z.string().describe("Dynamics opportunity GUID or OPTY number") },
+  async ({ opportunity_id }) => {
+    const progress = makeProgress(server);
+    const id = await resolveOpportunityId(opportunity_id, progress);
+    const quotes = await listQuotes(id, progress);
+    if (quotes.length === 0) {
+      return { content: [{ type: "text", text: "No quotes found for this opportunity." }] };
+    }
+    const lines = quotes.map(q => {
+      const val = q.totalAmount != null ? `$${q.totalAmount.toLocaleString()}` : "no value";
+      const dates = [q.effectiveFrom?.slice(0, 10), q.effectiveTo?.slice(0, 10)].filter(Boolean).join(" → ");
+      return `- **${q.name}**${q.quoteNumber ? ` (${q.quoteNumber})` : ""} | ${q.status} | ${val}${dates ? ` | ${dates}` : ""}`;
+    });
     return { content: [{ type: "text", text: lines.join("\n") }] };
   }
 );

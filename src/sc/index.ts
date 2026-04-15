@@ -45,6 +45,9 @@ import {
   createClosingPlanMilestone,
   updateClosingPlanMilestone,
   getForecastSummary,
+  getOpportunitySummary,
+  updateOpportunitySummary,
+  listQuotes,
   type EngagementType,
   type OpportunityFilter,
   type EngagementDescription,
@@ -1121,6 +1124,75 @@ Always show the nnacv field as the primary deal value. Display format: NNACV: $X
       if (cat.opps.length > 10) lines.push(`- _...and ${cat.opps.length - 10} more_`);
     }
 
+    return { content: [{ type: "text", text: lines.join("\n") }] };
+  }
+);
+
+// ---------------------------------------------------------------------------
+// Tool: get_opportunity_summary
+// ---------------------------------------------------------------------------
+server.tool(
+  "get_opportunity_summary",
+  `Read the opportunity summary / deal review notes.
+
+Returns summary content, notes, and annotations attached to the opportunity.
+Useful for understanding deal context, history, and current status.`,
+  { opportunity_id: z.string().describe("Dynamics opportunity GUID or OPTY number") },
+  async ({ opportunity_id }) => {
+    const progress = makeProgress(server);
+    const id = await resolveOpportunityId(opportunity_id, progress);
+    const summaries = await getOpportunitySummary(id, progress);
+    if (summaries.length === 0) {
+      return { content: [{ type: "text", text: "No opportunity summary or notes found." }] };
+    }
+    return { content: [{ type: "text", text: JSON.stringify(summaries, null, 2) }] };
+  }
+);
+
+// ---------------------------------------------------------------------------
+// Tool: update_opportunity_summary
+// ---------------------------------------------------------------------------
+server.tool(
+  "update_opportunity_summary",
+  `Write or update the opportunity summary / deal review.
+
+Updates an existing summary if one exists, or creates a new one.
+Confirm with the user before writing.`,
+  {
+    opportunity_id: z.string().describe("Dynamics opportunity GUID or OPTY number"),
+    summary: z.string().describe("The summary content to write"),
+    title: z.string().optional().describe("Summary title (default: 'Opportunity Summary')"),
+    confirmed: z.boolean().describe("User must confirm before writing"),
+  },
+  async ({ opportunity_id, summary, title, confirmed }) => {
+    if (!confirmed) return { content: [{ type: "text", text: "⚠️ Please confirm to write this summary." }] };
+    engagementWriteLimiter.check("update_opportunity_summary");
+    const progress = makeProgress(server);
+    const id = await resolveOpportunityId(opportunity_id, progress);
+    const result = await updateOpportunitySummary(id, summary, title, progress);
+    return { content: [{ type: "text", text: `✅ Summary saved: **${result.title}**` }] };
+  }
+);
+
+// ---------------------------------------------------------------------------
+// Tool: list_quotes
+// ---------------------------------------------------------------------------
+server.tool(
+  "list_quotes",
+  `List quotes linked to an opportunity. Shows quote name, status, value, and dates.`,
+  { opportunity_id: z.string().describe("Dynamics opportunity GUID or OPTY number") },
+  async ({ opportunity_id }) => {
+    const progress = makeProgress(server);
+    const id = await resolveOpportunityId(opportunity_id, progress);
+    const quotes = await listQuotes(id, progress);
+    if (quotes.length === 0) {
+      return { content: [{ type: "text", text: "No quotes found for this opportunity." }] };
+    }
+    const lines = quotes.map(q => {
+      const val = q.totalAmount != null ? `$${q.totalAmount.toLocaleString()}` : "no value";
+      const dates = [q.effectiveFrom?.slice(0, 10), q.effectiveTo?.slice(0, 10)].filter(Boolean).join(" → ");
+      return `- **${q.name}**${q.quoteNumber ? ` (${q.quoteNumber})` : ""} | ${q.status} | ${val}${dates ? ` | ${dates}` : ""}`;
+    });
     return { content: [{ type: "text", text: lines.join("\n") }] };
   }
 );
