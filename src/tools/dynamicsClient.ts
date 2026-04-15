@@ -1087,6 +1087,7 @@ async function getCollabNoteEntity(progress: ProgressFn): Promise<string> {
   if (resolvedCollabNoteEntity) return resolvedCollabNoteEntity;
 
   // Try each candidate until one doesn't 404
+  const triedCollab: string[] = [];
   for (const entity of COLLAB_NOTE_ENTITY_CANDIDATES) {
     try {
       const res = await dynamicsFetch(`/${entity}?$top=1`, {}, () => {});
@@ -1095,7 +1096,8 @@ async function getCollabNoteEntity(progress: ProgressFn): Promise<string> {
         progress(`✅ Discovered collaboration notes entity: ${entity}`);
         return entity;
       }
-    } catch { /* try next */ }
+      triedCollab.push(`${entity} (${res.status})`);
+    } catch (e) { triedCollab.push(`${entity} (${e instanceof Error ? e.message.slice(0, 60) : "error"})`); }
   }
 
   // Last resort: try metadata discovery
@@ -1116,7 +1118,9 @@ async function getCollabNoteEntity(progress: ProgressFn): Promise<string> {
   } catch { /* metadata discovery failed */ }
 
   throw new Error(
-    "Could not find the Collaboration Notes entity in Dynamics. " +
+    "Could not find the Collaboration Notes entity in Dynamics.\n" +
+    `Tried: ${triedCollab.join(", ")}\n` +
+    `Base URL: ${DYNAMICS_BASE}\n` +
     "Please open a Collaboration Note in Dynamics 365, check the URL for the entity name, " +
     "and let Fred know so he can update Alfred."
   );
@@ -1932,6 +1936,7 @@ let resolvedClosingPlanEntity: string | null = null;
 async function getClosingPlanEntity(progress: ProgressFn): Promise<string> {
   if (resolvedClosingPlanEntity) return resolvedClosingPlanEntity;
 
+  const triedClosing: string[] = [];
   for (const entity of CLOSING_PLAN_ENTITY_CANDIDATES) {
     try {
       const res = await dynamicsFetch(`/${entity}?$top=1`, {}, () => {});
@@ -1940,7 +1945,8 @@ async function getClosingPlanEntity(progress: ProgressFn): Promise<string> {
         progress(`✅ Discovered closing plan entity: ${entity}`);
         return entity;
       }
-    } catch { /* try next */ }
+      triedClosing.push(`${entity} (${res.status})`);
+    } catch (e) { triedClosing.push(`${entity} (${e instanceof Error ? e.message.slice(0, 60) : "error"})`); }
   }
 
   // Metadata discovery fallback
@@ -1961,7 +1967,9 @@ async function getClosingPlanEntity(progress: ProgressFn): Promise<string> {
   } catch { /* metadata discovery failed */ }
 
   throw new Error(
-    "Could not find the Closing Plan entity in Dynamics. " +
+    "Could not find the Closing Plan entity in Dynamics.\n" +
+    `Tried: ${triedClosing.join(", ")}\n` +
+    `Base URL: ${DYNAMICS_BASE}\n` +
     "Please open a Closing Plan in Dynamics 365, check the URL for the entity name, " +
     "and let Fred know so he can update Alfred."
   );
@@ -2289,6 +2297,7 @@ let resolvedOppSummaryEntity: string | null = null;
 async function getOppSummaryEntity(progress: ProgressFn): Promise<string | null> {
   if (resolvedOppSummaryEntity) return resolvedOppSummaryEntity;
 
+  const triedOppSummary: string[] = [];
   for (const entity of OPP_SUMMARY_ENTITY_CANDIDATES) {
     try {
       const res = await dynamicsFetch(`/${entity}?$top=1`, {}, () => {});
@@ -2297,7 +2306,8 @@ async function getOppSummaryEntity(progress: ProgressFn): Promise<string | null>
         progress(`✅ Discovered opportunity summary entity: ${entity}`);
         return entity;
       }
-    } catch { /* try next */ }
+      triedOppSummary.push(`${entity} (${res.status})`);
+    } catch (e) { triedOppSummary.push(`${entity} (${e instanceof Error ? e.message.slice(0, 60) : "error"})`); }
   }
 
   // Metadata discovery fallback

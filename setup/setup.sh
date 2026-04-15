@@ -130,6 +130,26 @@ else
   NEW_DYNAMICS_URL="https://${NEW_COMPANY}.crm.dynamics.com"
 fi
 
+# Validate the Dynamics URL is reachable (non-blocking — warn but don't fail)
+echo "   🔍 Verifying ${NEW_DYNAMICS_URL}..."
+HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" --max-time 8 "${NEW_DYNAMICS_URL}" 2>/dev/null || echo "000")
+if [ "$HTTP_STATUS" = "000" ]; then
+  echo "   ⚠️  Could not reach ${NEW_DYNAMICS_URL} — check the company name"
+  echo "       If this is wrong, re-run setup and enter the correct name."
+  echo "       (Your company name is the subdomain in https://COMPANY.crm.dynamics.com)"
+  printf "   Continue anyway? [y/N]: "
+  read -r CONTINUE_ANYWAY </dev/tty
+  if [ "$CONTINUE_ANYWAY" != "y" ] && [ "$CONTINUE_ANYWAY" != "Y" ]; then
+    echo "   Aborting — please re-run setup with the correct company name."
+    exit 1
+  fi
+elif [ "$HTTP_STATUS" = "404" ]; then
+  echo "   ⚠️  ${NEW_DYNAMICS_URL} returned 404 — this might not be the right instance"
+  echo "       Common names: servicenow, acme, contoso — check your browser URL bar"
+else
+  echo "   ✅ Dynamics instance verified (HTTP $HTTP_STATUS)"
+fi
+
 ALFRED_DYNAMICS_URL="$NEW_DYNAMICS_URL" python3 -c "
 import json, os
 f = os.path.expanduser('~/.alfred-config.json')
