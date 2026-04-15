@@ -86,51 +86,71 @@ export function clearAuthCache(): void {
   clearCachedAuthFile("outlook");
 }
 
-/** Stop the Alfred Chrome process gracefully. */
-export function exitAlfred(progress: ProgressFn = () => {}): boolean {
-  if (!isChromeProcessRunning()) {
+/** Stop the Alfred Chrome process gracefully via CDP Browser.close — cross-platform. */
+export async function exitAlfred(progress: ProgressFn = () => {}): Promise<boolean> {
+  if (!isAlfredgable()) {
     progress("ℹ️ Alfred is not running");
     return false;
   }
   progress("🛑 Closing Alfred (only the Alfred Chrome — your regular Chrome is untouched)...");
   try {
-    if (process.platform === "win32") {
-      // Use WMIC to find Chrome PIDs with the alfred-profile flag, then taskkill each
-      const wmic = execFileSync("cmd", ["/c",
-        `wmic process where "CommandLine like '%%${CHROME_PROFILE_DIR.replace(/\\/g, "\\\\")}%%'" get ProcessId /format:list`
-      ], { timeout: 5_000, encoding: "utf8" });
-      const pids = wmic.match(/ProcessId=(\d+)/g)?.map(m => m.split("=")[1]) ?? [];
-      for (const pid of pids) {
-        try { execFileSync("taskkill", ["/F", "/PID", pid], { timeout: 3_000 }); } catch { /* already gone */ }
-      }
-    } else {
-      // pkill -f matches the full command line — only kills Chrome with --user-data-dir=~/.alfred-profile
-      execFileSync("pkill", ["-f", CHROME_PROFILE_DIR], { timeout: 5_000 });
+    // Use CDP Browser.close — works on macOS and Windows, targets only the debug-port Chrome
+    const verRes = await fetch(`http://localhost:${CDP_PORT}/json/version`);
+    const verInfo = await verRes.json() as { webSocketDebuggerUrl?: string };
+    const wsUrl = verInfo.webSocketDebuggerUrl;
+    if (wsUrl) {
+      await new Promise<void>((resolve) => {
+        const ws = new WebSocket(wsUrl);
+        ws.addEventListener("open", () => {
+          ws.send(JSON.stringify({ id: 1, method: "Browser.close" }));
+          // Don't wait for response — Chrome closes immediately
+          setTimeout(resolve, 500);
+        });
+        ws.addEventListener("error", () => resolve());
+        setTimeout(resolve, 3_000); // safety timeout
+      });
     }
-  } catch { /* process may have already exited */ }
+  } catch { /* Chrome may have already closed */ }
+
+  // Fallback: if CDP close didn't work, try platform-specific kill
+  await new Promise(r => setTimeout(r, 500));
+  if (isAlfredgable()) {
+    try {
+      if (process.platform === "win32") {
+        execFileSync("taskkill", ["/F", "/IM", "chrome.exe", "/FI", `WINDOWTITLE eq *alfred*`], { timeout: 5_000 });
+      } else {
+        execFileSync("pkill", ["-f", CHROME_PROFILE_DIR], { timeout: 5_000 });
+      }
+    } catch { /* already gone */ }
+  }
+
   clearAuthCache();
   progress("✅ Alfred closed — all auth tokens cleared");
   return true;
 }
 
-/** Restart Alfred: exit, then relaunch via Alfred.app (preserves Dock icon). */
+/** Restart Alfred: exit, then relaunch via Desktop shortcut (preserves Dock icon on macOS). */
 export async function restartAlfred(progress: ProgressFn = () => {}): Promise<void> {
-  exitAlfred(progress);
-  // Small delay to let the process fully terminate
-  await new Promise(r => setTimeout(r, 1_000));
+  await exitAlfred(progress);
+  // Wait for the process to fully terminate
+  await new Promise(r => setTimeout(r, 1_500));
   progress("🚀 Restarting Alfred...");
 
-  // Try launching via Alfred.app (preserves icon) before falling back to direct Chrome
-  const { existsSync } = await import("fs");
-  const { homedir } = await import("os");
-  const alfredApp = `${homedir()}/Desktop/Alfred.app`;
+  // Relaunch via Desktop shortcut (preserves icon) before falling back to direct launch
+  const { existsSync } = require("fs") as typeof import("fs");
+  const home = process.env.HOME ?? process.env.USERPROFILE ?? "";
+  const alfredApp = `${home}/Desktop/Alfred.app`;
+  const alfredBat = `${home}\\Desktop\\Alfred.bat`;
+
   if (process.platform === "darwin" && existsSync(alfredApp)) {
     execFile("open", [alfredApp]);
+  } else if (process.platform === "win32" && existsSync(alfredBat)) {
+    execFile("cmd", ["/c", "start", "", alfredBat]);
   } else {
     launchAlfred();
   }
 
-  await waitForChrome();
+  await waitForChrome(20_000);
   // Open standard tabs
   for (const url of [DYNAMICS_URL, OUTLOOK_URL, "https://teams.microsoft.com/v2/"]) {
     await fetch(`http://localhost:${CDP_PORT}/json/new?${url}`).catch((e) => { process.stderr.write(`[alfred:warn] failed to open tab ${url}: ${e instanceof Error ? e.message : String(e)}\n`); });
