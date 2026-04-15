@@ -68,6 +68,11 @@ describe("SC / Sales tool parity", () => {
     "uninstall_alfred",
     "list_collaboration_notes",
     "create_collaboration_note",
+    "list_activities",
+    "create_appointment",
+    "log_phone_call",
+    "create_follow_up_task",
+    "complete_activity",
   ];
 
   for (const tool of REQUIRED_SHARED) {

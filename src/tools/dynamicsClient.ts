@@ -754,6 +754,231 @@ export async function listTimelineNotes(
 }
 
 // ---------------------------------------------------------------------------
+// Activities (appointments, phone calls, tasks)
+// ---------------------------------------------------------------------------
+
+export interface Activity {
+  activityid: string;
+  activitytype: string;   // "appointment", "phonecall", "task", etc.
+  subject: string;
+  description?: string;
+  scheduledstart?: string;
+  scheduledend?: string;
+  actualstart?: string;
+  actualend?: string;
+  statecode: number;      // 0=Open, 1=Completed, 2=Canceled
+  statusName: string;
+  ownerName?: string;
+  createdOn: string;
+  regardingName?: string;
+  regardingId?: string;
+}
+
+function mapActivity(r: Record<string, unknown>): Activity {
+  const statecode = r.statecode as number;
+  return {
+    activityid: r.activityid as string ?? "",
+    activitytype: r.activitytypecode as string ?? "",
+    subject: r.subject as string ?? "",
+    description: r.description as string,
+    scheduledstart: r.scheduledstart as string,
+    scheduledend: r.scheduledend as string,
+    actualstart: r.actualstart as string,
+    actualend: r.actualend as string,
+    statecode,
+    statusName: statecode === 0 ? "Open" : statecode === 1 ? "Completed" : "Canceled",
+    ownerName: r["_ownerid_value@OData.Community.Display.V1.FormattedValue"] as string,
+    createdOn: r.createdon as string ?? "",
+    regardingName: r["_regardingobjectid_value@OData.Community.Display.V1.FormattedValue"] as string,
+    regardingId: r._regardingobjectid_value as string,
+  };
+}
+
+/** List all activities (appointments, calls, tasks, etc.) on an opportunity. */
+export async function listActivities(
+  opportunityId: string,
+  progress: ProgressFn = () => {},
+  options: { includeCompleted?: boolean; top?: number; activityType?: string } = {}
+): Promise<Activity[]> {
+  requireGuid(opportunityId, "opportunityId");
+  progress(`📋 Fetching activities for opportunity ${opportunityId}...`);
+
+  let filter = `_regardingobjectid_value eq ${opportunityId}`;
+  if (!options.includeCompleted) {
+    filter += ` and statecode eq 0`;
+  }
+  if (options.activityType) {
+    const safe = sanitizeODataSearch(options.activityType);
+    filter += ` and activitytypecode eq '${safe}'`;
+  }
+
+  const path =
+    `/activitypointers` +
+    `?$select=activityid,activitytypecode,subject,description,scheduledstart,scheduledend,actualstart,actualend,statecode,createdon,_ownerid_value,_regardingobjectid_value` +
+    `&$filter=${encodeURIComponent(filter)}` +
+    `&$orderby=scheduledstart desc` +
+    `&$top=${options.top ?? 50}`;
+
+  const res = await dynamicsFetch(path, {}, progress);
+  const data = await res.json();
+  const activities = (data.value ?? []).map(mapActivity);
+  progress(`✅ Found ${activities.length} activity/activities`);
+  return activities;
+}
+
+export interface CreateAppointmentInput {
+  opportunityId: string;
+  subject: string;          // e.g. "#NBM Discovery call with Roche"
+  startTime: string;        // ISO datetime
+  endTime?: string;         // ISO datetime (defaults to startTime + 1h)
+  description?: string;
+  location?: string;
+  requiredAttendees?: string[];  // email addresses
+  optionalAttendees?: string[];
+}
+
+/** Create an appointment linked to an opportunity. */
+export async function createAppointment(
+  input: CreateAppointmentInput,
+  progress: ProgressFn = () => {}
+): Promise<Activity> {
+  requireGuid(input.opportunityId, "opportunityId");
+  auditLog("create_appointment", { opportunityId: input.opportunityId, subject: input.subject });
+  progress(`📅 Creating appointment: ${input.subject}...`);
+
+  // Calculate end time (default: 1 hour after start)
+  const start = new Date(input.startTime);
+  const endTime = input.endTime ?? new Date(start.getTime() + 60 * 60 * 1000).toISOString();
+
+  const body: Record<string, unknown> = {
+    subject: input.subject,
+    scheduledstart: input.startTime,
+    scheduledend: endTime,
+    "regardingobjectid_opportunity@odata.bind": `/opportunities(${input.opportunityId})`,
+  };
+  if (input.description) body.description = input.description;
+  if (input.location) body.location = input.location;
+
+  // Add attendees as activity parties
+  const parties: Array<{ "partyid_systemuser@odata.bind"?: string; addressused?: string; participationtypemask: number }> = [];
+  for (const email of input.requiredAttendees ?? []) {
+    parties.push({ addressused: email, participationtypemask: 5 }); // 5 = Required
+  }
+  for (const email of input.optionalAttendees ?? []) {
+    parties.push({ addressused: email, participationtypemask: 6 }); // 6 = Optional
+  }
+  if (parties.length > 0) body.appointment_activity_parties = parties;
+
+  const res = await dynamicsFetch("/appointments", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Prefer: "return=representation" },
+    body: JSON.stringify(body),
+  }, progress);
+
+  const created = await res.json();
+  progress(`✅ Appointment created: ${input.subject}`);
+  return mapActivity(created as Record<string, unknown>);
+}
+
+export interface CreatePhoneCallInput {
+  opportunityId: string;
+  subject: string;
+  description?: string;
+  phoneNumber?: string;
+  directionCode?: boolean;  // true = Outgoing, false = Incoming
+}
+
+/** Create a phone call activity linked to an opportunity. */
+export async function createPhoneCall(
+  input: CreatePhoneCallInput,
+  progress: ProgressFn = () => {}
+): Promise<Activity> {
+  requireGuid(input.opportunityId, "opportunityId");
+  auditLog("create_phonecall", { opportunityId: input.opportunityId, subject: input.subject });
+  progress(`📞 Logging phone call: ${input.subject}...`);
+
+  const body: Record<string, unknown> = {
+    subject: input.subject,
+    phonenumber: input.phoneNumber ?? "",
+    directioncode: input.directionCode ?? true, // default outgoing
+    "regardingobjectid_opportunity@odata.bind": `/opportunities(${input.opportunityId})`,
+  };
+  if (input.description) body.description = input.description;
+
+  const res = await dynamicsFetch("/phonecalls", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Prefer: "return=representation" },
+    body: JSON.stringify(body),
+  }, progress);
+
+  const created = await res.json();
+  progress(`✅ Phone call logged: ${input.subject}`);
+  return mapActivity(created as Record<string, unknown>);
+}
+
+export interface CreateTaskInput {
+  opportunityId: string;
+  subject: string;
+  description?: string;
+  dueDate?: string;         // ISO date
+}
+
+/** Create a follow-up task linked to an opportunity. */
+export async function createTask(
+  input: CreateTaskInput,
+  progress: ProgressFn = () => {}
+): Promise<Activity> {
+  requireGuid(input.opportunityId, "opportunityId");
+  auditLog("create_task", { opportunityId: input.opportunityId, subject: input.subject });
+  progress(`📝 Creating task: ${input.subject}...`);
+
+  const body: Record<string, unknown> = {
+    subject: input.subject,
+    "regardingobjectid_opportunity@odata.bind": `/opportunities(${input.opportunityId})`,
+  };
+  if (input.description) body.description = input.description;
+  if (input.dueDate) body.scheduledend = input.dueDate;
+
+  const res = await dynamicsFetch("/tasks", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Prefer: "return=representation" },
+    body: JSON.stringify(body),
+  }, progress);
+
+  const created = await res.json();
+  progress(`✅ Task created: ${input.subject}`);
+  return mapActivity(created as Record<string, unknown>);
+}
+
+/** Mark an activity (appointment, phone call, task) as complete. */
+export async function completeActivity(
+  activityType: string,
+  activityId: string,
+  progress: ProgressFn = () => {}
+): Promise<void> {
+  requireGuid(activityId, "activityId");
+  const safe = sanitizeODataSearch(activityType);
+  auditLog("complete_activity", { activityType: safe, activityId });
+  progress(`✅ Marking ${safe} as complete...`);
+
+  // Map activity type to correct OData endpoint (plural form)
+  const entityMap: Record<string, string> = {
+    appointment: "appointments",
+    phonecall: "phonecalls",
+    task: "tasks",
+  };
+  const entity = entityMap[safe.toLowerCase()] ?? `${safe.toLowerCase()}s`;
+
+  await dynamicsFetch(`/${entity}(${activityId})`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ statecode: 1, statuscode: 5 }), // 1=Completed, 5=Completed status
+  }, progress);
+
+  progress(`✅ ${safe} marked as complete`);
+}
+
+// ---------------------------------------------------------------------------
 // Collaboration Notes
 // ---------------------------------------------------------------------------
 

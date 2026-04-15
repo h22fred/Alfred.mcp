@@ -33,6 +33,11 @@ import {
   resolveOpportunityId,
   listCollaborationNotes,
   createCollaborationNote,
+  listActivities,
+  createAppointment,
+  createPhoneCall,
+  createTask,
+  completeActivity,
   type EngagementType,
   type OpportunityFilter,
   type EngagementDescription,
@@ -786,6 +791,130 @@ IMPORTANT:
     const id = await resolveOpportunityId(opportunity_id, progress);
     const note = await createCollaborationNote({ opportunityId: id, noteType: note_type, notes }, progress);
     return { content: [{ type: "text", text: `✅ Created **${note.noteType}** collaboration note on opportunity.\n\n${note.notes}` }] };
+  }
+);
+
+// ---------------------------------------------------------------------------
+// Tool: list_activities
+// ---------------------------------------------------------------------------
+server.tool(
+  "list_activities",
+  `List all activities (appointments, phone calls, tasks, etc.) on an opportunity.
+
+Shows open activities by default. Set include_completed=true to see all. Filter by type with activity_type.`,
+  {
+    opportunity_id: z.string().describe("Dynamics opportunity GUID or OPTY number"),
+    include_completed: z.boolean().optional().describe("Include completed/canceled activities (default: open only)"),
+    activity_type: z.string().optional().describe("Filter by type: 'appointment', 'phonecall', 'task'"),
+    top: z.number().optional().describe("Max results (default 50)"),
+  },
+  async ({ opportunity_id, include_completed, activity_type, top }) => {
+    const progress = makeProgress(server);
+    const id = await resolveOpportunityId(opportunity_id, progress);
+    const activities = await listActivities(id, progress, { includeCompleted: include_completed, activityType: activity_type, top });
+    return { content: [{ type: "text", text: JSON.stringify(activities, null, 2) }] };
+  }
+);
+
+// ---------------------------------------------------------------------------
+// Tool: create_appointment
+// ---------------------------------------------------------------------------
+server.tool(
+  "create_appointment",
+  `Create an appointment linked to an opportunity in Dynamics 365.
+
+For #NBM (Next Best Meeting) appointments, prefix the subject with "#NBM" (e.g. "#NBM Discovery with Roche").
+
+IMPORTANT: Always confirm the date, time, subject, and attendees with the user before creating.`,
+  {
+    opportunity_id: z.string().describe("Dynamics opportunity GUID or OPTY number"),
+    subject: z.string().describe("Appointment subject (prefix with #NBM for Next Best Meeting)"),
+    start_time: z.string().describe("Start time in ISO format (e.g. 2026-05-15T10:00:00Z)"),
+    end_time: z.string().optional().describe("End time in ISO format (default: 1 hour after start)"),
+    description: z.string().optional().describe("Meeting description / agenda"),
+    location: z.string().optional().describe("Meeting location"),
+    required_attendees: z.array(z.string()).optional().describe("Required attendee email addresses"),
+    optional_attendees: z.array(z.string()).optional().describe("Optional attendee email addresses"),
+  },
+  async ({ opportunity_id, subject, start_time, end_time, description, location, required_attendees, optional_attendees }) => {
+    engagementWriteLimiter.check("create_appointment");
+    const progress = makeProgress(server);
+    const id = await resolveOpportunityId(opportunity_id, progress);
+    const appt = await createAppointment({
+      opportunityId: id, subject, startTime: start_time, endTime: end_time,
+      description, location, requiredAttendees: required_attendees, optionalAttendees: optional_attendees,
+    }, progress);
+    return { content: [{ type: "text", text: `✅ Appointment created: **${appt.subject}**\nStart: ${appt.scheduledstart}\nEnd: ${appt.scheduledend}` }] };
+  }
+);
+
+// ---------------------------------------------------------------------------
+// Tool: log_phone_call
+// ---------------------------------------------------------------------------
+server.tool(
+  "log_phone_call",
+  `Log a phone call activity linked to an opportunity in Dynamics 365.
+
+Use this when the user says they had a call, need to log a call, or want to record a phone conversation.`,
+  {
+    opportunity_id: z.string().describe("Dynamics opportunity GUID or OPTY number"),
+    subject: z.string().describe("Call subject (e.g. 'Follow-up call with CFO')"),
+    description: z.string().optional().describe("Call notes / summary"),
+    phone_number: z.string().optional().describe("Phone number called"),
+    direction: z.enum(["outgoing", "incoming"]).optional().describe("Call direction (default: outgoing)"),
+  },
+  async ({ opportunity_id, subject, description, phone_number, direction }) => {
+    engagementWriteLimiter.check("log_phone_call");
+    const progress = makeProgress(server);
+    const id = await resolveOpportunityId(opportunity_id, progress);
+    const call = await createPhoneCall({
+      opportunityId: id, subject, description, phoneNumber: phone_number,
+      directionCode: direction !== "incoming",
+    }, progress);
+    return { content: [{ type: "text", text: `✅ Phone call logged: **${call.subject}**` }] };
+  }
+);
+
+// ---------------------------------------------------------------------------
+// Tool: create_follow_up_task
+// ---------------------------------------------------------------------------
+server.tool(
+  "create_follow_up_task",
+  `Create a follow-up task linked to an opportunity in Dynamics 365.
+
+Use this when the user says they need to do something later, has a to-do, or needs to set a reminder for an opportunity.`,
+  {
+    opportunity_id: z.string().describe("Dynamics opportunity GUID or OPTY number"),
+    subject: z.string().describe("Task subject (e.g. 'Send proposal to legal')"),
+    description: z.string().optional().describe("Task details"),
+    due_date: z.string().optional().describe("Due date in ISO format (e.g. 2026-05-20)"),
+  },
+  async ({ opportunity_id, subject, description, due_date }) => {
+    engagementWriteLimiter.check("create_follow_up_task");
+    const progress = makeProgress(server);
+    const id = await resolveOpportunityId(opportunity_id, progress);
+    const task = await createTask({ opportunityId: id, subject, description, dueDate: due_date }, progress);
+    return { content: [{ type: "text", text: `✅ Task created: **${task.subject}**${task.scheduledend ? `\nDue: ${task.scheduledend.slice(0, 10)}` : ""}` }] };
+  }
+);
+
+// ---------------------------------------------------------------------------
+// Tool: complete_activity
+// ---------------------------------------------------------------------------
+server.tool(
+  "complete_activity",
+  `Mark an activity (appointment, phone call, or task) as complete.
+
+Use list_activities first to find the activity ID. Confirm with the user before completing.`,
+  {
+    activity_type: z.enum(["appointment", "phonecall", "task"]).describe("Type of activity to complete"),
+    activity_id: z.string().describe("Dynamics activity GUID"),
+  },
+  async ({ activity_type, activity_id }) => {
+    engagementWriteLimiter.check("complete_activity");
+    const progress = makeProgress(server);
+    await completeActivity(activity_type, activity_id, progress);
+    return { content: [{ type: "text", text: `✅ ${activity_type} marked as complete.` }] };
   }
 );
 
