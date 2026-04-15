@@ -1026,6 +1026,54 @@ function mapCollabNote(r: Record<string, unknown>): CollaborationNote {
   };
 }
 
+// Auto-discover the correct entity set name for Collaboration Notes (varies by Dynamics instance)
+const COLLAB_NOTE_ENTITY_CANDIDATES = [
+  "sn_collaborationnotes",        // plural (standard ServiceNow pattern)
+  "sn_collaborationnote",         // singular
+  "sn_salescollaborationnotes",   // alternate naming
+  "msdyn_collaborationnotes",     // Microsoft Dynamics prefix
+];
+let resolvedCollabNoteEntity: string | null = null;
+
+async function getCollabNoteEntity(progress: ProgressFn): Promise<string> {
+  if (resolvedCollabNoteEntity) return resolvedCollabNoteEntity;
+
+  // Try each candidate until one doesn't 404
+  for (const entity of COLLAB_NOTE_ENTITY_CANDIDATES) {
+    try {
+      const res = await dynamicsFetch(`/${entity}?$top=1`, {}, () => {});
+      if (res.ok) {
+        resolvedCollabNoteEntity = entity;
+        progress(`✅ Discovered collaboration notes entity: ${entity}`);
+        return entity;
+      }
+    } catch { /* try next */ }
+  }
+
+  // Last resort: try metadata discovery
+  try {
+    progress("🔍 Searching Dynamics metadata for Collaboration Notes entity...");
+    const metaRes = await dynamicsFetch(
+      `/EntityDefinitions?$filter=contains(DisplayName/UserLocalizedLabel/Label,'Collaboration Note')&$select=LogicalName,EntitySetName&$top=3`,
+      {}, () => {}
+    );
+    if (metaRes.ok) {
+      const metaData = await metaRes.json() as { value: { LogicalName: string; EntitySetName: string }[] };
+      if (metaData.value?.[0]?.EntitySetName) {
+        resolvedCollabNoteEntity = metaData.value[0].EntitySetName;
+        progress(`✅ Found via metadata: ${resolvedCollabNoteEntity}`);
+        return resolvedCollabNoteEntity;
+      }
+    }
+  } catch { /* metadata discovery failed */ }
+
+  throw new Error(
+    "Could not find the Collaboration Notes entity in Dynamics. " +
+    "Please open a Collaboration Note in Dynamics 365, check the URL for the entity name, " +
+    "and let Fred know so he can update Alfred."
+  );
+}
+
 export async function listCollaborationNotes(
   opportunityId: string,
   progress: ProgressFn = () => {}
@@ -1033,9 +1081,10 @@ export async function listCollaborationNotes(
   requireGuid(opportunityId, "opportunityId");
   progress(`📝 Fetching collaboration notes for opportunity ${opportunityId}...`);
 
+  const entity = await getCollabNoteEntity(progress);
   const path =
-    `/sn_collaborationnotes` +
-    `?$select=sn_collaborationnoteid,sn_notetype,sn_notes,description,createdon,modifiedon,_ownerid_value,_regardingobjectid_value` +
+    `/${entity}` +
+    `?$select=sn_collaborationnoteid,activityid,sn_notetype,sn_notes,description,createdon,modifiedon,_ownerid_value,_regardingobjectid_value` +
     `&$filter=_regardingobjectid_value eq ${opportunityId}` +
     `&$orderby=createdon desc` +
     `&$top=50`;
@@ -1074,7 +1123,8 @@ export async function createCollaborationNote(
     "regardingobjectid_opportunity@odata.bind": `/opportunities(${input.opportunityId})`,
   };
 
-  const res = await dynamicsFetch("/sn_collaborationnotes", {
+  const entity = await getCollabNoteEntity(progress);
+  const res = await dynamicsFetch(`/${entity}`, {
     method: "POST",
     headers: { "Content-Type": "application/json", Prefer: "return=representation" },
     body: JSON.stringify(body),
@@ -1334,6 +1384,143 @@ export async function searchContacts(
   }));
   progress(`✅ Found ${results.length} contact(s)`);
   return results;
+}
+
+export interface CreateContactInput {
+  firstName: string;
+  lastName: string;
+  email?: string;
+  jobTitle?: string;
+  phone?: string;
+  accountId?: string;     // Link to parent account
+}
+
+/** Create a new contact in Dynamics 365. */
+export async function createContact(
+  input: CreateContactInput,
+  progress: ProgressFn = () => {}
+): Promise<Contact> {
+  auditLog("create_contact", { name: `${input.firstName} ${input.lastName}`, email: input.email });
+  progress(`👤 Creating contact: ${input.firstName} ${input.lastName}...`);
+
+  const body: Record<string, unknown> = {
+    firstname: input.firstName,
+    lastname: input.lastName,
+  };
+  if (input.email) body.emailaddress1 = input.email;
+  if (input.jobTitle) body.jobtitle = input.jobTitle;
+  if (input.phone) body.telephone1 = input.phone;
+  if (input.accountId) {
+    requireGuid(input.accountId, "accountId");
+    body["parentcustomerid_account@odata.bind"] = `/accounts(${input.accountId})`;
+  }
+
+  const res = await dynamicsFetch("/contacts", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Prefer: "return=representation" },
+    body: JSON.stringify(body),
+  }, progress);
+
+  const created = await res.json() as Record<string, unknown>;
+  progress(`✅ Created contact: ${input.firstName} ${input.lastName}`);
+  return {
+    contactid: created.contactid as string,
+    fullname: `${input.firstName} ${input.lastName}`,
+    emailaddress1: input.email,
+    jobtitle: input.jobTitle,
+    telephone1: input.phone,
+  };
+}
+
+/** Stakeholder role codes for opportunity connections. */
+const STAKEHOLDER_ROLE_MAP: Record<string, number> = {
+  "champion": 876130000,
+  "economic buyer": 876130001,
+  "technical buyer": 876130002,
+  "coach": 876130003,
+  "decision maker": 876130004,
+  "influencer": 876130005,
+  "end user": 876130006,
+  "executive sponsor": 876130007,
+};
+
+export interface OpportunityContact {
+  connectionid: string;
+  contactId: string;
+  contactName: string;
+  role?: string;
+  roleCode?: number;
+}
+
+/** List contacts associated with an opportunity via connections. */
+export async function listOpportunityContacts(
+  opportunityId: string,
+  progress: ProgressFn = () => {}
+): Promise<OpportunityContact[]> {
+  requireGuid(opportunityId, "opportunityId");
+  progress(`👥 Fetching contacts for opportunity ${opportunityId}...`);
+
+  const path =
+    `/connections` +
+    `?$select=connectionid,_record1id_value,_record1roleid_value` +
+    `&$filter=_record2id_value eq ${opportunityId} and _record1objecttypecode_value eq 2` +  // 2 = contact
+    `&$top=50`;
+
+  const res = await dynamicsFetch(path, {}, progress);
+  const data = await res.json() as { value: Record<string, unknown>[] };
+  const contacts = (data.value ?? []).map(r => ({
+    connectionid: r.connectionid as string,
+    contactId: r._record1id_value as string ?? "",
+    contactName: r["_record1id_value@OData.Community.Display.V1.FormattedValue"] as string ?? "",
+    role: r["_record1roleid_value@OData.Community.Display.V1.FormattedValue"] as string,
+    roleCode: r._record1roleid_value as number | undefined,
+  }));
+  progress(`✅ Found ${contacts.length} contact(s) on opportunity`);
+  return contacts;
+}
+
+/** Add a contact to an opportunity via a connection. */
+export async function addContactToOpportunity(
+  contactId: string,
+  opportunityId: string,
+  role?: string,
+  progress: ProgressFn = () => {}
+): Promise<void> {
+  requireGuid(contactId, "contactId");
+  requireGuid(opportunityId, "opportunityId");
+  auditLog("add_contact_to_opportunity", { contactId, opportunityId, role });
+  progress(`🔗 Linking contact to opportunity...`);
+
+  const body: Record<string, unknown> = {
+    "record1id_contact@odata.bind": `/contacts(${contactId})`,
+    "record2id_opportunity@odata.bind": `/opportunities(${opportunityId})`,
+  };
+
+  // Try to find a matching connection role if specified
+  if (role) {
+    const roleLower = role.toLowerCase();
+    // Search for the role in Dynamics connection roles
+    const safe = sanitizeODataSearch(role);
+    const roleRes = await dynamicsFetch(
+      `/connectionroles?$select=connectionroleid,name&$filter=contains(name,'${safe}')&$top=1`,
+      {}, progress
+    );
+    const roleData = await roleRes.json() as { value: { connectionroleid: string; name: string }[] };
+    if (roleData.value?.[0]) {
+      body["record1roleid@odata.bind"] = `/connectionroles(${roleData.value[0].connectionroleid})`;
+      progress(`📋 Role: ${roleData.value[0].name}`);
+    } else {
+      progress(`⚠️ Role "${role}" not found in Dynamics — linking without role`);
+    }
+  }
+
+  await dynamicsFetch("/connections", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  }, progress);
+
+  progress(`✅ Contact linked to opportunity`);
 }
 
 // ---------------------------------------------------------------------------
