@@ -1,4 +1,5 @@
 import { execFileSync, execFile } from "child_process";
+import { existsSync } from "fs";
 import { DYNAMICS_HOST } from "../config.js";
 import { loadCachedAuth, saveCachedAuth, clearCachedAuthFile } from "./authFileCache.js";
 
@@ -137,7 +138,6 @@ export async function restartAlfred(progress: ProgressFn = () => {}): Promise<vo
   progress("🚀 Restarting Alfred...");
 
   // Relaunch via Desktop shortcut (preserves icon) before falling back to direct launch
-  const { existsSync } = require("fs") as typeof import("fs");
   const home = process.env.HOME ?? process.env.USERPROFILE ?? "";
   const alfredApp = `${home}/Desktop/Alfred.app`;
   const alfredBat = `${home}\\Desktop\\Alfred.bat`;
