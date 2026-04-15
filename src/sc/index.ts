@@ -38,6 +38,9 @@ import {
   createPhoneCall,
   createTask,
   completeActivity,
+  createContact,
+  listOpportunityContacts,
+  addContactToOpportunity,
   type EngagementType,
   type OpportunityFilter,
   type EngagementDescription,
@@ -915,6 +918,69 @@ Use list_activities first to find the activity ID. Confirm with the user before 
     const progress = makeProgress(server);
     await completeActivity(activity_type, activity_id, progress);
     return { content: [{ type: "text", text: `✅ ${activity_type} marked as complete.` }] };
+  }
+);
+
+// ---------------------------------------------------------------------------
+// Tool: list_opportunity_contacts
+// ---------------------------------------------------------------------------
+server.tool(
+  "list_opportunity_contacts",
+  `List contacts (stakeholders) linked to an opportunity.
+
+Shows the stakeholder map: who's involved and their role (Champion, Economic Buyer, Decision Maker, etc.).`,
+  { opportunity_id: z.string().describe("Dynamics opportunity GUID or OPTY number") },
+  async ({ opportunity_id }) => {
+    const progress = makeProgress(server);
+    const id = await resolveOpportunityId(opportunity_id, progress);
+    const contacts = await listOpportunityContacts(id, progress);
+    return { content: [{ type: "text", text: JSON.stringify(contacts, null, 2) }] };
+  }
+);
+
+// ---------------------------------------------------------------------------
+// Tool: create_contact
+// ---------------------------------------------------------------------------
+server.tool(
+  "create_contact",
+  `Create a new contact in Dynamics 365. Use search_contacts first to check if the contact already exists.`,
+  {
+    first_name: z.string().describe("Contact first name"),
+    last_name: z.string().describe("Contact last name"),
+    email: z.string().optional().describe("Email address"),
+    job_title: z.string().optional().describe("Job title (e.g. CTO, VP Engineering)"),
+    phone: z.string().optional().describe("Phone number"),
+    account_id: z.string().optional().describe("Parent account GUID — link the contact to this company"),
+  },
+  async ({ first_name, last_name, email, job_title, phone, account_id }) => {
+    engagementWriteLimiter.check("create_contact");
+    const progress = makeProgress(server);
+    const contact = await createContact({ firstName: first_name, lastName: last_name, email, jobTitle: job_title, phone, accountId: account_id }, progress);
+    return { content: [{ type: "text", text: `✅ Created contact: **${contact.fullname}**${email ? ` (${email})` : ""}${contact.jobtitle ? ` — ${contact.jobtitle}` : ""}` }] };
+  }
+);
+
+// ---------------------------------------------------------------------------
+// Tool: add_contact_to_opportunity
+// ---------------------------------------------------------------------------
+server.tool(
+  "add_contact_to_opportunity",
+  `Link a contact to an opportunity as a stakeholder. Optionally specify their role.
+
+Roles: Champion, Economic Buyer, Technical Buyer, Coach, Decision Maker, Influencer, End User, Executive Sponsor.
+
+Use search_contacts to find the contact ID first, then link them.`,
+  {
+    contact_id: z.string().describe("Dynamics contact GUID"),
+    opportunity_id: z.string().describe("Dynamics opportunity GUID or OPTY number"),
+    role: z.string().optional().describe("Stakeholder role (e.g. Champion, Economic Buyer, Decision Maker)"),
+  },
+  async ({ contact_id, opportunity_id, role }) => {
+    engagementWriteLimiter.check("add_contact_to_opportunity");
+    const progress = makeProgress(server);
+    const oppId = await resolveOpportunityId(opportunity_id, progress);
+    await addContactToOpportunity(contact_id, oppId, role, progress);
+    return { content: [{ type: "text", text: `✅ Contact linked to opportunity${role ? ` as **${role}**` : ""}.` }] };
   }
 );
 

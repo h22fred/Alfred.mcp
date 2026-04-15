@@ -73,6 +73,9 @@ describe("SC / Sales tool parity", () => {
     "log_phone_call",
     "create_follow_up_task",
     "complete_activity",
+    "list_opportunity_contacts",
+    "create_contact",
+    "add_contact_to_opportunity",
   ];
 
   for (const tool of REQUIRED_SHARED) {
