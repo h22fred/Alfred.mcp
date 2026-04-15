@@ -67,7 +67,7 @@ async function waitForChrome(timeoutMs = 15_000): Promise<void> {
     if (isAlfredgable()) return;
     await new Promise(r => setTimeout(r, 500));
   }
-  throw new Error("Alfred did not start in time. Try opening Alfred.app manually.");
+  throw new Error("Alfred browser did not start in time. Double-click Alfred on your Desktop to launch manually.");
 }
 
 /** Clear in-memory auth state only (file cache survives for cross-restart resilience). */
@@ -138,7 +138,7 @@ async function getCookiesViaRawCDP(urls: string[]): Promise<RawCookie[]> {
   const targets = await listRes.json() as Array<{ webSocketDebuggerUrl?: string; type?: string }>;
   const target = targets.find(t => t.type === "page" && t.webSocketDebuggerUrl);
   if (!target?.webSocketDebuggerUrl) {
-    throw new Error("No page targets in Alfred. Make sure Alfred.app is running.");
+    throw new Error("No browser tabs found. Make sure the Alfred browser is running.");
   }
 
   return new Promise((resolve, reject) => {
@@ -262,7 +262,7 @@ export async function getOutlookCookies(progress: ProgressFn = () => {}): Promis
       progress("🔐 Extracting Outlook cookies via CDP...");
 
       if (!isAlfredgable()) {
-        throw new Error("Chrome debug port not available. Open Alfred.app first.");
+        throw new Error("Chrome debug port not available. Launch Alfred from your Desktop first.");
       }
 
       const allCookies = await getCookiesViaRawCDP([OUTLOOK_URL]);

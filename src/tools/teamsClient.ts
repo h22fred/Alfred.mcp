@@ -236,7 +236,7 @@ export async function acquireTeamsGraphToken(progress: ProgressFn): Promise<stri
   try {
     execFileSync("curl", ["-s", "--max-time", "3", `http://localhost:${CDP_PORT}/json/version`], { timeout: 5_000 });
   } catch {
-    throw new Error("Alfred is not running. Open Alfred.app first.");
+    throw new Error("The Alfred browser is not running. Launch Alfred from your Desktop first.");
   }
 
   progress("🔐 Acquiring Graph token via Teams/Outlook in Alfred...");
@@ -255,7 +255,7 @@ export async function acquireTeamsGraphToken(progress: ProgressFn): Promise<stri
   const candidates = [teamsTarget, outlookTarget].filter(Boolean) as typeof targets;
 
   if (!teamsTarget) {
-    process.stderr.write("[alfred] No Teams tab found in Alfred — Graph token capture may fail. Open teams.microsoft.com in Alfred.\n");
+    process.stderr.write("[alfred] No Teams tab found in Alfred — Graph token capture may fail. Open teams.microsoft.com/v2/ in Alfred.\n");
   }
 
   // Try MSAL extraction from each candidate tab
@@ -273,8 +273,10 @@ export async function acquireTeamsGraphToken(progress: ProgressFn): Promise<stri
     if (attempt < 2) await new Promise(r => setTimeout(r, 2_000));
   }
 
-  // Step 2: MSAL miss (likely encrypted on outlook.cloud.microsoft.com) —
-  // use raw CDP network interception with Page.reload to capture Graph token
+  // Step 2: MSAL miss (common on Teams v2 / outlook.cloud.microsoft.com) —
+  // use Fetch + Network CDP domains for robust token capture.
+  // Fetch.enable intercepts at the network stack (catches service worker requests
+  // from Teams v2 PWA), Network.enable is a parallel fallback for legacy clients.
   const interceptTarget = teamsTarget ?? outlookTarget;
   if (interceptTarget?.webSocketDebuggerUrl) {
     progress("🔑 MSAL cache miss — capturing Graph token via network interception...");
@@ -283,35 +285,56 @@ export async function acquireTeamsGraphToken(progress: ProgressFn): Promise<stri
       let found: string | null = null;
 
       const timer = setTimeout(() => {
-        process.stderr.write("[alfred:warn] Graph token network interception timed out (12s)\n");
+        process.stderr.write("[alfred:warn] Graph token network interception timed out (20s)\n");
         try { ws.close(); } catch {}
         resolve(null);
-      }, 12_000);
+      }, 20_000);
 
       let msgId = 0;
       const send = (method: string, params?: Record<string, unknown>) =>
         ws.send(JSON.stringify({ id: ++msgId, method, params }));
 
-      ws.addEventListener("open", () => send("Network.enable"));
+      let readyCount = 0;
+      ws.addEventListener("open", () => {
+        // Fetch.enable intercepts at the network stack — catches service worker
+        // requests that Network.enable misses on Teams v2
+        send("Fetch.enable", {
+          patterns: [{ urlPattern: "*://graph.microsoft.com/*", requestStage: "Request" }],
+        });
+        // Network.enable as parallel fallback for legacy Teams client
+        send("Network.enable");
+      });
 
       ws.addEventListener("message", (event: MessageEvent) => {
         try {
           const msg = JSON.parse(event.data as string) as { id?: number; method?: string; params?: Record<string, unknown> };
-          if (msg.id === 1) {
-            // Network enabled — trigger Graph API calls + Page.reload as backup
-            send("Runtime.evaluate", {
-              expression: [
-                `fetch('https://graph.microsoft.com/v1.0/me', { credentials: 'include' }).catch(()=>{})`,
-                `fetch('https://graph.microsoft.com/v1.0/me/chats?$top=1', { credentials: 'include' }).catch(()=>{})`,
-              ].join(';'),
-              awaitPromise: false,
-            });
-            // Reload page after 3s to trigger app's own Graph API calls with MSAL tokens
-            setTimeout(() => { if (!found) send("Page.reload"); }, 3_000);
+
+          // Wait for both enables to complete, then reload to trigger authenticated Graph calls
+          if (msg.id && msg.id <= 2) {
+            readyCount++;
+            if (readyCount >= 2) send("Page.reload");
+            return;
           }
+
+          // Fetch.requestPaused — robust interception (catches service worker requests)
+          if (msg.method === "Fetch.requestPaused") {
+            const requestId = msg.params?.requestId as string;
+            const headers = ((msg.params?.request as Record<string, unknown>)?.headers ?? {}) as Record<string, string>;
+            const auth = headers["Authorization"] ?? headers["authorization"] ?? "";
+            // Always continue the request so the page isn't blocked
+            send("Fetch.continueRequest", { requestId });
+            if (!found && auth.startsWith("Bearer ")) {
+              found = auth.slice(7);
+              clearTimeout(timer);
+              try { ws.close(); } catch {}
+              resolve(found);
+            }
+            return;
+          }
+
+          // Network.requestWillBeSent — fallback for requests visible at the page level
           if (msg.method === "Network.requestWillBeSent") {
             const reqUrl = ((msg.params?.request as Record<string, unknown>)?.url ?? "") as string;
-            // Only capture tokens from graph.microsoft.com requests (not Outlook REST)
             if (!reqUrl.includes("graph.microsoft.com")) return;
             const headers = ((msg.params?.request as Record<string, unknown>)?.headers ?? {}) as Record<string, string>;
             const auth = headers["Authorization"] ?? headers["authorization"] ?? "";
@@ -386,7 +409,7 @@ export async function acquireTeamsGraphToken(progress: ProgressFn): Promise<stri
 
     if (!capturedToken) throw new Error(
       "Could not capture Graph token.\n" +
-      "Open https://teams.microsoft.com in the Alfred Chrome window and log in, then retry.\n" +
+      "Open https://teams.microsoft.com/v2/ in the Alfred Chrome window and log in, then retry.\n" +
       "Teams tokens have the broad Graph scopes needed for transcripts and chats."
     );
 

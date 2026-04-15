@@ -5,7 +5,7 @@ import { join } from "path";
 interface AlfredConfig {
   dynamicsUrl?: string;
   teamsWebhook?: string;
-  role?: "sc" | "ssc" | "manager";
+  role?: "sc" | "ssc" | "manager" | "sales" | "sales_specialist" | "sales_manager";
   engagementTypes?: string[];
   installedVersion?: string;
 }

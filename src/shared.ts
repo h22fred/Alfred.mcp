@@ -141,8 +141,39 @@ if pgrep -f "alfred-profile" > /dev/null 2>&1; then
   exit 0
 fi
 
+CHROME="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+if [ ! -x "\$CHROME" ]; then
+  osascript -e 'display alert "Alfred" message "Google Chrome not found. Please install Chrome first." as critical' 2>/dev/null
+  exit 1
+fi
+
 mkdir -p "\$HOME/.alfred-profile"
-open -na "Google Chrome" --args \\
+
+# Pre-launch notification
+PROFILE_SIZE=\$(du -sk "\$HOME/.alfred-profile" 2>/dev/null | cut -f1)
+if [ -z "\$PROFILE_SIZE" ] || [ "\$PROFILE_SIZE" -lt 500 ]; then
+  notify "First time setup: log into Dynamics, Outlook and Teams in this window. You only do this once!"
+else
+  notify "Launching — ready for Claude!"
+fi
+
+# Open Claude after a short delay (runs in background before exec)
+(sleep 2 && open -a "Claude" 2>/dev/null) &
+
+# Background update check — uses git directly, never blocks startup
+(
+  ALFRED_DIR="\$(cd "\$(dirname "\$0")/../.." && pwd)"
+  INSTALLED=\$(git -C "\$ALFRED_DIR" rev-parse --short HEAD 2>/dev/null)
+  if [ -z "\$INSTALLED" ]; then exit 0; fi
+  git -C "\$ALFRED_DIR" fetch --quiet 2>/dev/null || exit 0
+  REMOTE=\$(git -C "\$ALFRED_DIR" rev-parse --short origin/main 2>/dev/null)
+  if [ -n "\$REMOTE" ] && [ "\$INSTALLED" != "\$REMOTE" ]; then
+    osascript -e "display notification \\"A new version of Alfred is available. Ask Claude: update Alfred\\" with title \\"Alfred Update Available 🆕\\" sound name \\"Ping\\"" 2>/dev/null
+  fi
+) &
+
+# Become Chrome — Alfred.app's Dock icon persists on the process
+exec "\$CHROME" \\
   --remote-debugging-port=9222 \\
   --user-data-dir="\$HOME/.alfred-profile" \\
   --no-first-run \\
@@ -157,27 +188,6 @@ open -na "Google Chrome" --args \\
   "${dynamicsUrl}" \\
   "https://outlook.office.com" \\
   "https://teams.microsoft.com/v2/"
-
-# First run detection
-PROFILE_SIZE=\$(du -sk "\$HOME/.alfred-profile" 2>/dev/null | cut -f1)
-if [ -z "\$PROFILE_SIZE" ] || [ "\$PROFILE_SIZE" -lt 500 ]; then
-  notify "First time setup: log into Dynamics, Outlook and Teams in this window. You only do this once!"
-else
-  notify "Launched — ready for Claude!"
-fi
-open -a "Claude" 2>/dev/null || true
-
-# Background update check — uses git directly, never blocks startup
-(
-  ALFRED_DIR="\$(cd "\$(dirname "\$0")/../.." && pwd)"
-  INSTALLED=\$(git -C "\$ALFRED_DIR" rev-parse --short HEAD 2>/dev/null)
-  if [ -z "\$INSTALLED" ]; then exit 0; fi
-  git -C "\$ALFRED_DIR" fetch --quiet 2>/dev/null || exit 0
-  REMOTE=\$(git -C "\$ALFRED_DIR" rev-parse --short origin/main 2>/dev/null)
-  if [ -n "\$REMOTE" ] && [ "\$INSTALLED" != "\$REMOTE" ]; then
-    osascript -e "display notification \\"A new version of Alfred is available. Ask Claude: update Alfred\\" with title \\"Alfred Update Available 🆕\\" sound name \\"Ping\\"" 2>/dev/null
-  fi
-) &
 `;
 
   wf(appScript, script, { mode: 0o755 });
@@ -186,6 +196,23 @@ open -a "Claude" 2>/dev/null || true
   const iconSrc = pj(installDir, "setup", "assets", "alfred.icns");
   const iconDst = pj(home, "Desktop", "Alfred.app", "Contents", "Resources", "alfred.icns");
   if (ex(iconSrc)) cf(iconSrc, iconDst);
+
+  // Regenerate Info.plist (removes LSUIElement so Alfred shows in Dock with its icon)
+  const plistPath = pj(home, "Desktop", "Alfred.app", "Contents", "Info.plist");
+  wf(plistPath, `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleExecutable</key><string>Alfred</string>
+  <key>CFBundleIdentifier</key><string>com.servicenow.alfred</string>
+  <key>CFBundleName</key><string>Alfred</string>
+  <key>CFBundleIconFile</key><string>alfred</string>
+  <key>CFBundlePackageType</key><string>APPL</string>
+  <key>CFBundleVersion</key><string>1.0</string>
+  <key>NSHighResolutionCapable</key><true/>
+</dict>
+</plist>
+`);
 
   return "🔄 Regenerated Alfred.app with latest updates";
 }
