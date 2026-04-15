@@ -41,6 +41,10 @@ import {
   createContact,
   listOpportunityContacts,
   addContactToOpportunity,
+  listClosingPlan,
+  createClosingPlanMilestone,
+  updateClosingPlanMilestone,
+  getForecastSummary,
   type EngagementType,
   type OpportunityFilter,
   type EngagementDescription,
@@ -981,6 +985,143 @@ Use search_contacts to find the contact ID first, then link them.`,
     const oppId = await resolveOpportunityId(opportunity_id, progress);
     await addContactToOpportunity(contact_id, oppId, role, progress);
     return { content: [{ type: "text", text: `✅ Contact linked to opportunity${role ? ` as **${role}**` : ""}.` }] };
+  }
+);
+
+// ---------------------------------------------------------------------------
+// Tool: list_closing_plan
+// ---------------------------------------------------------------------------
+server.tool(
+  "list_closing_plan",
+  `View the closing plan milestones for an opportunity.
+
+Shows structured milestones with due dates, status, and ownership. Great for tracking deal progress.
+Set include_completed=true to see completed milestones too (default: only open).`,
+  {
+    opportunity_id: z.string().describe("Dynamics opportunity GUID or OPTY number"),
+    include_completed: z.boolean().optional().describe("Include completed milestones (default false)"),
+  },
+  async ({ opportunity_id, include_completed }) => {
+    const progress = makeProgress(server);
+    const id = await resolveOpportunityId(opportunity_id, progress);
+    const milestones = await listClosingPlan(id, progress, { includeCompleted: include_completed });
+    if (milestones.length === 0) {
+      return { content: [{ type: "text", text: "No closing plan milestones found for this opportunity." }] };
+    }
+    return { content: [{ type: "text", text: JSON.stringify(milestones, null, 2) }] };
+  }
+);
+
+// ---------------------------------------------------------------------------
+// Tool: add_closing_plan_milestone
+// ---------------------------------------------------------------------------
+server.tool(
+  "add_closing_plan_milestone",
+  `Add a milestone to an opportunity's closing plan.
+
+Creates a new milestone with a title, optional due date, and description.
+Confirm with the user before creating.`,
+  {
+    opportunity_id: z.string().describe("Dynamics opportunity GUID or OPTY number"),
+    title: z.string().describe("Milestone title (e.g. 'Technical validation complete')"),
+    due_date: z.string().optional().describe("Due date in ISO format (e.g. 2026-05-15)"),
+    description: z.string().optional().describe("Milestone description or notes"),
+    confirmed: z.boolean().describe("User must confirm before creating"),
+  },
+  async ({ opportunity_id, title, due_date, description, confirmed }) => {
+    if (!confirmed) return { content: [{ type: "text", text: "⚠️ Please confirm to create this milestone." }] };
+    engagementWriteLimiter.check("add_closing_plan_milestone");
+    const progress = makeProgress(server);
+    const id = await resolveOpportunityId(opportunity_id, progress);
+    const milestone = await createClosingPlanMilestone({ opportunityId: id, title, dueDate: due_date, description }, progress);
+    return { content: [{ type: "text", text: `✅ Milestone created: **${milestone.title}**${milestone.dueDate ? ` (due: ${milestone.dueDate.slice(0, 10)})` : ""}` }] };
+  }
+);
+
+// ---------------------------------------------------------------------------
+// Tool: update_closing_plan_milestone
+// ---------------------------------------------------------------------------
+server.tool(
+  "update_closing_plan_milestone",
+  `Update a closing plan milestone — mark complete, flag at risk, or change details.
+
+Use list_closing_plan first to find the milestone ID.`,
+  {
+    milestone_id: z.string().describe("Closing plan milestone GUID"),
+    complete: z.boolean().optional().describe("Set true to mark milestone as complete"),
+    at_risk: z.boolean().optional().describe("Set true to flag as at risk, false to remove flag"),
+    title: z.string().optional().describe("New title"),
+    due_date: z.string().optional().describe("New due date in ISO format"),
+    description: z.string().optional().describe("Updated description"),
+  },
+  async ({ milestone_id, complete, at_risk, title, due_date, description }) => {
+    engagementWriteLimiter.check("update_closing_plan_milestone");
+    const progress = makeProgress(server);
+    await updateClosingPlanMilestone(milestone_id, {
+      complete, atRisk: at_risk, title, dueDate: due_date, description,
+    }, progress);
+    const actions: string[] = [];
+    if (complete) actions.push("marked complete");
+    if (at_risk === true) actions.push("flagged at risk");
+    if (at_risk === false) actions.push("risk flag removed");
+    if (title) actions.push("title updated");
+    if (due_date) actions.push("due date updated");
+    return { content: [{ type: "text", text: `✅ Milestone updated: ${actions.join(", ") || "changes saved"}.` }] };
+  }
+);
+
+// ---------------------------------------------------------------------------
+// Tool: get_forecast_summary
+// ---------------------------------------------------------------------------
+server.tool(
+  "get_forecast_summary",
+  `Get a forecast summary — Committed / Best Case / Pipeline breakdown with NNACV totals.
+
+Shows deal counts and values by forecast category, plus at-risk alerts and quarterly timing.
+Use quarter param (e.g. "Q2 2026") to filter by close date within a specific quarter.
+
+Always show the nnacv field as the primary deal value. Display format: NNACV: $X | ACV: $Y`,
+  {
+    quarter: z.string().optional().describe('Filter to a specific quarter, e.g. "Q2 2026"'),
+    account_name: z.string().optional().describe("Filter by account name (partial match)"),
+    my_opps_only: z.boolean().optional().describe("Filter to your own opps (default true)"),
+  },
+  async ({ quarter, account_name, my_opps_only }) => {
+    const progress = makeProgress(server);
+    const forecast = await getForecastSummary({
+      myOppsOnly: my_opps_only ?? true,
+      myOppsFilterField: isSSC ? "collab" : "owner",
+      accountSearch: account_name,
+      quarter,
+    }, progress);
+
+    const lines: string[] = [
+      `## Forecast Summary${quarter ? ` — ${quarter}` : ""}`,
+      "",
+      `| Category | Opps | NNACV |`,
+      `|----------|------|-------|`,
+      `| **Committed** | ${forecast.byCategory.find(c => c.categoryCode === 100000003)?.count ?? 0} | $${forecast.committed.toLocaleString()} |`,
+      `| **Best Case** | ${forecast.byCategory.find(c => c.categoryCode === 100000002)?.count ?? 0} | $${forecast.bestCase.toLocaleString()} |`,
+      `| **Pipeline** | ${forecast.byCategory.find(c => c.categoryCode === 100000001)?.count ?? 0} | $${forecast.pipeline.toLocaleString()} |`,
+      `| **Omitted** | ${forecast.byCategory.find(c => c.categoryCode === 100000004)?.count ?? 0} | $${forecast.omitted.toLocaleString()} |`,
+      "",
+      `**Total pipeline (excl. Omitted):** $${forecast.totalPipeline.toLocaleString()} across ${forecast.oppCount} opps`,
+      `**Closing this quarter:** ${forecast.closingThisQuarter} | **Next quarter:** ${forecast.closingNextQuarter}`,
+      `**At risk (overdue/closing <30d/no date):** ${forecast.atRiskCount}`,
+    ];
+
+    // Top deals per category
+    for (const cat of forecast.byCategory) {
+      if (cat.opps.length === 0) continue;
+      lines.push("", `### ${cat.category} — $${cat.nnacv.toLocaleString()}`);
+      for (const o of cat.opps.slice(0, 10)) {
+        const close = o.closeDate ? o.closeDate.slice(0, 10) : "no date";
+        lines.push(`- **${o.name}** (${o.account}) | $${o.nnacv.toLocaleString()} | close: ${close}`);
+      }
+      if (cat.opps.length > 10) lines.push(`- _...and ${cat.opps.length - 10} more_`);
+    }
+
+    return { content: [{ type: "text", text: lines.join("\n") }] };
   }
 );
 

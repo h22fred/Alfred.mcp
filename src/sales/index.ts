@@ -40,6 +40,10 @@ import {
   createContact,
   listOpportunityContacts,
   addContactToOpportunity,
+  listClosingPlan,
+  createClosingPlanMilestone,
+  updateClosingPlanMilestone,
+  getForecastSummary,
   type EngagementType,
   type EngagementDescription,
 } from "../tools/dynamicsClient.js";
@@ -746,6 +750,153 @@ Use search_contacts to find the contact ID first, then link them.`,
 );
 
 // ---------------------------------------------------------------------------
+// Tool: list_closing_plan
+// ---------------------------------------------------------------------------
+server.tool(
+  "list_closing_plan",
+  `View the closing plan milestones for an opportunity.
+
+Shows structured milestones with due dates, status, and ownership. Great for tracking deal progress.
+Set include_completed=true to see completed milestones too (default: only open).`,
+  {
+    opportunity_id: z.string().describe("Dynamics opportunity GUID or OPTY number"),
+    include_completed: z.boolean().optional().describe("Include completed milestones (default false)"),
+  },
+  async ({ opportunity_id, include_completed }) => {
+    const progress = makeProgress(server);
+    const id = await resolveOpportunityId(opportunity_id, progress);
+    const milestones = await listClosingPlan(id, progress, { includeCompleted: include_completed });
+    if (milestones.length === 0) {
+      return { content: [{ type: "text", text: "No closing plan milestones found for this opportunity." }] };
+    }
+    return { content: [{ type: "text", text: JSON.stringify(milestones, null, 2) }] };
+  }
+);
+
+// ---------------------------------------------------------------------------
+// Tool: add_closing_plan_milestone
+// ---------------------------------------------------------------------------
+server.tool(
+  "add_closing_plan_milestone",
+  `Add a milestone to an opportunity's closing plan.
+
+Creates a new milestone with a title, optional due date, and description.
+Confirm with the user before creating.`,
+  {
+    opportunity_id: z.string().describe("Dynamics opportunity GUID or OPTY number"),
+    title: z.string().describe("Milestone title (e.g. 'Technical validation complete')"),
+    due_date: z.string().optional().describe("Due date in ISO format (e.g. 2026-05-15)"),
+    description: z.string().optional().describe("Milestone description or notes"),
+    confirmed: z.boolean().describe("User must confirm before creating"),
+  },
+  async ({ opportunity_id, title, due_date, description, confirmed }) => {
+    if (!confirmed) return { content: [{ type: "text", text: "⚠️ Please confirm to create this milestone." }] };
+    engagementWriteLimiter.check("add_closing_plan_milestone");
+    const progress = makeProgress(server);
+    const id = await resolveOpportunityId(opportunity_id, progress);
+    const milestone = await createClosingPlanMilestone({ opportunityId: id, title, dueDate: due_date, description }, progress);
+    return { content: [{ type: "text", text: `✅ Milestone created: **${milestone.title}**${milestone.dueDate ? ` (due: ${milestone.dueDate.slice(0, 10)})` : ""}` }] };
+  }
+);
+
+// ---------------------------------------------------------------------------
+// Tool: update_closing_plan_milestone
+// ---------------------------------------------------------------------------
+server.tool(
+  "update_closing_plan_milestone",
+  `Update a closing plan milestone — mark complete, flag at risk, or change details.
+
+Use list_closing_plan first to find the milestone ID.`,
+  {
+    milestone_id: z.string().describe("Closing plan milestone GUID"),
+    complete: z.boolean().optional().describe("Set true to mark milestone as complete"),
+    at_risk: z.boolean().optional().describe("Set true to flag as at risk, false to remove flag"),
+    title: z.string().optional().describe("New title"),
+    due_date: z.string().optional().describe("New due date in ISO format"),
+    description: z.string().optional().describe("Updated description"),
+  },
+  async ({ milestone_id, complete, at_risk, title, due_date, description }) => {
+    engagementWriteLimiter.check("update_closing_plan_milestone");
+    const progress = makeProgress(server);
+    await updateClosingPlanMilestone(milestone_id, {
+      complete, atRisk: at_risk, title, dueDate: due_date, description,
+    }, progress);
+    const actions: string[] = [];
+    if (complete) actions.push("marked complete");
+    if (at_risk === true) actions.push("flagged at risk");
+    if (at_risk === false) actions.push("risk flag removed");
+    if (title) actions.push("title updated");
+    if (due_date) actions.push("due date updated");
+    return { content: [{ type: "text", text: `✅ Milestone updated: ${actions.join(", ") || "changes saved"}.` }] };
+  }
+);
+
+// ---------------------------------------------------------------------------
+// Tool: get_forecast_summary
+// ---------------------------------------------------------------------------
+server.tool(
+  "get_forecast_summary",
+  `Get a forecast summary — Committed / Best Case / Pipeline breakdown with NNACV totals.
+
+Shows deal counts and values by forecast category, plus at-risk alerts and quarterly timing.
+Use quarter param (e.g. "Q2 2026") to filter by close date within a specific quarter.
+
+Always show the nnacv field as the primary deal value. Display format: NNACV: $X | ACV: $Y`,
+  {
+    quarter: z.string().optional().describe('Filter to a specific quarter, e.g. "Q2 2026"'),
+    account_name: z.string().optional().describe("Filter by account name (partial match)"),
+    owner_name: z.string().optional().describe("Filter by AE name (partial match)"),
+    my_opps_only: z.boolean().optional().describe(
+      isSalesSpecialist
+        ? "Set true to see only your collaboration team opps. Default false."
+        : isSalesManager
+        ? "Set true to see only your personally owned opps. Default false (team view)."
+        : "Filter to your owned opps. Default true for AE."
+    ),
+  },
+  async ({ quarter, account_name, owner_name, my_opps_only }) => {
+    const progress = makeProgress(server);
+    const myOpps = my_opps_only ?? (isSalesSpecialist || isSalesManager ? false : true);
+    const forecast = await getForecastSummary({
+      myOppsOnly: myOpps,
+      myOppsFilterField: isSalesSpecialist && myOpps ? "collab" : "owner",
+      ownerSearch: owner_name,
+      accountSearch: account_name,
+      quarter,
+    }, progress);
+
+    const lines: string[] = [
+      `## Forecast Summary${quarter ? ` — ${quarter}` : ""}`,
+      "",
+      `| Category | Opps | NNACV |`,
+      `|----------|------|-------|`,
+      `| **Committed** | ${forecast.byCategory.find(c => c.categoryCode === 100000003)?.count ?? 0} | $${forecast.committed.toLocaleString()} |`,
+      `| **Best Case** | ${forecast.byCategory.find(c => c.categoryCode === 100000002)?.count ?? 0} | $${forecast.bestCase.toLocaleString()} |`,
+      `| **Pipeline** | ${forecast.byCategory.find(c => c.categoryCode === 100000001)?.count ?? 0} | $${forecast.pipeline.toLocaleString()} |`,
+      `| **Omitted** | ${forecast.byCategory.find(c => c.categoryCode === 100000004)?.count ?? 0} | $${forecast.omitted.toLocaleString()} |`,
+      "",
+      `**Total pipeline (excl. Omitted):** $${forecast.totalPipeline.toLocaleString()} across ${forecast.oppCount} opps`,
+      `**Closing this quarter:** ${forecast.closingThisQuarter} | **Next quarter:** ${forecast.closingNextQuarter}`,
+      `**At risk (overdue/closing <30d/no date):** ${forecast.atRiskCount}`,
+    ];
+
+    // Top deals per category
+    for (const cat of forecast.byCategory) {
+      if (cat.opps.length === 0) continue;
+      lines.push("", `### ${cat.category} — $${cat.nnacv.toLocaleString()}`);
+      for (const o of cat.opps.slice(0, 10)) {
+        const close = o.closeDate ? o.closeDate.slice(0, 10) : "no date";
+        const owner = o.owner ?? "unknown";
+        lines.push(`- **${o.name}** (${o.account}) | $${o.nnacv.toLocaleString()} | close: ${close} | AE: ${owner}`);
+      }
+      if (cat.opps.length > 10) lines.push(`- _...and ${cat.opps.length - 10} more_`);
+    }
+
+    return { content: [{ type: "text", text: lines.join("\n") }] };
+  }
+);
+
+// ---------------------------------------------------------------------------
 // Tool: get_territory_pipeline
 // ---------------------------------------------------------------------------
 server.tool(
@@ -754,13 +905,17 @@ server.tool(
     ? `Get a pipeline health overview — for Sales Specialists who support AEs.
 
 Shows all open opportunities grouped by forecast category with health flags.
-Default: all open opportunities. Use account_name or owner_name to narrow down.
-Set my_opps_only=true to see only opportunities where you are on the collaboration team.`
+Default: all open opportunities. Use account_name, owner_name, or territory_code to narrow down.
+Set my_opps_only=true to see only opportunities where you are on the collaboration team.
+
+Auto-excludes $0 App Store Renewal opps. Set include_app_store_renewals=true to show them.`
     : isSalesManager
     ? `Get a pipeline health overview across your territory — team-wide view.
 
 Shows all open opportunities grouped by forecast category with health flags.
-Default: all open opportunities. Filter by owner_name to drill into a specific AE's pipeline.`
+Default: all open opportunities. Filter by owner_name or territory_code to drill in.
+
+Auto-excludes $0 App Store Renewal opps. Set include_app_store_renewals=true to show them.`
     : `Get a pipeline health overview for your territory.
 
 Shows your open opportunities grouped by forecast category with health flags:
@@ -769,10 +924,13 @@ Shows your open opportunities grouped by forecast category with health flags:
 - No value set (NNACV = 0)
 
 Default: your own pipeline (my_opps_only=true). Set my_opps_only=false to see all opps.
-Filter by account_name to drill into a specific account.`,
+Filter by account_name or territory_code to drill into a specific scope.
+
+Auto-excludes $0 App Store Renewal opps. Set include_app_store_renewals=true to show them.`,
   {
     owner_name:  z.string().optional().describe("Filter by rep/AE name (partial match). Leave blank for all."),
     account_name: z.string().optional().describe("Filter by account name (partial match)."),
+    territory_code: z.string().optional().describe("Filter by territory code (e.g. 'CHLPC-TER-6' or 'LUX-CPG-Switzerland')"),
     min_value:   z.number().optional().describe("Only include opps above this USD value."),
     my_opps_only: z.boolean().optional().describe(
       isSalesSpecialist
@@ -781,9 +939,10 @@ Filter by account_name to drill into a specific account.`,
         ? "Set true to see only your personally owned opps. Default false (team view)."
         : "Filter to your owned opps. Default true for AE. Set false for all."
     ),
+    include_app_store_renewals: z.boolean().optional().describe("Include $0 App Store Renewal opps (default false — excluded to reduce noise)"),
     top:         z.number().optional().describe("Max results (default 200)."),
   },
-  async ({ owner_name, account_name, min_value, my_opps_only, top }) => {
+  async ({ owner_name, account_name, territory_code, min_value, my_opps_only, include_app_store_renewals, top }) => {
     const progress = makeProgress(server);
 
     // AE defaults to own pipeline; Manager/Specialist default to broad view
@@ -795,8 +954,10 @@ Filter by account_name to drill into a specific account.`,
       myOpportunitiesOnly: myOpps,
       myOppsFilterField: isSalesSpecialist && myOpps ? "collab" : "owner",
       ownerSearch: owner_name,
+      territoryCode: territory_code,
       includeClosed: false,
       includeZeroValue: true, // Territory view includes everything — health flags warn about zeros
+      excludeAppStoreRenewals: !include_app_store_renewals, // Exclude $0 App Store Renewals by default
       top: top ?? 200,
     }, progress);
 
