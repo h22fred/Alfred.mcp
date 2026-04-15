@@ -176,7 +176,7 @@ After exiting, all cached auth tokens are cleared. The user will need to relaunc
   async () => {
     const progress = makeProgress(server);
     clearGraphTokenCache();
-    const wasRunning = exitAlfred(progress);
+    const wasRunning = await exitAlfred(progress);
     return {
       content: [{ type: "text", text: wasRunning
         ? "✅ Alfred closed. To use CRM tools again, double-click Alfred on your Desktop."
