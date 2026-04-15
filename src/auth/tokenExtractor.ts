@@ -54,6 +54,7 @@ function launchAlfred(): void {
     `mkdir -p "${CHROME_PROFILE_DIR}" && \
     "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
       --remote-debugging-port=${CDP_PORT} \
+      --remote-debugging-address=127.0.0.1 \
       --user-data-dir="${CHROME_PROFILE_DIR}" \
       --no-first-run \
       --no-default-browser-check \
@@ -83,6 +84,58 @@ export function clearAuthCache(): void {
   clearMemoryAuthCache();
   clearCachedAuthFile("dynamics");
   clearCachedAuthFile("outlook");
+}
+
+/** Stop the Alfred Chrome process gracefully. */
+export function exitAlfred(progress: ProgressFn = () => {}): boolean {
+  if (!isChromeProcessRunning()) {
+    progress("ℹ️ Alfred is not running");
+    return false;
+  }
+  progress("🛑 Closing Alfred (only the Alfred Chrome — your regular Chrome is untouched)...");
+  try {
+    if (process.platform === "win32") {
+      // Use WMIC to find Chrome PIDs with the alfred-profile flag, then taskkill each
+      const wmic = execFileSync("cmd", ["/c",
+        `wmic process where "CommandLine like '%%${CHROME_PROFILE_DIR.replace(/\\/g, "\\\\")}%%'" get ProcessId /format:list`
+      ], { timeout: 5_000, encoding: "utf8" });
+      const pids = wmic.match(/ProcessId=(\d+)/g)?.map(m => m.split("=")[1]) ?? [];
+      for (const pid of pids) {
+        try { execFileSync("taskkill", ["/F", "/PID", pid], { timeout: 3_000 }); } catch { /* already gone */ }
+      }
+    } else {
+      // pkill -f matches the full command line — only kills Chrome with --user-data-dir=~/.alfred-profile
+      execFileSync("pkill", ["-f", CHROME_PROFILE_DIR], { timeout: 5_000 });
+    }
+  } catch { /* process may have already exited */ }
+  clearAuthCache();
+  progress("✅ Alfred closed — all auth tokens cleared");
+  return true;
+}
+
+/** Restart Alfred: exit, then relaunch via Alfred.app (preserves Dock icon). */
+export async function restartAlfred(progress: ProgressFn = () => {}): Promise<void> {
+  exitAlfred(progress);
+  // Small delay to let the process fully terminate
+  await new Promise(r => setTimeout(r, 1_000));
+  progress("🚀 Restarting Alfred...");
+
+  // Try launching via Alfred.app (preserves icon) before falling back to direct Chrome
+  const { existsSync } = await import("fs");
+  const { homedir } = await import("os");
+  const alfredApp = `${homedir()}/Desktop/Alfred.app`;
+  if (process.platform === "darwin" && existsSync(alfredApp)) {
+    execFile("open", [alfredApp]);
+  } else {
+    launchAlfred();
+  }
+
+  await waitForChrome();
+  // Open standard tabs
+  for (const url of [DYNAMICS_URL, OUTLOOK_URL, "https://teams.microsoft.com/v2/"]) {
+    await fetch(`http://localhost:${CDP_PORT}/json/new?${url}`).catch((e) => { process.stderr.write(`[alfred:warn] failed to open tab ${url}: ${e instanceof Error ? e.message : String(e)}\n`); });
+  }
+  progress("✅ Alfred restarted — please log into Dynamics, Outlook and Teams if needed");
 }
 
 export async function ensureAlfred(progress: ProgressFn = () => {}): Promise<void> {

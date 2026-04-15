@@ -175,6 +175,7 @@ fi
 # Become Chrome — Alfred.app's Dock icon persists on the process
 exec "\$CHROME" \\
   --remote-debugging-port=9222 \\
+  --remote-debugging-address=127.0.0.1 \\
   --user-data-dir="\$HOME/.alfred-profile" \\
   --no-first-run \\
   --no-default-browser-check \\

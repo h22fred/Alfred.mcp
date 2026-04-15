@@ -286,6 +286,7 @@ if not exist "%USERPROFILE%\.alfred-profile" mkdir "%USERPROFILE%\.alfred-profil
 :: Launch Chrome with Alfred profile
 start "" "%CHROME_EXE%" ^
     --remote-debugging-port=9222 ^
+    --remote-debugging-address=127.0.0.1 ^
     --user-data-dir="%USERPROFILE%\.alfred-profile" ^
     --no-first-run ^
     --no-default-browser-check ^

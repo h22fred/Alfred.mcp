@@ -236,8 +236,9 @@ export interface OpportunityFilter {
   minNnacv?: number;   // minimum NNACV (sn_netnewacv) in USD
   includeZeroValue?: boolean; // include $0 NNACV opps (default: excluded — too much noise)
   myOpportunitiesOnly?: boolean; // filter to current user's owned opportunities
-  myOppsFilterField?: "sc" | "owner"; // which field to filter on: "sc" = _sn_solutionconsultant_value (default), "owner" = _ownerid_value (for AEs)
+  myOppsFilterField?: "sc" | "owner" | "collab"; // "sc" = _sn_solutionconsultant_value (default), "owner" = _ownerid_value (AEs), "collab" = collaboration team (SSC/Specialists)
   includeClosed?: boolean; // include won/lost/closed opps — default false (open only)
+  excludeStale?: boolean; // exclude opps with close date > 6 months past — default true
   ownerSearch?: string; // filter by owner (AE) name — resolves to user IDs
 }
 
@@ -266,11 +267,47 @@ export async function fetchOpportunities(filter: OpportunityFilter = {}, progres
     // Include opps >= threshold OR negative (negative NNACV is always important)
     filterClause += ` and (sn_netnewacv ge ${filter.minNnacv} or sn_netnewacv lt 0)`;
   }
+  // Exclude zombie opps — close date > 6 months in the past (default: on)
+  if (filter.excludeStale !== false) {
+    const sixMonthsAgo = new Date();
+    sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6);
+    const staleDate = sixMonthsAgo.toISOString().slice(0, 10);
+    filterClause += ` and (estimatedclosedate eq null or estimatedclosedate ge ${staleDate})`;
+  }
+  // Track whether we already filtered by collab team (skip post-validation if so)
+  let filteredByCollab = false;
+
   if (filter.myOpportunitiesOnly) {
     const userId = await fetchCurrentUserId(progress);
     requireGuid(userId, "currentUserId");
-    const field = filter.myOppsFilterField === "owner" ? "_ownerid_value" : "_sn_solutionconsultant_value";
-    filterClause += ` and (${field} eq '${userId}')`;
+
+    if (filter.myOppsFilterField === "collab") {
+      // SSC / Sales Specialist: filter to opportunities where user is on the collaboration team
+      progress("📡 Finding your collaboration team opportunities...");
+      const collabPath =
+        `/sn_opportunitycollaborationteams` +
+        `?$select=_sn_opportunity_value` +
+        `&$filter=_sn_user_value eq ${userId} and statecode eq 0` +
+        `&$top=200`;
+      const collabRes = await dynamicsFetch(collabPath, {}, progress);
+      const collabData = await collabRes.json();
+      const oppIds = [...new Set(
+        (collabData.value ?? []).map((r: Record<string, unknown>) => r._sn_opportunity_value as string).filter(Boolean)
+      )] as string[];
+
+      if (oppIds.length === 0) {
+        progress("ℹ️ You are not on any opportunity collaboration teams");
+        return [];
+      }
+
+      const idFilter = oppIds.map(id => `opportunityid eq ${id}`).join(" or ");
+      filterClause += ` and (${idFilter})`;
+      filteredByCollab = true;
+      progress(`🔍 Found ${oppIds.length} collaboration team opportunities`);
+    } else {
+      const field = filter.myOppsFilterField === "owner" ? "_ownerid_value" : "_sn_solutionconsultant_value";
+      filterClause += ` and (${field} eq '${userId}')`;
+    }
   }
   if (filter.ownerSearch) {
     const users = await searchSystemUsers(filter.ownerSearch, progress);
@@ -300,8 +337,8 @@ export async function fetchOpportunities(filter: OpportunityFilter = {}, progres
   // When filtering to "my opps" by SC field, cross-reference against the collaboration
   // team table which is the authoritative source of SC assignment. The denormalised
   // _sn_solutionconsultant_value field can be stale/incorrect.
-  // Skip for owner-based filtering (AEs) — collab team is SC-specific.
-  if (filter.myOpportunitiesOnly && filter.myOppsFilterField !== "owner" && results.length > 0) {
+  // Skip for owner-based filtering (AEs) and collab-based filtering (already authoritative).
+  if (filter.myOpportunitiesOnly && !filteredByCollab && filter.myOppsFilterField !== "owner" && results.length > 0) {
     progress("🔍 Validating against collaboration team...");
     const collabOpps = await fetchMyCollaborationOpportunities(progress);
     const collabIds = new Set(collabOpps.map(o => o.opportunityid));
@@ -717,6 +754,114 @@ export async function listTimelineNotes(
 }
 
 // ---------------------------------------------------------------------------
+// Collaboration Notes
+// ---------------------------------------------------------------------------
+
+/** Note type option set values for sn_collaborationnote.sn_notetype */
+const COLLAB_NOTE_TYPE_MAP: Record<string, number> = {
+  "general notes": 100000000,
+  "sales ops update": 100000001,
+  "renewal update": 100000002,
+  "next steps": 100000003,
+  "prime notes": 100000004,
+};
+
+const COLLAB_NOTE_TYPE_NAMES: Record<number, string> = Object.fromEntries(
+  Object.entries(COLLAB_NOTE_TYPE_MAP).map(([k, v]) => [v, k.split(" ").map(w => w[0].toUpperCase() + w.slice(1)).join(" ")])
+);
+
+export type CollabNoteType = "General Notes" | "Sales Ops Update" | "Renewal Update" | "Next Steps" | "Prime Notes";
+
+export interface CollaborationNote {
+  id: string;
+  noteType: string;
+  noteTypeCode?: number;
+  notes: string;
+  owner: string;
+  createdOn: string;
+  modifiedOn?: string;
+  opportunityId?: string;
+  opportunityName?: string;
+}
+
+function mapCollabNote(r: Record<string, unknown>): CollaborationNote {
+  const noteTypeCode = r.sn_notetype as number | undefined;
+  return {
+    id: r.sn_collaborationnoteid as string ?? r.activityid as string ?? "",
+    noteType: (r["sn_notetype@OData.Community.Display.V1.FormattedValue"] as string)
+              ?? COLLAB_NOTE_TYPE_NAMES[noteTypeCode ?? -1]
+              ?? String(noteTypeCode ?? "Unknown"),
+    noteTypeCode,
+    notes: r.sn_notes as string ?? r.description as string ?? "",
+    owner: r["_ownerid_value@OData.Community.Display.V1.FormattedValue"] as string ?? "",
+    createdOn: r.createdon as string ?? "",
+    modifiedOn: r.modifiedon as string,
+    opportunityId: r._regardingobjectid_value as string,
+    opportunityName: r["_regardingobjectid_value@OData.Community.Display.V1.FormattedValue"] as string,
+  };
+}
+
+export async function listCollaborationNotes(
+  opportunityId: string,
+  progress: ProgressFn = () => {}
+): Promise<CollaborationNote[]> {
+  requireGuid(opportunityId, "opportunityId");
+  progress(`📝 Fetching collaboration notes for opportunity ${opportunityId}...`);
+
+  const path =
+    `/sn_collaborationnotes` +
+    `?$select=sn_collaborationnoteid,sn_notetype,sn_notes,description,createdon,modifiedon,_ownerid_value,_regardingobjectid_value` +
+    `&$filter=_regardingobjectid_value eq ${opportunityId}` +
+    `&$orderby=createdon desc` +
+    `&$top=50`;
+
+  const res = await dynamicsFetch(path, {}, progress);
+  const data = await res.json();
+  const notes = (data.value ?? []).map(mapCollabNote);
+  progress(`✅ Found ${notes.length} collaboration note(s)`);
+  return notes;
+}
+
+export interface CreateCollabNoteInput {
+  opportunityId: string;
+  noteType: string;      // "General Notes", "Next Steps", etc.
+  notes: string;         // The note content
+}
+
+export async function createCollaborationNote(
+  input: CreateCollabNoteInput,
+  progress: ProgressFn = () => {}
+): Promise<CollaborationNote> {
+  requireGuid(input.opportunityId, "opportunityId");
+
+  const noteTypeKey = input.noteType.toLowerCase();
+  const noteTypeCode = COLLAB_NOTE_TYPE_MAP[noteTypeKey];
+  if (noteTypeCode === undefined) {
+    throw new Error(`Invalid note type "${input.noteType}". Valid types: ${Object.values(COLLAB_NOTE_TYPE_NAMES).join(", ")}`);
+  }
+
+  auditLog("create_collaboration_note", { opportunityId: input.opportunityId, noteType: input.noteType });
+  progress(`📝 Creating ${input.noteType} collaboration note...`);
+
+  const body: Record<string, unknown> = {
+    sn_notetype: noteTypeCode,
+    sn_notes: input.notes,
+    "regardingobjectid_opportunity@odata.bind": `/opportunities(${input.opportunityId})`,
+  };
+
+  const res = await dynamicsFetch("/sn_collaborationnotes", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Prefer: "return=representation" },
+    body: JSON.stringify(body),
+  }, progress);
+
+  const created = await res.json();
+  const note = mapCollabNote(created as Record<string, unknown>);
+  progress(`✅ Created collaboration note: ${note.noteType}`);
+  return note;
+}
+
+// ---------------------------------------------------------------------------
 // Opportunity write operations (Sales MCP)
 // ---------------------------------------------------------------------------
 
@@ -1029,6 +1174,7 @@ export async function fetchMyCollaborationOpportunities(
   progress: ProgressFn = () => {}
 ): Promise<Opportunity[]> {
   const userId = await fetchCurrentUserId(progress);
+  requireGuid(userId, "currentUserId");
   progress(`📡 Finding opportunities where you are on the collaboration team...`);
 
   // Step 1: Get all collab team entries for this user
@@ -1121,6 +1267,7 @@ export async function fetchMyEngagementAssignments(
   progress: ProgressFn = () => {}
 ): Promise<Engagement[]> {
   const userId = await fetchCurrentUserId(progress);
+  requireGuid(userId, "currentUserId");
   const top = filter.top ?? 50;
   auditLog("fetch_my_engagement_assignments", { userId, filter });
   progress(`📡 Finding engagements where you are a participant...`);
