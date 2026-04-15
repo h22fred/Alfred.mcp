@@ -7,8 +7,8 @@ set "REPO_URL=https://github.com/h22fred/Alfred.mcp.git"
 echo.
 echo   What is your role?
 echo.
-echo     1) SC / SSC / Manager  — Solution Consulting
-echo     2) Sales               — Account Executive / Manager
+echo     1) SC / SSC / Manager           — Solution Consulting
+echo     2) Sales / Specialist / Manager — Account Executive
 echo.
 set /p VARIANT_CHOICE="   Enter 1 or 2 (default: 1): "
 
