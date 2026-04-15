@@ -1,7 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-import { DYNAMICS_HOST, ALL_ENGAGEMENT_TYPES } from "../config.js";
+import { DYNAMICS_HOST, ALL_ENGAGEMENT_TYPES, alfredConfig } from "../config.js";
 import { requireGuid, makeProgress, WriteRateLimiter, FORECAST_NAMES, regenerateAlfredApp } from "../shared.js";
 import {
   fetchOpportunities,
@@ -29,6 +29,7 @@ import {
   fetchEngagementParticipants,
   fetchMyEngagementAssignments,
   fetchMyCollaborationOpportunities,
+  resolveOpportunityId,
   type EngagementType,
   type EngagementDescription,
 } from "../tools/dynamicsClient.js";
@@ -44,6 +45,16 @@ import { join, dirname } from "path";
 import { fileURLToPath } from "url";
 
 const DYNAMICS_BASE_URL = DYNAMICS_HOST;
+
+// ---------------------------------------------------------------------------
+// User config — loaded from shared config.ts
+// ---------------------------------------------------------------------------
+const isSalesSpecialist = alfredConfig.role === "sales_specialist";
+const isSalesManager    = alfredConfig.role === "sales_manager";
+
+process.stderr.write(
+  `[alfred] Config loaded — role: ${alfredConfig.role ?? "sales"}\n`
+);
 
 // ---------------------------------------------------------------------------
 // Security helpers
@@ -157,7 +168,36 @@ server.tool(
 // ---------------------------------------------------------------------------
 server.tool(
   "get_my_opportunities",
-  `List your open opportunities in Dynamics 365, optionally filtered by account name or minimum NNACV.
+  isSalesSpecialist
+    ? `List open opportunities from Dynamics 365.
+
+This user is a Sales Specialist — they do not own opportunities directly. Always search across ALL opportunities (my_opportunities_only=false) and use the search field to filter by account or opportunity name.
+
+IMPORTANT: Before calling this tool, always ask:
+1. "Which account or opportunity are you looking for?"
+2. "100K+ NNACV only, or all sizes?" (default: 100K+ only)
+
+NOTE: $0 NNACV opportunities are excluded by default (noise). If the user explicitly asks for $0 deals, set include_zero_value=true.
+
+DISPLAY: Always show the nnacv field as the primary deal value (labelled "NNACV"). Never show totalamount as the deal size — it is ACV (full contract value including renewals) and inflates pipeline figures. If the user asks about ACV specifically, show totalamount labelled as "ACV" alongside NNACV.
+
+CROSS-REFERENCE: After presenting pipeline results, compare with the Data_Analytics_Connection account_insights tool. Note: Dynamics data is live CRM state; Data Analytics is data lake (may lag by up to 24h). Flag any discrepancies between the two sources.`
+    : isSalesManager
+    ? `List open opportunities from Dynamics 365.
+
+This user is a Sales Manager — they want to see their team's pipeline, not just their own. Default to searching all opportunities (my_opportunities_only=false). They may want to search by AE name or account.
+
+IMPORTANT: Before calling this tool, always ask:
+1. "Your whole team's pipeline, a specific AE, or a specific account?"
+   — If a specific AE or account is named, pass it as the search field
+2. "100K+ NNACV only, or all sizes?" (default: 100K+ only)
+
+NOTE: $0 NNACV opportunities are excluded by default (noise). If the user explicitly asks for $0 deals, set include_zero_value=true.
+
+DISPLAY: Always show the nnacv field as the primary deal value (labelled "NNACV"). Never show totalamount as the deal size — it is ACV (full contract value including renewals) and inflates pipeline figures. If the user asks about ACV specifically, show totalamount labelled as "ACV" alongside NNACV.
+
+CROSS-REFERENCE: After presenting pipeline results, compare with the Data_Analytics_Connection account_insights tool. Note: Dynamics data is live CRM state; Data Analytics is data lake (may lag by up to 24h). Flag any discrepancies between the two sources.`
+    : `List your open opportunities in Dynamics 365, optionally filtered by account name or minimum NNACV.
 
 NOTE: $0 NNACV opportunities are excluded by default (noise). If the user explicitly asks for $0 deals, set include_zero_value=true. Negative NNACV deals are always included.
 
@@ -170,13 +210,21 @@ CROSS-REFERENCE: After presenting pipeline results, compare with the Data_Analyt
     top: z.number().optional().describe("Max results (default 50)"),
     include_closed: z.boolean().optional().describe("Include won/lost opportunities (default false)"),
     include_zero_value: z.boolean().optional().describe("Include $0 NNACV opportunities — default false (excluded as noise). Set true only if user explicitly asks for $0 deals."),
+    my_opportunities_only: z.boolean().optional().describe(
+      isSalesSpecialist
+        ? "Specialist mode — default false (search all). Set true only if explicitly asked."
+        : isSalesManager
+        ? "Manager mode — default false (team-wide). Set true for your personal pipeline only."
+        : "Filter to your owned opportunities — default true."
+    ),
   },
-  async ({ search, min_nnacv, top, include_closed, include_zero_value }) => {
+  async ({ search, min_nnacv, top, include_closed, include_zero_value, my_opportunities_only }) => {
     const progress = makeProgress(server);
     const opps = await fetchOpportunities({
       search,
       minNnacv: min_nnacv,
-      myOpportunitiesOnly: true,
+      myOpportunitiesOnly: my_opportunities_only ?? (isSalesSpecialist || isSalesManager ? false : true),
+      myOppsFilterField: "owner",
       includeClosed: include_closed ?? false,
       includeZeroValue: include_zero_value ?? false,
       top: top ?? 50,
@@ -190,7 +238,7 @@ CROSS-REFERENCE: After presenting pipeline results, compare with the Data_Analyt
 // ---------------------------------------------------------------------------
 server.tool(
   "get_opportunity",
-  `Get a single opportunity by its Dynamics ID.
+  `Get a single opportunity by its Dynamics GUID or OPTY number (e.g. OPTY5328326).
 
 Also fetches timeline notes attached to the opportunity — essential context for engagement creation and updates.
 
@@ -205,10 +253,10 @@ Then present a combined summary:
 Example output: "SITA has CSM Pro — 600/1400 seats used (43%). This TPSM opportunity is an upsell."
 
 DISPLAY: Show both values clearly labelled — "NNACV: $X | ACV: $Y". NNACV (nnacv field) is the primary metric. ACV (totalamount) is the full contract value and should always be secondary. Never present totalamount as "deal value" without the ACV label.`,
-  { opportunity_id: z.string().describe("Dynamics opportunity GUID") },
+  { opportunity_id: z.string().describe("Dynamics opportunity GUID or OPTY number (e.g. OPTY5328326)") },
   async ({ opportunity_id }) => {
-    const id = requireGuid(opportunity_id, "opportunity_id");
     const progress = makeProgress(server);
+    const id = await resolveOpportunityId(opportunity_id, progress);
     const opp = await fetchOpportunityById(id, progress);
     const link = `${DYNAMICS_BASE_URL}/main.aspx?etn=opportunity&pagetype=entityrecord&id=${opp.opportunityid}`;
 
@@ -482,6 +530,7 @@ Sales Manager: use owner_name to filter by one of your reps (e.g. "John"), or le
       search: account_name,
       minNnacv: min_value,
       myOpportunitiesOnly: my_opps_only ?? false,
+      myOppsFilterField: "owner",
       ownerSearch: owner_name,
       includeClosed: false,
       top: top ?? 100,

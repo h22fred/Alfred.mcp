@@ -372,12 +372,17 @@ Write-Host ""
 if ($env:ALFRED_VARIANT -eq "sales") {
     Write-Host "[>] What is your Sales role?"
     Write-Host ""
-    Write-Host "   1) AE      - Account Executive (you own accounts and opportunities)"
-    Write-Host "   2) Manager - Sales Manager (you oversee a team of AEs)"
+    Write-Host "   1) AE                - Account Executive (you own accounts and opportunities)"
+    Write-Host "   2) Sales Specialist  - AE CRM, AE Risk, etc. (you support AEs, no assigned pipeline)"
+    Write-Host "   3) Manager           - Sales Manager (you oversee a team of AEs)"
     Write-Host ""
-    $RoleChoice = Read-Host "   Enter 1 or 2 (default: 1)"
+    $RoleChoice = Read-Host "   Enter 1, 2 or 3 (default: 1)"
     switch ($RoleChoice) {
         "2" {
+            $UserRole = "sales_specialist"
+            Write-Host "   Role set to Sales Specialist - Alfred will search all accounts by default"
+        }
+        "3" {
             $UserRole = "sales_manager"
             Write-Host "   Role set to Sales Manager - Alfred will show territory-wide pipeline"
         }
@@ -469,14 +474,16 @@ Write-AlfredConfig $Config
 Write-Host "   Milestones: $($SelectedTypes -join ', ')"
 
 # ------------------------------------------------------------
-# 9. Scheduled tasks (replaces cron)
+# 9. Scheduled tasks (replaces cron) — optional
 # ------------------------------------------------------------
 Write-Host ""
-Write-Host "[>] Automated jobs..."
-Write-Host ""
+$WantAutomation = Read-Host "[>] Would you like to set up automated weekly checks (hygiene sweep, meeting review)? [y/N]"
 
 $HygieneScheduleDesc = ""
 $MeetingScheduleDesc = ""
+
+if ($WantAutomation -match "^[yY]") {
+Write-Host ""
 
 # --- Hygiene sweep ---
 $InstallHygiene = Read-Host "   Install hygiene sweep (flags missing engagements on your pipeline)? [Y/n]"
@@ -581,29 +588,37 @@ if ($InstallMeeting -notmatch "^[nN]") {
     Write-Host "   Meeting review skipped"
 }
 
+} else {
+    Write-Host "   Automated checks skipped - you can set these up later by re-running setup"
+}
+
 # ------------------------------------------------------------
 # 10. Done
 # ------------------------------------------------------------
 Write-Host ""
-Write-Host "=================================================="
-Write-Host "  Setup complete!"
-Write-Host "=================================================="
 Write-Host ""
-Write-Host "Next steps:"
-Write-Host "  1. Double-click Alfred.bat on your Desktop"
-Write-Host "  2. Log into Dynamics, Outlook and Teams in that window"
+Write-Host "  =================================================="
+Write-Host "     Alfred installed successfully!"
+Write-Host "  =================================================="
+Write-Host ""
+Write-Host "  Get started:"
+Write-Host "  -------------"
+Write-Host "  1. Double-click Alfred.bat on your Desktop to launch the browser"
+Write-Host "  2. Log into Dynamics, Outlook and Teams (first time only)"
 Write-Host "  3. Restart Claude Desktop"
 Write-Host "  4. Ask Claude anything - opportunities, calendar, hygiene sweep!"
 Write-Host ""
 
 if ($HygieneScheduleDesc -or $MeetingScheduleDesc) {
-    Write-Host "Automated jobs:"
-    if ($HygieneScheduleDesc) { Write-Host "  * $HygieneScheduleDesc - CRM hygiene sweep" }
-    if ($MeetingScheduleDesc) { Write-Host "  * $MeetingScheduleDesc - Weekly meeting review" }
+    Write-Host "  Automated jobs:"
+    if ($HygieneScheduleDesc) { Write-Host "    * $HygieneScheduleDesc - CRM hygiene sweep" }
+    if ($MeetingScheduleDesc) { Write-Host "    * $MeetingScheduleDesc - Weekly meeting review" }
     if ($ExistingWebhook -or $NewWebhook) {
-        Write-Host "Results will be posted to your Teams channel."
+        Write-Host "    Results will be posted to your Teams channel."
     } else {
-        Write-Host "Run setup again to add a Teams webhook for automated notifications."
+        Write-Host "    Tip: re-run setup to add a Teams webhook for automated notifications."
     }
     Write-Host ""
 }
+Write-Host "  Happy selling!"
+Write-Host ""

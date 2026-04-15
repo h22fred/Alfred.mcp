@@ -1,12 +1,12 @@
 # AIfred.mcp
 
-> *Every superhero needs an Alfred. Yours handles the CRM.*
+> *Every superhero needs a butler. Yours is called Alfred and handles your CRM.*
 
 Built by **Fred** — Solution Consultant @ ServiceNow
 
-<a href="https://www.buymeacoffee.com/h22fred"><img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me A Coffee" height="60"></a>&nbsp;&nbsp;<a href="https://www.linkedin.com/comm/mynetwork/discovery-see-all?usecase=PEOPLE_FOLLOWS&followMember=fredholmstrom"><img src="assets/btn-linkedin.svg" alt="Follow on LinkedIn" height="60"></a>
+<a href="https://www.buymeacoffee.com/h22fred"><img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me A Coffee" height="60"></a>&nbsp;&nbsp;<a href="https://www.linkedin.com/comm/mynetwork/discovery-see-all?usecase=PEOPLE_FOLLOWS&followMember=fredholmstrom"><img src="setup/assets/btn-linkedin.svg" alt="Follow on LinkedIn" height="60"></a>
 
-<a href="https://twitter.com/intent/follow?screen_name=h22fred"><img src="assets/btn-x.svg" alt="Follow on X" height="60"></a>&nbsp;&nbsp;<a href="https://github.com/h22fred"><img src="assets/btn-github.svg" alt="Follow on GitHub" height="60"></a>
+<a href="https://twitter.com/intent/follow?screen_name=h22fred"><img src="setup/assets/btn-x.svg" alt="Follow on X" height="60"></a>&nbsp;&nbsp;<a href="https://github.com/h22fred"><img src="setup/assets/btn-github.svg" alt="Follow on GitHub" height="60"></a>
 
 Connects Claude Desktop directly to your CRM, calendar, email and Teams — using your existing browser session. No Azure app registration. No stored credentials. No CRM admin work ever again.
 
@@ -15,7 +15,7 @@ Two flavours — one installer:
 | Variant | Who | Install folder |
 |---------|-----|----------------|
 | **Alfred SC** | SC / SSC / Manager | `~/Documents/alfred.sc` |
-| **Alfred Sales** | Account Executive | `~/Documents/alfred.sales` |
+| **Alfred Sales** | AE / Sales Specialist / Manager | `~/Documents/alfred.sales` |
 
 ---
 
@@ -27,7 +27,7 @@ Two flavours — one installer:
 |--------|-------------|
 | **Dynamics 365** | List opportunities, create/update/complete engagements, hygiene sweep, Tech Win assessment, delete cancelled engagements |
 | **Outlook Calendar** | Show calendar by date range, search meetings |
-| **Outlook Email** | Search emails, list inbox/sent, full body, filter unread |
+| **Outlook Email** | Search emails, list inbox/sent/subfolders, full body, filter unread |
 | **Teams** | Get meeting transcripts, post to channels, read chats |
 | **Account Insights** | License utilization, renewal dates, upsell/cross-sell detection |
 
@@ -35,20 +35,24 @@ Two flavours — one installer:
 
 | Source | Capabilities |
 |--------|-------------|
-| **Dynamics 365** | Create & update opportunities, assign SC, search accounts/users, add notes |
+| **Dynamics 365** | Create & update opportunities, assign SC, search accounts/users, add notes, territory pipeline overview |
+| **Outlook Calendar** | Show calendar by date range, search meetings |
+| **Outlook Email** | Search emails, list inbox/sent/subfolders, full body, filter unread |
+| **Teams** | Get meeting transcripts, post to channels, read chats |
+| **Account Insights** | License utilization, renewal dates, upsell/cross-sell detection |
 
 ---
 
 ## Requirements
 
-- macOS
+- macOS or Windows 10+
 - [Claude Desktop](https://claude.ai/download)
 - Google Chrome
-- Node.js — **installed automatically if missing**
+- Node.js — **installed automatically if missing** (macOS)
 
 ---
 
-## Setup
+## Setup — macOS
 
 **Option A — Download and run** _(recommended)_
 1. **[⬇️ Download Setup_macOS.command](https://raw.githubusercontent.com/h22fred/Alfred.mcp/refs/heads/main/Setup_macOS.command)**
@@ -64,19 +68,42 @@ curl -fsSL https://raw.githubusercontent.com/h22fred/Alfred.mcp/refs/heads/main/
 
 > If a popup appears asking to install Command Line Tools, click **Install**, wait for it to finish, then run the same command again.
 
-The installer asks:
-- **SC or Sales?** — determines which Alfred is installed
+## Setup — Windows
+
+1. **[⬇️ Download Setup_Windows.bat](https://raw.githubusercontent.com/h22fred/Alfred.mcp/refs/heads/main/Setup_Windows.bat)**
+2. Double-click the downloaded file (or right-click → Run as administrator if prompted)
+
+> **Prerequisites:** Git and Node.js must be installed before running the Windows installer.
+> - Git: [git-scm.com/download/win](https://git-scm.com/download/win)
+> - Node.js LTS: [nodejs.org](https://nodejs.org)
+
+## What the installer asks
+
+- **SC or Sales?** — determines which Alfred variant is installed
 - **Dynamics company name** — your CRM URL (e.g. `servicenow`)
 - **Teams webhook** — for automated notifications (optional)
-- **SC role** (SC only) — SC / SSC / Manager
-- **Engagement types** — which milestones you track (SC types or AE milestones depending on role)
-- **Automated jobs** — Monday hygiene sweep + Friday meeting review
+- **Role:**
+  - SC variant: **SC** / **SSC** / **Manager**
+  - Sales variant: **AE** / **Sales Specialist** / **Manager**
+- **Engagement types** — which milestones you track
+- **Automated checks** — optional weekly hygiene sweep + meeting review (you can skip entirely or configure each one)
+
+### Roles explained
+
+| Role | Variant | Pipeline view |
+|------|---------|--------------|
+| **SC** | SC | Your assigned opportunities only |
+| **SSC** | SC | All opportunities (support role, no assigned pipeline) |
+| **SC Manager** | SC | Team-wide / territory view |
+| **AE** | Sales | Your owned opportunities only |
+| **Sales Specialist** | Sales | All opportunities (AE CRM, AE Risk, etc. — no assigned pipeline) |
+| **Sales Manager** | Sales | Team-wide / territory view |
 
 ---
 
 ## Every session
 
-1. Double-click **Alfred.app** on your Desktop
+1. Double-click **Alfred** on your Desktop (macOS: `.app`, Windows: `.bat`)
 2. **First time only:** log into Dynamics, Outlook and Teams (SSO) — Alfred remembers you after that
 3. Alfred automatically opens Claude Desktop — you're ready
 
@@ -98,13 +125,14 @@ Detect post-meeting engagements from this week
 Delete the cancelled Demo engagement on PMI
 ```
 
-### Sales AE
+### Sales AE / Specialist / Manager
 ```
 Create an opportunity for Givaudan — New ITSM, close December 2026
 Find the account ID for Roche
 Search for Fredrik to get his SC GUID and assign him
 Update the PMI opportunity close date to March 2027
 Show my open opportunities
+Show me the full territory pipeline
 Add a note to the SITA opportunity: had intro call, next step is discovery
 ```
 
@@ -112,35 +140,41 @@ Add a note to the SITA opportunity: had intro call, next step is discovery
 
 ## How it works
 
-Alfred.app launches Chrome with `--remote-debugging-port=9222` using a dedicated profile (`~/.alfred-profile`). The MCP server extracts session cookies and Bearer tokens via CDP WebSocket — no credentials stored, no Azure registration needed.
+Alfred launches Chrome with `--remote-debugging-port=9222` using a dedicated profile (`~/.alfred-profile`). The MCP server extracts session cookies and Bearer tokens via CDP WebSocket — no credentials stored, no Azure registration needed.
 
 Auth flow:
 1. **Dynamics:** reads `CrmOwinAuthC1/C2` cookies via `Network.getCookies`
-2. **Outlook/Graph:** reads Bearer token from MSAL cache in page storage
+2. **Outlook/Graph:** reads Bearer token from MSAL cache in page storage, falls back to network interception via `Fetch.enable` (catches Teams v2 service worker requests)
 3. All tokens cached in-memory for the session duration
 
 ---
 
 ## Automated jobs
 
-Alfred sets up two recurring cron jobs during installation (both optional):
+During installation you're asked if you want automated checks. If yes, Alfred sets up two recurring jobs (both individually optional):
 
 | When | What |
 |------|------|
-| **Monday 9:30am** | CRM hygiene sweep — checks all open opportunities for missing milestones, posts a summary card to Teams |
-| **Friday 2:00pm** | Meeting review — scans this week's calendar, matches meetings to open opportunities, suggests engagements to log |
+| **Monday 9:30am** (default) | CRM hygiene sweep — checks all open opportunities for missing milestones, posts a summary card to Teams |
+| **Friday 2:00pm** (default) | Meeting review — scans this week's calendar, matches meetings to open opportunities, suggests engagements to log |
 
 Both jobs run silently in the background. If Alfred isn't running or your Dynamics session has expired, they post a Teams reminder instead of failing silently.
 
 To run manually at any time:
 ```bash
+# macOS
 node ~/Documents/alfred.sc/setup/hygiene-sweep.mjs
 node ~/Documents/alfred.sc/setup/post-meeting-sweep.mjs
 ```
 
-To change the schedule, edit your crontab:
+To change the schedule:
 ```bash
+# macOS
 crontab -e
+
+# Windows — use Task Scheduler or:
+schtasks /query /tn "Alfred-HygieneSweep"
+schtasks /query /tn "Alfred-MeetingReview"
 ```
 
 Config lives in `~/.alfred-config.json`.
@@ -170,11 +204,13 @@ The webhook URL is stored in `~/.alfred-config.json` on your machine only and is
 
 | Error | Fix |
 |-------|-----|
-| Alfred not running | Double-click Alfred.app on Desktop |
-| Not logged into Dynamics | Log into Dynamics in the Alfred Chrome window |
+| Alfred not running | Double-click Alfred on Desktop |
+| Not logged into Dynamics | Log into Dynamics in the Alfred browser window |
 | 401 from Dynamics | Session expired — re-login in Alfred window |
 | Teams not posting | Re-run setup to reconfigure webhook |
-| Node.js not found | Re-run setup — it installs automatically |
+| Node.js not found | Re-run setup — it installs automatically (macOS) or install from [nodejs.org](https://nodejs.org) (Windows) |
+| macOS privacy prompt for Node.js | Normal — click Allow to let Node.js access local project files |
+| No opportunities found (Sales AE) | Make sure your role is set correctly in setup. AE CRM / AE Risk users should select "Sales Specialist" |
 
 ---
 

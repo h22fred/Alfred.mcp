@@ -133,7 +133,7 @@ async function acquireGraphTokenRawCDP(progress: ProgressFn): Promise<string> {
   const target        = teamsTarget ?? outlookTarget ?? anyTarget;
 
   if (!target?.webSocketDebuggerUrl) {
-    throw new Error("No page targets found in Alfred. Open Alfred.app and log into Teams or Outlook.");
+    throw new Error("No browser tabs found. Launch Alfred from your Desktop and log into Teams or Outlook.");
   }
 
   // Log which tab we're using so the user can see what's happening
@@ -404,7 +404,7 @@ async function acquireOutlookRestToken(progress: ProgressFn): Promise<string> {
   const target = outlookTarget ?? anyTarget;
 
   if (!target?.webSocketDebuggerUrl) {
-    throw new Error("No page targets found in Alfred. Open Alfred.app and log into Outlook.");
+    throw new Error("No browser tabs found. Launch Alfred from your Desktop and log into Outlook.");
   }
 
   if (!outlookTarget) {

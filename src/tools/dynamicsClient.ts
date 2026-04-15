@@ -236,6 +236,7 @@ export interface OpportunityFilter {
   minNnacv?: number;   // minimum NNACV (sn_netnewacv) in USD
   includeZeroValue?: boolean; // include $0 NNACV opps (default: excluded — too much noise)
   myOpportunitiesOnly?: boolean; // filter to current user's owned opportunities
+  myOppsFilterField?: "sc" | "owner"; // which field to filter on: "sc" = _sn_solutionconsultant_value (default), "owner" = _ownerid_value (for AEs)
   includeClosed?: boolean; // include won/lost/closed opps — default false (open only)
   ownerSearch?: string; // filter by owner (AE) name — resolves to user IDs
 }
@@ -268,7 +269,8 @@ export async function fetchOpportunities(filter: OpportunityFilter = {}, progres
   if (filter.myOpportunitiesOnly) {
     const userId = await fetchCurrentUserId(progress);
     requireGuid(userId, "currentUserId");
-    filterClause += ` and (_sn_solutionconsultant_value eq '${userId}')`;
+    const field = filter.myOppsFilterField === "owner" ? "_ownerid_value" : "_sn_solutionconsultant_value";
+    filterClause += ` and (${field} eq '${userId}')`;
   }
   if (filter.ownerSearch) {
     const users = await searchSystemUsers(filter.ownerSearch, progress);
@@ -295,10 +297,11 @@ export async function fetchOpportunities(filter: OpportunityFilter = {}, progres
   const data = await res.json();
   let results = (data.value ?? []).map(mapOpportunity);
 
-  // When filtering to "my opps", cross-reference against the collaboration team
-  // table which is the authoritative source of SC assignment. The denormalised
+  // When filtering to "my opps" by SC field, cross-reference against the collaboration
+  // team table which is the authoritative source of SC assignment. The denormalised
   // _sn_solutionconsultant_value field can be stale/incorrect.
-  if (filter.myOpportunitiesOnly && results.length > 0) {
+  // Skip for owner-based filtering (AEs) — collab team is SC-specific.
+  if (filter.myOpportunitiesOnly && filter.myOppsFilterField !== "owner" && results.length > 0) {
     progress("🔍 Validating against collaboration team...");
     const collabOpps = await fetchMyCollaborationOpportunities(progress);
     const collabIds = new Set(collabOpps.map(o => o.opportunityid));
@@ -318,6 +321,24 @@ export async function fetchOpportunities(filter: OpportunityFilter = {}, progres
 
   progress(`✅ Found ${results.length} opportunities`);
   return results;
+}
+
+/** Resolve an opportunity identifier — accepts a GUID or an OPTY number (e.g. OPTY5328326). */
+export async function resolveOpportunityId(input: string, progress: ProgressFn = () => {}): Promise<string> {
+  // Already a GUID
+  if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(input)) return input;
+  // Looks like an OPTY number — search by sn_number
+  const safe = sanitizeODataSearch(input);
+  progress(`🔍 Resolving OPTY number "${input}" to GUID...`);
+  const res = await dynamicsFetch(
+    `/opportunities?$select=opportunityid,sn_number,name&$filter=sn_number eq '${safe}'&$top=1`,
+    {}, progress,
+  );
+  const data = await res.json();
+  const match = (data.value as Record<string, unknown>[] ?? [])[0];
+  if (!match?.opportunityid) throw new Error(`No opportunity found with number "${input}". Check the OPTY number and try again.`);
+  progress(`✅ Resolved ${input} → ${match.name} (${match.opportunityid})`);
+  return match.opportunityid as string;
 }
 
 export async function fetchOpportunityById(id: string, progress: ProgressFn = () => {}): Promise<Opportunity> {

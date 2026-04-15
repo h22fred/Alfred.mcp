@@ -30,6 +30,7 @@ import {
   fetchEngagementParticipants,
   fetchMyEngagementAssignments,
   searchContacts,
+  resolveOpportunityId,
   type EngagementType,
   type OpportunityFilter,
   type EngagementDescription,
@@ -237,7 +238,7 @@ CROSS-REFERENCE: After presenting pipeline results, compare with the Data_Analyt
 // ---------------------------------------------------------------------------
 server.tool(
   "get_opportunity",
-  `Get a single opportunity by its Dynamics ID.
+  `Get a single opportunity by its Dynamics GUID or OPTY number (e.g. OPTY5328326).
 
 After fetching the opportunity, ALWAYS enrich it by calling the account_insights MCP tool with:
 "Show current subscriptions, license utilization, and renewal data for [accountName]"
@@ -250,10 +251,10 @@ Then present a combined summary:
 Example output: "SITA has CSM Pro — 600/1400 seats used (43%). This TPSM opportunity is an upsell."
 
 DISPLAY: Show both values clearly labelled — "NNACV: $X | ACV: $Y". NNACV (nnacv field) is the primary metric. ACV (totalamount) is the full contract value and should always be secondary. Never present totalamount as "deal value" without the ACV label.`,
-  { opportunity_id: z.string().describe("Dynamics opportunity GUID") },
+  { opportunity_id: z.string().describe("Dynamics opportunity GUID or OPTY number (e.g. OPTY5328326)") },
   async ({ opportunity_id }) => {
-    const id = requireGuid(opportunity_id, "opportunity_id");
     const progress = makeProgress(server);
+    const id = await resolveOpportunityId(opportunity_id, progress);
     const opp = await fetchOpportunityById(id, progress);
     const link = `${DYNAMICS_BASE_URL}/main.aspx?etn=opportunity&pagetype=entityrecord&id=${opp.opportunityid}`;
 

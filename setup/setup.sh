@@ -207,8 +207,39 @@ if pgrep -f "alfred-profile" > /dev/null 2>&1; then
   exit 0
 fi
 
+CHROME="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+if [ ! -x "\$CHROME" ]; then
+  osascript -e 'display alert "Alfred" message "Google Chrome not found. Please install Chrome first." as critical' 2>/dev/null
+  exit 1
+fi
+
 mkdir -p "\$HOME/.alfred-profile"
-open -na "Google Chrome" --args \
+
+# Pre-launch notification
+PROFILE_SIZE=\$(du -sk "\$HOME/.alfred-profile" 2>/dev/null | cut -f1)
+if [ -z "\$PROFILE_SIZE" ] || [ "\$PROFILE_SIZE" -lt 500 ]; then
+  notify "First time setup: log into Dynamics, Outlook and Teams in this window. You only do this once!"
+else
+  notify "Launching — ready for Claude!"
+fi
+
+# Open Claude after a short delay (runs in background before exec)
+(sleep 2 && open -a "Claude" 2>/dev/null) &
+
+# Background update check — runs silently, never blocks startup
+(
+  ALFRED_DIR="\$(cd "\$(dirname "\$0")/../.." && pwd)"
+  INSTALLED=\$(git -C "\$ALFRED_DIR" rev-parse --short HEAD 2>/dev/null)
+  if [ -z "\$INSTALLED" ]; then exit 0; fi
+  git -C "\$ALFRED_DIR" fetch --quiet 2>/dev/null || exit 0
+  REMOTE=\$(git -C "\$ALFRED_DIR" rev-parse --short origin/main 2>/dev/null)
+  if [ -n "\$REMOTE" ] && [ "\$INSTALLED" != "\$REMOTE" ]; then
+    osascript -e "display notification \"A new version of Alfred is available. Ask Claude: update Alfred\" with title \"Alfred Update Available 🆕\" sound name \"Ping\"" 2>/dev/null
+  fi
+) &
+
+# Become Chrome — Alfred.app's Dock icon persists on the process
+exec "\$CHROME" \
   --remote-debugging-port=9222 \
   --user-data-dir="\$HOME/.alfred-profile" \
   --no-first-run \
@@ -223,27 +254,6 @@ open -na "Google Chrome" --args \
   "$NEW_DYNAMICS_URL" \
   "https://outlook.office.com" \
   "https://teams.microsoft.com/v2/"
-
-# First run detection — profile dir will be nearly empty on first launch
-PROFILE_SIZE=\$(du -sk "\$HOME/.alfred-profile" 2>/dev/null | cut -f1)
-if [ -z "\$PROFILE_SIZE" ] || [ "\$PROFILE_SIZE" -lt 500 ]; then
-  notify "First time setup: log into Dynamics, Outlook and Teams in this window. You only do this once!"
-else
-  notify "Launched — ready for Claude!"
-fi
-open -a "Claude" 2>/dev/null || true
-
-# Background update check — runs silently, never blocks startup
-(
-  ALFRED_DIR="\$(cd "\$(dirname "\$0")/../.." && pwd)"
-  INSTALLED=\$(git -C "\$ALFRED_DIR" rev-parse --short HEAD 2>/dev/null)
-  if [ -z "\$INSTALLED" ]; then exit 0; fi
-  git -C "\$ALFRED_DIR" fetch --quiet 2>/dev/null || exit 0
-  REMOTE=\$(git -C "\$ALFRED_DIR" rev-parse --short origin/main 2>/dev/null)
-  if [ -n "\$REMOTE" ] && [ "\$INSTALLED" != "\$REMOTE" ]; then
-    osascript -e "display notification \"A new version of Alfred is available. Ask Claude: update Alfred\" with title \"Alfred Update Available 🆕\" sound name \"Ping\"" 2>/dev/null
-  fi
-) &
 SHELLEOF
 
 chmod +x "$CHROMELINK_APP/Contents/MacOS/Alfred"
@@ -262,7 +272,7 @@ cat > "$CHROMELINK_APP/Contents/Info.plist" << 'PLISTEOF'
   <key>CFBundleIconFile</key><string>alfred</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleVersion</key><string>1.0</string>
-  <key>LSUIElement</key><true/>
+  <key>NSHighResolutionCapable</key><true/>
 </dict>
 </plist>
 PLISTEOF
@@ -317,14 +327,16 @@ echo ""
 if [ "$ALFRED_VARIANT" = "sales" ]; then
   echo "▶ What is your Sales role?"
   echo ""
-  echo "   1) AE      — Account Executive (you own accounts and opportunities)"
-  echo "   2) Manager — Sales Manager (you oversee a team of AEs)"
+  echo "   1) AE                — Account Executive (you own accounts and opportunities)"
+  echo "   2) Sales Specialist  — AE CRM, AE Risk, etc. (you support AEs, no assigned pipeline)"
+  echo "   3) Manager           — Sales Manager (you oversee a team of AEs)"
   echo ""
-  printf "   Enter 1 or 2 (default: 1): "
+  printf "   Enter 1, 2 or 3 (default: 1): "
   read -r ROLE_CHOICE </dev/tty
   case "$ROLE_CHOICE" in
-    2) USER_ROLE="sales_manager"; echo "   ✅ Role set to Sales Manager — Alfred will show territory-wide pipeline" ;;
-    *) USER_ROLE="sales";         echo "   ✅ Role set to AE — Alfred will default to your own pipeline" ;;
+    2) USER_ROLE="sales_specialist"; echo "   ✅ Role set to Sales Specialist — Alfred will search all accounts by default" ;;
+    3) USER_ROLE="sales_manager";    echo "   ✅ Role set to Sales Manager — Alfred will show territory-wide pipeline" ;;
+    *) USER_ROLE="sales";            echo "   ✅ Role set to AE — Alfred will default to your own pipeline" ;;
   esac
 else
   echo "▶ What is your SC role?"
@@ -418,11 +430,11 @@ fi
 chmod 600 "$HOME/.alfred-config.json"
 
 # ------------------------------------------------------------
-# 9. Install cron jobs
+# 9. Install cron jobs (optional)
 # ------------------------------------------------------------
 echo ""
-echo "▶ Automated jobs..."
-echo ""
+printf "▶ Would you like to set up automated weekly checks (hygiene sweep, meeting review)? [y/N]: "
+read -r WANT_AUTOMATION </dev/tty
 
 # Helper: parse day name to cron weekday number (1=Mon … 5=Fri, 0=Sun)
 day_to_cron() {
@@ -447,75 +459,83 @@ parse_time() {
   T_MIN="${T_MIN:-0}"
 }
 
-# --- Hygiene sweep ---
-printf "   Install hygiene sweep (flags missing engagements on your pipeline)? [Y/n]: "
-read -r INSTALL_HYGIENE </dev/tty
-
 HYGIENE_CRON=""
 HYGIENE_SCHEDULE_DESC=""
-
-case "$INSTALL_HYGIENE" in
-  [nN]*) echo "   ⏭  Hygiene sweep skipped" ;;
-  *)
-    printf "   Run on which day?       [Monday]: "
-    read -r HYGIENE_DAY </dev/tty
-    HYGIENE_DAY="${HYGIENE_DAY:-Monday}"
-    HYGIENE_CRON_DAY=$(day_to_cron "$HYGIENE_DAY")
-    while [ -z "$HYGIENE_CRON_DAY" ]; do
-      printf "   Unknown day — try again [Monday]: "
-      read -r HYGIENE_DAY </dev/tty
-      HYGIENE_DAY="${HYGIENE_DAY:-Monday}"
-      HYGIENE_CRON_DAY=$(day_to_cron "$HYGIENE_DAY")
-    done
-
-    printf "   Run at what time? (HH:MM 24h) [09:30]: "
-    read -r HYGIENE_TIME </dev/tty
-    HYGIENE_TIME="${HYGIENE_TIME:-09:30}"
-    parse_time "$HYGIENE_TIME"
-    HYGIENE_HOUR=$T_HOUR; HYGIENE_MIN=$T_MIN
-
-    HYGIENE_SCHEDULE_DESC="$HYGIENE_DAY at $HYGIENE_TIME"
-    ROTATE_LOG="f=\$HOME/.alfred-hygiene.log; [ -f \"\$f\" ] && [ \$(wc -c < \"\$f\") -gt 1048576 ] && tail -500 \"\$f\" > \"\$f.tmp\" && mv \"\$f.tmp\" \"\$f\""
-    HYGIENE_CMD="$NODE_PATH $REPO_DIR/setup/hygiene-sweep.mjs >> $HOME/.alfred-hygiene.log 2>&1"
-    HYGIENE_CRON="$HYGIENE_MIN $HYGIENE_HOUR * * $HYGIENE_CRON_DAY $ROTATE_LOG; $HYGIENE_CMD"
-    touch "$HOME/.alfred-hygiene.log"
-    chmod 600 "$HOME/.alfred-hygiene.log"
-    ;;
-esac
-
-# --- Meeting review ---
-printf "   Install meeting review (matches this week's meetings to open opps)? [Y/n]: "
-read -r INSTALL_MEETING </dev/tty
-
 MEETING_CRON=""
 MEETING_SCHEDULE_DESC=""
 
-case "$INSTALL_MEETING" in
-  [nN]*) echo "   ⏭  Meeting review skipped" ;;
+case "$WANT_AUTOMATION" in
+  [yY]*)
+    echo ""
+
+    # --- Hygiene sweep ---
+    printf "   Install hygiene sweep (flags missing engagements on your pipeline)? [Y/n]: "
+    read -r INSTALL_HYGIENE </dev/tty
+
+    case "$INSTALL_HYGIENE" in
+      [nN]*) echo "   ⏭  Hygiene sweep skipped" ;;
+      *)
+        printf "   Run on which day?       [Monday]: "
+        read -r HYGIENE_DAY </dev/tty
+        HYGIENE_DAY="${HYGIENE_DAY:-Monday}"
+        HYGIENE_CRON_DAY=$(day_to_cron "$HYGIENE_DAY")
+        while [ -z "$HYGIENE_CRON_DAY" ]; do
+          printf "   Unknown day — try again [Monday]: "
+          read -r HYGIENE_DAY </dev/tty
+          HYGIENE_DAY="${HYGIENE_DAY:-Monday}"
+          HYGIENE_CRON_DAY=$(day_to_cron "$HYGIENE_DAY")
+        done
+
+        printf "   Run at what time? (HH:MM 24h) [09:30]: "
+        read -r HYGIENE_TIME </dev/tty
+        HYGIENE_TIME="${HYGIENE_TIME:-09:30}"
+        parse_time "$HYGIENE_TIME"
+        HYGIENE_HOUR=$T_HOUR; HYGIENE_MIN=$T_MIN
+
+        HYGIENE_SCHEDULE_DESC="$HYGIENE_DAY at $HYGIENE_TIME"
+        ROTATE_LOG="f=\$HOME/.alfred-hygiene.log; [ -f \"\$f\" ] && [ \$(wc -c < \"\$f\") -gt 1048576 ] && tail -500 \"\$f\" > \"\$f.tmp\" && mv \"\$f.tmp\" \"\$f\""
+        HYGIENE_CMD="$NODE_PATH $REPO_DIR/setup/hygiene-sweep.mjs >> $HOME/.alfred-hygiene.log 2>&1"
+        HYGIENE_CRON="$HYGIENE_MIN $HYGIENE_HOUR * * $HYGIENE_CRON_DAY $ROTATE_LOG; $HYGIENE_CMD"
+        touch "$HOME/.alfred-hygiene.log"
+        chmod 600 "$HOME/.alfred-hygiene.log"
+        ;;
+    esac
+
+    # --- Meeting review ---
+    printf "   Install meeting review (matches this week's meetings to open opps)? [Y/n]: "
+    read -r INSTALL_MEETING </dev/tty
+
+    case "$INSTALL_MEETING" in
+      [nN]*) echo "   ⏭  Meeting review skipped" ;;
+      *)
+        printf "   Run on which day?       [Friday]: "
+        read -r MEETING_DAY </dev/tty
+        MEETING_DAY="${MEETING_DAY:-Friday}"
+        MEETING_CRON_DAY=$(day_to_cron "$MEETING_DAY")
+        while [ -z "$MEETING_CRON_DAY" ]; do
+          printf "   Unknown day — try again [Friday]: "
+          read -r MEETING_DAY </dev/tty
+          MEETING_DAY="${MEETING_DAY:-Friday}"
+          MEETING_CRON_DAY=$(day_to_cron "$MEETING_DAY")
+        done
+
+        printf "   Run at what time? (HH:MM 24h) [14:00]: "
+        read -r MEETING_TIME </dev/tty
+        MEETING_TIME="${MEETING_TIME:-14:00}"
+        parse_time "$MEETING_TIME"
+        MEETING_HOUR=$T_HOUR; MEETING_MIN=$T_MIN
+
+        MEETING_SCHEDULE_DESC="$MEETING_DAY at $MEETING_TIME"
+        ROTATE_LOG2="f=\$HOME/.alfred-meetings.log; [ -f \"\$f\" ] && [ \$(wc -c < \"\$f\") -gt 1048576 ] && tail -500 \"\$f\" > \"\$f.tmp\" && mv \"\$f.tmp\" \"\$f\""
+        MEETING_CMD="$NODE_PATH $REPO_DIR/setup/post-meeting-sweep.mjs >> $HOME/.alfred-meetings.log 2>&1"
+        MEETING_CRON="$MEETING_MIN $MEETING_HOUR * * $MEETING_CRON_DAY $ROTATE_LOG2; $MEETING_CMD"
+        touch "$HOME/.alfred-meetings.log"
+        chmod 600 "$HOME/.alfred-meetings.log"
+        ;;
+    esac
+    ;;
   *)
-    printf "   Run on which day?       [Friday]: "
-    read -r MEETING_DAY </dev/tty
-    MEETING_DAY="${MEETING_DAY:-Friday}"
-    MEETING_CRON_DAY=$(day_to_cron "$MEETING_DAY")
-    while [ -z "$MEETING_CRON_DAY" ]; do
-      printf "   Unknown day — try again [Friday]: "
-      read -r MEETING_DAY </dev/tty
-      MEETING_DAY="${MEETING_DAY:-Friday}"
-      MEETING_CRON_DAY=$(day_to_cron "$MEETING_DAY")
-    done
-
-    printf "   Run at what time? (HH:MM 24h) [14:00]: "
-    read -r MEETING_TIME </dev/tty
-    MEETING_TIME="${MEETING_TIME:-14:00}"
-    parse_time "$MEETING_TIME"
-    MEETING_HOUR=$T_HOUR; MEETING_MIN=$T_MIN
-
-    MEETING_SCHEDULE_DESC="$MEETING_DAY at $MEETING_TIME"
-    ROTATE_LOG2="f=\$HOME/.alfred-meetings.log; [ -f \"\$f\" ] && [ \$(wc -c < \"\$f\") -gt 1048576 ] && tail -500 \"\$f\" > \"\$f.tmp\" && mv \"\$f.tmp\" \"\$f\""
-    MEETING_CMD="$NODE_PATH $REPO_DIR/setup/post-meeting-sweep.mjs >> $HOME/.alfred-meetings.log 2>&1"
-    MEETING_CRON="$MEETING_MIN $MEETING_HOUR * * $MEETING_CRON_DAY $ROTATE_LOG2; $MEETING_CMD"
-    touch "$HOME/.alfred-meetings.log"
-    chmod 600 "$HOME/.alfred-meetings.log"
+    echo "   ⏭  Automated checks skipped — you can set these up later by re-running setup"
     ;;
 esac
 
@@ -543,24 +563,28 @@ echo "$UPDATED_CRON" | crontab -
 # Done
 # ------------------------------------------------------------
 echo ""
-echo "=================================================="
-echo "  ✅ Setup complete!"
-echo "=================================================="
 echo ""
-echo "Next steps:"
-echo "  1. Double-click Alfred.app on your Desktop"
-echo "  2. Log into Dynamics, Outlook and Teams in that window"
+echo "╔══════════════════════════════════════════════════╗"
+echo "║         ✅  Alfred installed successfully!       ║"
+echo "╚══════════════════════════════════════════════════╝"
+echo ""
+echo "  Get started:"
+echo "  ─────────────"
+echo "  1. Double-click Alfred on your Desktop to launch the browser"
+echo "  2. Log into Dynamics, Outlook and Teams (first time only)"
 echo "  3. Restart Claude Desktop"
 echo "  4. Ask Claude anything — opportunities, calendar, hygiene sweep!"
 echo ""
 if [ -n "$HYGIENE_SCHEDULE_DESC" ] || [ -n "$MEETING_SCHEDULE_DESC" ]; then
-  echo "Automated jobs:"
+  echo "  Automated jobs:"
   [ -n "$HYGIENE_SCHEDULE_DESC" ] && echo "  • $HYGIENE_SCHEDULE_DESC — CRM hygiene sweep"
   [ -n "$MEETING_SCHEDULE_DESC"  ] && echo "  • $MEETING_SCHEDULE_DESC — Weekly meeting review"
   if [ -n "$EXISTING_WEBHOOK" ] || [ -n "$NEW_WEBHOOK" ]; then
-    echo "Results will be posted to your Teams channel."
+    echo "  Results will be posted to your Teams channel."
   else
-    echo "Run setup again to add a Teams webhook for automated notifications."
+    echo "  Tip: re-run setup to add a Teams webhook for automated notifications."
   fi
   echo ""
 fi
+echo "  Happy selling! 🚀"
+echo ""
