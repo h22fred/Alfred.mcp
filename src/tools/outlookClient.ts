@@ -627,13 +627,21 @@ async function acquireOutlookRestToken(progress: ProgressFn): Promise<string> {
           const auth = headers["Authorization"] ?? headers["authorization"] ?? "";
           if (!found && auth.startsWith("Bearer ")) {
             const candidateToken = auth.slice(7);
-            // Decode JWT audience — only accept tokens for Outlook/Mail APIs (not Graph, Delve, etc.)
+            // Decode JWT — only accept tokens with Outlook audience AND mail/calendar scopes.
+            // The notification channel token has audience outlook.office.com but only Owa.Notifications.All scope → 403 on REST API.
             const candidateAud = decodeJwtAudience(candidateToken);
             if (candidateAud.includes("outlook.office") || candidateAud.includes("outlook.cloud.microsoft") || candidateAud.includes("outlook.microsoft")) {
-              found = true;
-              clearTimeout(timer);
-              try { ws.close(); } catch {}
-              resolve({ token: candidateToken, requestUrl: reqUrl });
+              // Verify the token has mail/calendar scopes (not just notification scopes)
+              let scp = "";
+              try { scp = JSON.parse(Buffer.from(candidateToken.split(".")[1]!, "base64url").toString()).scp ?? ""; } catch {}
+              if (scp.includes("Mail") || scp.includes("Calendar")) {
+                found = true;
+                clearTimeout(timer);
+                try { ws.close(); } catch {}
+                resolve({ token: candidateToken, requestUrl: reqUrl });
+              } else {
+                process.stderr.write(`[alfred:cdp] Skipping Outlook token with limited scopes "${scp.slice(0, 40)}" from ${reqUrl.slice(0, 60)}\n`);
+              }
             } else {
               process.stderr.write(`[alfred:cdp] Skipping token with audience "${candidateAud}" (not Outlook) from ${reqUrl.slice(0, 60)}\n`);
             }
