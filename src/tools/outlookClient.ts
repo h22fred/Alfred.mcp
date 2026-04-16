@@ -447,10 +447,17 @@ async function verifyOutlookConnection(progress: ProgressFn): Promise<void> {
   }
 
   // Step 2: Is there an Outlook tab open?
-  const outlookTab = targets.find(t => t.type === "page" && t.url && isOutlookUrl(t.url));
+  // Log all targets for diagnostics — helps debug when matching fails
+  const targetSummary = targets.map(t => `${t.type ?? "?"}|${t.url?.slice(0, 80) ?? "no-url"}`).join("; ");
+  process.stderr.write(`[alfred:cdp] Targets (${targets.length}): ${targetSummary}\n`);
+
+  // Try page first, then any target type (service_worker, iframe, etc.)
+  const outlookTab = targets.find(t => t.type === "page" && t.url && isOutlookUrl(t.url))
+    ?? targets.find(t => t.url && isOutlookUrl(t.url));
   if (!outlookTab) {
     throw new Error(
       "Alfred is running but no Outlook tab was found.\n" +
+      `CDP returned ${targets.length} target(s): ${targetSummary}\n` +
       "Please open Outlook (outlook.cloud.microsoft.com) in the Alfred window and log in." +
       updateHint
     );
@@ -494,7 +501,8 @@ async function acquireOutlookRestToken(progress: ProgressFn): Promise<string> {
 
   // Detect which Outlook domain is open — sets detectedOutlookOrigin for API URL resolution
   if (!detectedOutlookOrigin) {
-    const outlookTabUrl = targets.find(t => t.type === "page" && t.url && isOutlookUrl(t.url))?.url;
+    const outlookTabUrl = (targets.find(t => t.type === "page" && t.url && isOutlookUrl(t.url))
+      ?? targets.find(t => t.url && isOutlookUrl(t.url)))?.url;
     if (outlookTabUrl) {
       try {
         detectedOutlookOrigin = new URL(outlookTabUrl).origin;
@@ -504,8 +512,11 @@ async function acquireOutlookRestToken(progress: ProgressFn): Promise<string> {
   }
 
   // Outlook REST tokens live in the Outlook tab's MSAL cache
-  const outlookTarget = targets.find(t => t.type === "page" && t.url && isOutlookUrl(t.url) && t.webSocketDebuggerUrl);
-  const anyTarget = targets.find(t => t.type === "page" && t.webSocketDebuggerUrl);
+  // Try page first, then any target type (service_worker, iframe, etc.)
+  const outlookTarget = targets.find(t => t.type === "page" && t.url && isOutlookUrl(t.url) && t.webSocketDebuggerUrl)
+    ?? targets.find(t => t.url && isOutlookUrl(t.url) && t.webSocketDebuggerUrl);
+  const anyTarget = targets.find(t => t.type === "page" && t.webSocketDebuggerUrl)
+    ?? targets.find(t => t.webSocketDebuggerUrl);
   const target = outlookTarget ?? anyTarget;
 
   if (!target?.webSocketDebuggerUrl) {
