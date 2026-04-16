@@ -1134,10 +1134,10 @@ export async function listCollaborationNotes(
   progress(`📝 Fetching collaboration notes for opportunity ${opportunityId}...`);
 
   const entity = await getCollabNoteEntity(progress);
+  // No $select — entity schema varies per instance; mapCollabNote handles field fallbacks
   const path =
     `/${entity}` +
-    `?$select=sn_collaborationnoteid,activityid,sn_notetype,sn_notes,description,createdon,modifiedon,_ownerid_value,_regardingobjectid_value` +
-    `&$filter=_regardingobjectid_value eq ${opportunityId}` +
+    `?$filter=_regardingobjectid_value eq ${opportunityId}` +
     `&$orderby=createdon desc` +
     `&$top=50`;
 
@@ -1519,7 +1519,7 @@ export async function listOpportunityContacts(
   const path =
     `/connections` +
     `?$select=connectionid,_record1id_value,_record1roleid_value` +
-    `&$filter=_record2id_value eq ${opportunityId} and _record1objecttypecode_value eq 2` +  // 2 = contact
+    `&$filter=_record2id_value eq ${opportunityId} and record1objecttypecode eq 2` +  // 2 = contact
     `&$top=50`;
 
   const res = await dynamicsFetch(path, {}, progress);
@@ -1698,7 +1698,7 @@ export interface EngagementParticipant {
 function mapParticipant(r: Record<string, unknown>): EngagementParticipant {
   return {
     id:        r.sn_engagementassigneeid as string,
-    userName:  r["_sn_assigneeid_value@OData.Community.Display.V1.FormattedValue"] as string ?? r.sn_name as string ?? "—",
+    userName:  r["_sn_assigneeid_value@OData.Community.Display.V1.FormattedValue"] as string ?? "—",
     userId:    r._sn_assigneeid_value as string,
     title:     r["a_title"] as string | undefined,
     isPrimary: r.sn_primary === true,
@@ -1712,7 +1712,7 @@ export async function fetchEngagementParticipants(
   progress(`👥 Fetching participants for engagement ${engagementId}...`);
   const path =
     `/sn_engagementassignees` +
-    `?$select=sn_engagementassigneeid,_sn_assigneeid_value,sn_primary,sn_name` +
+    `?$select=sn_engagementassigneeid,_sn_assigneeid_value,sn_primary` +
     `&$filter=_sn_engagementid_value eq ${engagementId} and statecode eq 0` +
     `&$top=50`;
 
@@ -1867,7 +1867,6 @@ export async function addAttendeesToEngagement(
           await dynamicsFetch("/sn_engagementassignees", {
             method: "POST",
             body: JSON.stringify({
-              sn_name: user.fullname,
               "sn_assigneeid@odata.bind":   `/systemusers(${user.systemuserid})`,
               "sn_engagementid@odata.bind": `/sn_engagements(${engagementId})`,
             }),
@@ -2034,7 +2033,7 @@ export async function listClosingPlan(
       const path =
         `/${entity}` +
         `?$filter=${encodeURIComponent(filter + stateFilter)}` +
-        `&$orderby=sn_duedate asc,createdon asc` +
+        `&$orderby=createdon asc` +
         `&$top=100`;
 
       const res = await dynamicsFetch(path, {}, progress);
