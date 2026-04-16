@@ -6,9 +6,9 @@ import { stripHtml, urlHostMatches } from "../shared.js";
 
 const CDP_PORT = 9222;
 
-/** Match both legacy and new Outlook domains */
+/** Match all known Outlook domains (legacy + new). */
 function isOutlookUrl(url: string): boolean {
-  return urlHostMatches(url, "outlook.office.com") || urlHostMatches(url, "outlook.cloud.microsoft.com");
+  return urlHostMatches(url, "outlook.office.com") || urlHostMatches(url, "outlook.cloud.microsoft.com") || urlHostMatches(url, "outlook.office365.com");
 }
 const TOKEN_CACHE_FALLBACK_MS = 45 * 60 * 1000; // fallback when MSAL doesn't report expiry
 const TOKEN_REFRESH_MARGIN_MS = 5 * 60 * 1000;  // refresh 5 min before expiry
