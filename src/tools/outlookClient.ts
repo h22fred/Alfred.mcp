@@ -1,3 +1,6 @@
+import { execFileSync } from "child_process";
+import { dirname, join } from "path";
+import { fileURLToPath } from "url";
 import { connectWithRetry } from "../auth/tokenExtractor.js";
 import type { ProgressFn } from "../auth/tokenExtractor.js";
 import { loadCachedAuth, saveCachedAuth, clearCachedAuthFile } from "../auth/authFileCache.js";
@@ -12,6 +15,22 @@ const OUTLOOK_DOMAINS = ["outlook.cloud.microsoft.com", "outlook.office.com", "o
 /** Match any known Outlook domain (legacy + new). */
 function isOutlookUrl(url: string): boolean {
   return OUTLOOK_DOMAINS.some(d => urlHostMatches(url, d));
+}
+
+/** Quick check if an Alfred update is available — returns hint string or empty. */
+function checkForAlfredUpdate(): string {
+  try {
+    const __fn = fileURLToPath(import.meta.url);
+    const installDir = join(dirname(__fn), "..", "..");
+    const localSha = execFileSync("git", ["-C", installDir, "rev-parse", "--short", "HEAD"], { encoding: "utf8", timeout: 5_000 }).trim();
+    // Use already-fetched remote ref (git fetch runs at startup) — don't block on network here
+    const remoteSha = execFileSync("git", ["-C", installDir, "rev-parse", "--short", "origin/main"], { encoding: "utf8", timeout: 3_000 }).trim();
+    if (localSha !== remoteSha) {
+      const behind = execFileSync("git", ["-C", installDir, "rev-list", "--count", `${localSha}..origin/main`], { encoding: "utf8", timeout: 3_000 }).trim();
+      return `\n\n💡 An Alfred update is available (${behind} commit(s) behind). Ask Claude to run "update_alfred" — this may fix the issue.`;
+    }
+  } catch { /* git not available or not a git repo */ }
+  return "";
 }
 
 /**
@@ -238,7 +257,8 @@ async function acquireGraphTokenRawCDP(progress: ProgressFn): Promise<string> {
       process.stderr.write("[alfred] CDP: Graph token capture timed out from Outlook tab\n");
       reject(new Error(
         "Could not capture Graph token from Outlook.\n" +
-        "Make sure you are logged into Outlook in the Alfred window."
+        "Make sure you are logged into Outlook in the Alfred window." +
+        checkForAlfredUpdate()
       ));
     }, 10_000);
 
@@ -342,7 +362,7 @@ async function acquireGraphToken(progress: ProgressFn): Promise<string> {
       // Only close pages we created
       if (isNewPage) await page.close();
 
-      if (!capturedToken) throw new Error("Could not capture Graph token from Outlook.\nMake sure you are logged into Outlook in the Alfred window.");
+      if (!capturedToken) throw new Error("Could not capture Graph token from Outlook.\nMake sure you are logged into Outlook in the Alfred window." + checkForAlfredUpdate());
       const expiresAt = Date.now() + TOKEN_CACHE_FALLBACK_MS;
       tokenCache = { token: capturedToken, expiresAt };
       saveCachedAuth("graphToken", capturedToken, expiresAt);
@@ -568,9 +588,11 @@ async function acquireOutlookRestToken(progress: ProgressFn): Promise<string> {
     return capturedResult.token;
   }
 
+  const updateHint = checkForAlfredUpdate();
   throw new Error(
     "Could not capture Outlook token.\n" +
-    "Make sure Outlook is fully loaded (inbox visible) in the Alfred window, then retry."
+    "Make sure Outlook is fully loaded (inbox visible) in the Alfred window, then retry." +
+    updateHint
   );
 }
 
@@ -622,9 +644,11 @@ async function outlookApiFetch(path: string, token: string, progress?: ProgressF
       outlookRestTokenCache = null;
       clearCachedAuthFile("outlookRestToken");
       if (retry.status === 401) {
+        const updateHint = checkForAlfredUpdate();
         throw new Error(
           "Outlook session has expired — re-acquired token was also rejected (401).\n" +
-          "Please go to the Alfred window and log back into Outlook (make sure the inbox loads fully), then retry."
+          "Please go to the Alfred window and log back into Outlook (make sure the inbox loads fully), then retry." +
+          updateHint
         );
       }
       const body = await retry.text().catch(() => "");
