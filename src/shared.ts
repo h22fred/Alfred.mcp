@@ -188,7 +188,7 @@ exec "\$CHROME" \\
   --disable-domain-reliability \\
   --disable-client-side-phishing-detection \\
   "${dynamicsUrl}" \\
-  "https://outlook.cloud.microsoft.com" \\
+  "https://outlook.cloud.microsoft" \\
   "https://teams.microsoft.com/v2/"
 `;
 

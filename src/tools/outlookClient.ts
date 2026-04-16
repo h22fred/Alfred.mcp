@@ -10,7 +10,7 @@ import { sanitizeODataSearch } from "./dynamicsClient.js";
 const CDP_PORT = 9222;
 
 /** All known Outlook web domains — new ones can be added here. */
-const OUTLOOK_DOMAINS = ["outlook.cloud.microsoft.com", "outlook.office.com", "outlook.office365.com", "outlook.live.com"] as const;
+const OUTLOOK_DOMAINS = ["outlook.cloud.microsoft", "outlook.cloud.microsoft.com", "outlook.office.com", "outlook.office365.com", "outlook.live.com"] as const;
 
 /** Match any known Outlook domain (legacy + new). */
 function isOutlookUrl(url: string): boolean {
@@ -602,33 +602,41 @@ async function acquireOutlookRestToken(progress: ProgressFn): Promise<string> {
       try {
         const msg = JSON.parse(event.data as string) as { id?: number; method?: string; params?: Record<string, unknown> };
         if (msg.id === 1) {
-          // Network enabled — trigger API calls against all known Outlook API domains.
-          // New Outlook (outlook.cloud.microsoft.com) routes API through outlook.office365.com.
-          const now = new Date().toISOString();
-          const tomorrow = new Date(Date.now()+86400000).toISOString();
-          send("Runtime.evaluate", {
-            expression: [
-              `fetch('https://graph.microsoft.com/v1.0/me/messages?$top=1', { credentials: 'include' }).catch(()=>{})`,
-              `fetch('https://outlook.office365.com/api/v2.0/me/messages?$top=1', { credentials: 'include' }).catch(()=>{})`,
-              `fetch('https://outlook.microsoft.com/api/v2.0/me/messages?$top=1', { credentials: 'include' }).catch(()=>{})`,
-              `fetch('https://outlook.cloud.microsoft.com/api/v2.0/me/messages?$top=1', { credentials: 'include' }).catch(()=>{})`,
-              `fetch('https://outlook.office.com/api/v2.0/me/messages?$top=1', { credentials: 'include' }).catch(()=>{})`,
-              `fetch('/api/v2.0/me/calendarview?$top=1&$select=Id&startDateTime=${now}&endDateTime=${tomorrow}', { credentials: 'include' }).catch(()=>{})`,
-            ].join(';'),
-            awaitPromise: false,
-          });
-          // Backup: if no token captured in 3s, reload page
-          setTimeout(() => { if (!found) send("Page.reload"); }, 3_000);
+          // Network enabled — reload the page (ignoring cache) to trigger fresh authenticated requests.
+          // This forces OWA to re-acquire tokens and call startupdata.ashx with a full-scope Bearer token.
+          send("Page.reload", { ignoreCache: true });
+          // Backup: if reload doesn't generate captures in 3s, try explicit fetches
+          setTimeout(() => {
+            if (!found) {
+              const now = new Date().toISOString();
+              const tomorrow = new Date(Date.now()+86400000).toISOString();
+              send("Runtime.evaluate", {
+                expression: [
+                  `fetch('/owa/service.svc?action=GetFolder', {method:'POST', credentials:'include', headers:{'Content-Type':'application/json'}}).catch(()=>{})`,
+                  `fetch('/api/v2.0/me/calendarview?$top=1&$select=Id&startDateTime=${now}&endDateTime=${tomorrow}', { credentials: 'include' }).catch(()=>{})`,
+                  `fetch('https://graph.microsoft.com/v1.0/me/messages?$top=1', { credentials: 'include' }).catch(()=>{})`,
+                ].join(';'),
+                awaitPromise: false,
+              });
+            }
+          }, 3_000);
         }
         if (msg.method === "Network.requestWillBeSent") {
           const reqUrl = ((msg.params?.request as Record<string, unknown>)?.url ?? "") as string;
           const headers = ((msg.params?.request as Record<string, unknown>)?.headers ?? {}) as Record<string, string>;
           const auth = headers["Authorization"] ?? headers["authorization"] ?? "";
           if (!found && auth.startsWith("Bearer ")) {
-            found = true;
-            clearTimeout(timer);
-            try { ws.close(); } catch {}
-            resolve({ token: auth.slice(7), requestUrl: reqUrl });
+            const candidateToken = auth.slice(7);
+            // Decode JWT audience — only accept tokens for Outlook/Mail APIs (not Graph, Delve, etc.)
+            const candidateAud = decodeJwtAudience(candidateToken);
+            if (candidateAud.includes("outlook.office") || candidateAud.includes("outlook.cloud.microsoft") || candidateAud.includes("outlook.microsoft")) {
+              found = true;
+              clearTimeout(timer);
+              try { ws.close(); } catch {}
+              resolve({ token: candidateToken, requestUrl: reqUrl });
+            } else {
+              process.stderr.write(`[alfred:cdp] Skipping token with audience "${candidateAud}" (not Outlook) from ${reqUrl.slice(0, 60)}\n`);
+            }
           }
         }
       } catch (e) { process.stderr.write(`[alfred:warn] CDP network interception error: ${e instanceof Error ? e.message : String(e)}\n`); }
@@ -644,9 +652,8 @@ async function acquireOutlookRestToken(progress: ProgressFn): Promise<string> {
 
   if (capturedResult) {
     const expiresAt = Date.now() + TOKEN_CACHE_FALLBACK_MS;
-    // Derive audience from the URL the token was sent to
-    let capturedAud = "";
-    try { capturedAud = new URL(capturedResult.requestUrl).origin.toLowerCase(); } catch {}
+    // Derive audience from the JWT itself (more reliable than request URL)
+    const capturedAud = decodeJwtAudience(capturedResult.token) || (() => { try { return new URL(capturedResult.requestUrl).origin.toLowerCase(); } catch { return ""; } })();
     outlookRestTokenCache = { token: capturedResult.token, expiresAt, aud: capturedAud };
     saveCachedAuth("outlookRestToken", capturedResult.token, expiresAt);
     progress(`✅ Outlook REST token captured via network interception (${capturedAud || "unknown origin"})`);
