@@ -387,9 +387,10 @@ const OUTLOOK_REST_MSAL_JS = `(function() {
       return (payload.aud || '').toLowerCase();
     } catch { return ''; }
   };
-  const isOutlookAud = (aud) =>
+  const isMailAud = (aud) =>
     aud.includes('outlook.office') || aud.includes('outlook.cloud.microsoft') ||
-    aud.includes('outlook.microsoft') || aud.includes('substrate.office');
+    aud.includes('outlook.microsoft') || aud.includes('substrate.office') ||
+    aud.includes('graph.microsoft.com');
   const isJwt = (s) => typeof s === 'string' && s.length > 100 && s.split('.').length === 3;
   const tryStorage = (s) => {
     try {
@@ -403,7 +404,7 @@ const OUTLOOK_REST_MSAL_JS = `(function() {
           const credType = (val.credentialType || val.credential_type || '').toLowerCase();
           if (credType.includes('accesstoken') && secret && isJwt(secret)) {
             const aud = decodeAud(secret);
-            if (!isOutlookAud(aud)) continue;
+            if (!isMailAud(aud)) continue;
             const exp = Number(val.expiresOn || val.expires_on || val.extended_expires_on || 0);
             if (exp && exp * 1000 < Date.now()) continue;
             return { token: secret, expiresAt: exp ? exp * 1000 : 0, aud };
@@ -415,6 +416,58 @@ const OUTLOOK_REST_MSAL_JS = `(function() {
   };
   return tryStorage(sessionStorage) || tryStorage(localStorage);
 })()`;
+
+// ---------------------------------------------------------------------------
+// Pre-flight connection check — called before every Outlook tool operation
+// ---------------------------------------------------------------------------
+
+/**
+ * Verify that the Alfred browser is running and an Outlook tab is active.
+ * Throws a clear, actionable error if the connection is not healthy.
+ */
+async function verifyOutlookConnection(progress: ProgressFn): Promise<void> {
+  // Skip check if we have a valid cached token (connection was recently verified)
+  if (outlookRestTokenCache && Date.now() < outlookRestTokenCache.expiresAt - TOKEN_REFRESH_MARGIN_MS) {
+    return;
+  }
+
+  const updateHint = checkForAlfredUpdate();
+
+  // Step 1: Can we reach the Alfred browser (CDP)?
+  let targets: Array<{ type?: string; url?: string; webSocketDebuggerUrl?: string }>;
+  try {
+    const res = await fetch(`http://localhost:${CDP_PORT}/json/list`, { signal: AbortSignal.timeout(3_000) });
+    targets = await res.json() as typeof targets;
+  } catch {
+    throw new Error(
+      "Cannot connect to Alfred — the Alfred browser window is not running or CDP is not reachable.\n" +
+      "Please launch Alfred from your Desktop and make sure it's running." +
+      updateHint
+    );
+  }
+
+  // Step 2: Is there an Outlook tab open?
+  const outlookTab = targets.find(t => t.type === "page" && t.url && isOutlookUrl(t.url));
+  if (!outlookTab) {
+    throw new Error(
+      "Alfred is running but no Outlook tab was found.\n" +
+      "Please open Outlook (outlook.cloud.microsoft.com) in the Alfred window and log in." +
+      updateHint
+    );
+  }
+
+  // Step 3: Is the Outlook tab stuck on a login page?
+  const tabUrl = outlookTab.url ?? "";
+  if (tabUrl.includes("login.microsoftonline.com") || tabUrl.includes("login.live.com") || tabUrl.includes("/oauth2/")) {
+    throw new Error(
+      "Outlook session has expired — the Alfred browser is on the Microsoft login page.\n" +
+      "Please log back into Outlook in the Alfred window (make sure the inbox loads fully), then retry." +
+      updateHint
+    );
+  }
+
+  progress("✅ Alfred connection verified — Outlook tab is active");
+}
 
 async function acquireOutlookRestToken(progress: ProgressFn): Promise<string> {
   // Check in-memory cache (fast path — no CDP call needed)
@@ -544,6 +597,7 @@ async function acquireOutlookRestToken(progress: ProgressFn): Promise<string> {
           const tomorrow = new Date(Date.now()+86400000).toISOString();
           send("Runtime.evaluate", {
             expression: [
+              `fetch('https://graph.microsoft.com/v1.0/me/messages?$top=1', { credentials: 'include' }).catch(()=>{})`,
               `fetch('https://outlook.office365.com/api/v2.0/me/messages?$top=1', { credentials: 'include' }).catch(()=>{})`,
               `fetch('https://outlook.microsoft.com/api/v2.0/me/messages?$top=1', { credentials: 'include' }).catch(()=>{})`,
               `fetch('https://outlook.cloud.microsoft.com/api/v2.0/me/messages?$top=1', { credentials: 'include' }).catch(()=>{})`,
@@ -596,20 +650,21 @@ async function acquireOutlookRestToken(progress: ProgressFn): Promise<string> {
   );
 }
 
-// Resolve the correct Outlook REST API base URL.
-// Priority: token audience → detected browser origin → fallback.
-// New Outlook (outlook.cloud.microsoft.com) issues tokens for outlook.office365.com.
+// Resolve the correct mail API base URL based on token audience.
+// New Outlook uses Graph API (graph.microsoft.com), old uses REST v2.0 (outlook.office.com).
 function getOutlookApiBase(): string {
   const aud = outlookRestTokenCache?.aud ?? "";
-  // If we know the token audience, use that directly
+  // Graph API token — new Outlook uses this
+  if (aud.includes("graph.microsoft.com")) return "https://graph.microsoft.com/v1.0/me";
+  // Outlook REST API variants
   if (aud.includes("outlook.office365")) return "https://outlook.office365.com/api/v2.0/me";
   if (aud.includes("outlook.cloud.microsoft")) return "https://outlook.cloud.microsoft.com/api/v2.0/me";
   if (aud.includes("outlook.microsoft")) return "https://outlook.microsoft.com/api/v2.0/me";
   if (aud.includes("outlook.office.com")) return "https://outlook.office.com/api/v2.0/me";
   // If we detected the browser origin, use that
   if (detectedOutlookOrigin) return `${detectedOutlookOrigin}/api/v2.0/me`;
-  // Fallback — new Outlook is the default now
-  return "https://outlook.cloud.microsoft.com/api/v2.0/me";
+  // Fallback — try Graph API first (new Outlook default)
+  return "https://graph.microsoft.com/v1.0/me";
 }
 
 // ---------------------------------------------------------------------------
@@ -691,23 +746,24 @@ export async function getCalendarEvents(
   progress: ProgressFn = () => {},
   top: number = 100,
 ): Promise<CalendarEvent[]> {
+  await verifyOutlookConnection(progress);
   progress(`📅 Fetching calendar events ${startDate} → ${endDate}${search ? ` (filter: "${search}")` : ""}...`);
 
   // NOTE: /calendarview does NOT support $search — we filter client-side below.
-  // Use Outlook REST API — same proven token path as emails.
-  // Outlook REST v2.0 uses PascalCase field names.
+  // Use same proven token path as emails — routes to Graph API or Outlook REST depending on token audience.
+  // Use camelCase field names — works with both Graph API (canonical) and Outlook REST (case-insensitive).
   const params = new URLSearchParams({
     startDateTime: `${startDate}T00:00:00Z`,
     endDateTime:   `${endDate}T23:59:59Z`,
-    $select: "Subject,Start,End,Location,Organizer,Attendees,IsOnlineMeeting,WebLink",
+    $select: "subject,start,end,location,organizer,attendees,isOnlineMeeting,webLink",
     $top: String(top),
-    $orderby: "Start/DateTime",
+    $orderby: "start/dateTime",
   });
 
   if (search) {
     try {
       const safe = sanitizeODataSearch(search);
-      params.set("$filter", `contains(Subject,'${safe}')`);
+      params.set("$filter", `contains(subject,'${safe}')`);
     } catch (e) {
       process.stderr.write(`[alfred:warn] OData search sanitize failed, using client-side filter: ${e instanceof Error ? e.message : String(e)}\n`);
     }
@@ -808,6 +864,7 @@ export async function getEmails(opts: {
   fullBody?: boolean;
 }, progress: ProgressFn = () => {}): Promise<EmailMessage[]> {
   const { search, folder: rawFolder, top = 25, unreadOnly, fullBody } = opts;
+  await verifyOutlookConnection(progress);
   progress("📧 Fetching emails...");
 
   // When searching with no folder specified, search ALL mail (not just inbox).
@@ -817,9 +874,10 @@ export async function getEmails(opts: {
     ? await resolveMailFolder(rawFolder, progress)
     : null;
 
+  // Use camelCase — works with both Graph API and Outlook REST (case-insensitive)
   const selectFields = fullBody
-    ? "Id,Subject,From,ReceivedDateTime,BodyPreview,IsRead,HasAttachments,Body"
-    : "Id,Subject,From,ReceivedDateTime,BodyPreview,IsRead,HasAttachments";
+    ? "id,subject,from,receivedDateTime,bodyPreview,isRead,hasAttachments,body"
+    : "id,subject,from,receivedDateTime,bodyPreview,isRead,hasAttachments";
 
   // Build folder path prefix: empty string = all mail, "/mailfolders/{id}" = specific folder
   // Outlook REST folder IDs are API-generated (base64-like) — do NOT encodeURIComponent
@@ -839,11 +897,11 @@ export async function getEmails(opts: {
     // Browsing without search — default to inbox if no folder specified
     const browsePrefix = folderPrefix || "/mailfolders/inbox";
     const filters: string[] = [];
-    if (unreadOnly) filters.push("IsRead eq false");
+    if (unreadOnly) filters.push("isRead eq false");
     const p = new URLSearchParams({
       $select: selectFields,
       $top: String(top),
-      $orderby: "ReceivedDateTime desc",
+      $orderby: "receivedDateTime desc",
       ...(filters.length ? { $filter: filters.join(" and ") } : {}),
     });
     path = `${browsePrefix}/messages?${p}`;
@@ -851,24 +909,32 @@ export async function getEmails(opts: {
 
   const token = await acquireOutlookRestToken(progress);
   const data = await outlookApiFetch(path, token, progress);
+  // Handle both PascalCase (Outlook REST) and camelCase (Graph API) response fields
   const messages = (data.value as Record<string, unknown>[] ?? []).map(m => {
-    const fromEA = (m.From as { EmailAddress: { Name: string; Address: string } })?.EmailAddress;
-    const bodyContent = (m.Body as { Content?: string; ContentType?: string } | undefined);
-    const bodyText = bodyContent?.Content
-      ? (bodyContent.ContentType === "html" || bodyContent.ContentType === "HTML"
-          ? stripHtml(bodyContent.Content)
-          : bodyContent.Content)
+    // From field: REST = { EmailAddress: { Name, Address } }, Graph = { emailAddress: { name, address } }
+    const fromRaw = (m.From ?? m.from) as { EmailAddress?: { Name: string; Address: string }; emailAddress?: { name: string; address: string } } | undefined;
+    const fromEA = fromRaw?.EmailAddress
+      ? { name: fromRaw.EmailAddress.Name, address: fromRaw.EmailAddress.Address }
+      : fromRaw?.emailAddress
+      ? { name: fromRaw.emailAddress.name, address: fromRaw.emailAddress.address }
+      : undefined;
+    // Body: REST = { Content, ContentType }, Graph = { content, contentType }
+    const bodyRaw = (m.Body ?? m.body) as { Content?: string; ContentType?: string; content?: string; contentType?: string } | undefined;
+    const bodyHtml = bodyRaw?.Content ?? bodyRaw?.content;
+    const bodyType = (bodyRaw?.ContentType ?? bodyRaw?.contentType ?? "").toLowerCase();
+    const bodyText = bodyHtml
+      ? (bodyType === "html" ? stripHtml(bodyHtml) : bodyHtml)
       : undefined;
     return {
-      id:               m.Id as string,
-      subject:          m.Subject as string,
-      from:             fromEA?.Name || "",
-      fromAddress:      fromEA?.Address || "",
-      receivedDateTime: m.ReceivedDateTime as string,
-      bodyPreview:      m.BodyPreview as string,
+      id:               ((m.Id ?? m.id) as string) || "",
+      subject:          ((m.Subject ?? m.subject) as string) || "",
+      from:             fromEA?.name || "",
+      fromAddress:      fromEA?.address || "",
+      receivedDateTime: ((m.ReceivedDateTime ?? m.receivedDateTime) as string) || "",
+      bodyPreview:      ((m.BodyPreview ?? m.bodyPreview) as string) || "",
       ...(bodyText !== undefined ? { body: bodyText } : {}),
-      isRead:           m.IsRead as boolean,
-      hasAttachments:   m.HasAttachments as boolean,
+      isRead:           ((m.IsRead ?? m.isRead) as boolean) ?? false,
+      hasAttachments:   ((m.HasAttachments ?? m.hasAttachments) as boolean) ?? false,
     };
   });
 
@@ -890,9 +956,10 @@ export interface MailFolder {
 }
 
 export async function listMailFolders(progress: ProgressFn = () => {}): Promise<MailFolder[]> {
+  await verifyOutlookConnection(progress);
   progress("📁 Fetching mail folders...");
   const token = await acquireOutlookRestToken(progress);
-  const SELECT = "$select=Id,DisplayName,ParentFolderId,ChildFolderCount,TotalItemCount,UnreadItemCount&$top=100";
+  const SELECT = "$select=id,displayName,parentFolderId,childFolderCount,totalItemCount,unreadItemCount&$top=100";
   const data = await outlookApiFetch(`/mailfolders?${SELECT}`, token, progress);
 
   const mapFolder = (f: Record<string, unknown>): MailFolder => ({
