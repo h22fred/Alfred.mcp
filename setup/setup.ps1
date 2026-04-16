@@ -294,7 +294,7 @@ start "" "%CHROME_EXE%" ^
     --disable-sync ^
     --disable-default-apps ^
     "$NewDynamicsUrl" ^
-    "https://outlook.cloud.microsoft.com" ^
+    "https://outlook.cloud.microsoft" ^
     "https://teams.microsoft.com/v2/"
 
 :: Background update check
