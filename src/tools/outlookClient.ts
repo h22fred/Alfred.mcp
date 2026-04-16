@@ -568,6 +568,15 @@ async function outlookApiFetch(path: string, token: string, progress?: ProgressF
       signal: AbortSignal.timeout(30_000),
     });
     if (!retry.ok) {
+      // Clear caches again so next call starts fresh
+      outlookRestTokenCache = null;
+      clearCachedAuthFile("outlookRestToken");
+      if (retry.status === 401) {
+        throw new Error(
+          "Outlook session has expired — re-acquired token was also rejected (401).\n" +
+          "Please go to the Alfred window and log back into Outlook (make sure the inbox loads fully), then retry."
+        );
+      }
       const body = await retry.text().catch(() => "");
       throw new Error(`Outlook API ${retry.status} ${retry.statusText}${body ? `: ${body.slice(0, 200)}` : ""}`);
     }
@@ -632,26 +641,19 @@ export async function getCalendarEvents(
 
   const token = await acquireOutlookRestToken(progress);
 
-  let res = await fetch(`${OUTLOOK_API}/calendarview?${params}`, {
-    headers: { Authorization: `Bearer ${token}`, Accept: "application/json" },
-    signal: AbortSignal.timeout(30_000),
-  });
-
-  // If $filter is not supported, retry without it
-  if (!res.ok && search && params.has("$filter")) {
-    progress("⚠️ Server-side filter not supported on calendarView — falling back to client-side filter...");
-    params.delete("$filter");
-    res = await fetch(`${OUTLOOK_API}/calendarview?${params}`, {
-      headers: { Authorization: `Bearer ${token}`, Accept: "application/json" },
-      signal: AbortSignal.timeout(30_000),
-    });
+  let data: { value?: Record<string, unknown>[] };
+  try {
+    data = await outlookApiFetch(`/calendarview?${params}`, token, progress) as { value?: Record<string, unknown>[] };
+  } catch (e) {
+    // If $filter is not supported (400), retry without it
+    if (search && params.has("$filter") && e instanceof Error && (e.message.includes("400") || e.message.includes("UnsupportedQuery"))) {
+      progress("⚠️ Server-side filter not supported on calendarView — falling back to client-side filter...");
+      params.delete("$filter");
+      data = await outlookApiFetch(`/calendarview?${params}`, token, progress) as { value?: Record<string, unknown>[] };
+    } else {
+      throw e;
+    }
   }
-
-  if (!res.ok) {
-    const body = await res.text().catch(() => "");
-    throw new Error(`Calendar API ${res.status} ${res.statusText}${body ? `: ${body.slice(0, 200)}` : ""}`);
-  }
-  const data = await res.json() as { value?: Record<string, unknown>[] };
 
   // Handle both PascalCase (Outlook REST) and camelCase (Graph) response fields
   let events = (data.value ?? []).map(e => {
