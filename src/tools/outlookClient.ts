@@ -11,12 +11,21 @@ const OUTLOOK_ORIGIN = "https://outlook.office.com";
 function isOutlookUrl(url: string): boolean {
   return urlHostMatches(url, "outlook.office.com") || urlHostMatches(url, "outlook.cloud.microsoft.com");
 }
+/** Decode the audience (aud) claim from a JWT without verifying signature. */
+function decodeJwtAudience(jwt: string): string {
+  try {
+    const payload = JSON.parse(Buffer.from(jwt.split(".")[1]!, "base64url").toString());
+    return (typeof payload.aud === "string" ? payload.aud : "").toLowerCase();
+  } catch { return ""; }
+}
+
 const TOKEN_CACHE_FALLBACK_MS = 45 * 60 * 1000; // 45 min — fallback when MSAL doesn't report expiry
 const TOKEN_REFRESH_MARGIN_MS = 5 * 60 * 1000;  // refresh 5 min before expiry
 
 interface TokenCache {
   token: string;
   expiresAt: number;
+  aud?: string;  // JWT audience — determines which API endpoint to use
 }
 let tokenCache: TokenCache | null = null;
 let outlookRestTokenCache: TokenCache | null = null;
@@ -350,6 +359,9 @@ const OUTLOOK_REST_MSAL_JS = `(function() {
       return (payload.aud || '').toLowerCase();
     } catch { return ''; }
   };
+  const isOutlookAud = (aud) =>
+    aud.includes('outlook.office') || aud.includes('outlook.cloud.microsoft') ||
+    aud.includes('outlook.microsoft') || aud.includes('substrate.office');
   const isJwt = (s) => typeof s === 'string' && s.length > 100 && s.split('.').length === 3;
   const tryStorage = (s) => {
     try {
@@ -363,10 +375,10 @@ const OUTLOOK_REST_MSAL_JS = `(function() {
           const credType = (val.credentialType || val.credential_type || '').toLowerCase();
           if (credType.includes('accesstoken') && secret && isJwt(secret)) {
             const aud = decodeAud(secret);
-            if (!aud.includes('outlook.office')) continue;
+            if (!isOutlookAud(aud)) continue;
             const exp = Number(val.expiresOn || val.expires_on || val.extended_expires_on || 0);
             if (exp && exp * 1000 < Date.now()) continue;
-            return { token: secret, expiresAt: exp ? exp * 1000 : 0 };
+            return { token: secret, expiresAt: exp ? exp * 1000 : 0, aud };
           }
         } catch {}
       }
@@ -387,7 +399,8 @@ async function acquireOutlookRestToken(progress: ProgressFn): Promise<string> {
   // Check file cache
   const fileCached = loadCachedAuth("outlookRestToken");
   if (fileCached && Date.now() < fileCached.expiresAt - TOKEN_REFRESH_MARGIN_MS) {
-    outlookRestTokenCache = { token: fileCached.value, expiresAt: fileCached.expiresAt };
+    const aud = decodeJwtAudience(fileCached.value);
+    outlookRestTokenCache = { token: fileCached.value, expiresAt: fileCached.expiresAt, aud };
     const mins = Math.round((fileCached.expiresAt - Date.now()) / 60_000);
     progress(`🔑 Using cached Outlook REST token (~${mins} min remaining)`);
     return fileCached.value;
@@ -423,7 +436,7 @@ async function acquireOutlookRestToken(progress: ProgressFn): Promise<string> {
   }
 
   // Extract Outlook REST token from MSAL cache
-  const msalResult = await new Promise<{ token: string; expiresAt: number } | null>((resolve) => {
+  const msalResult = await new Promise<{ token: string; expiresAt: number; aud?: string } | null>((resolve) => {
     const ws = new WebSocket(target.webSocketDebuggerUrl!);
     const timer = setTimeout(() => {
       process.stderr.write("[alfred:warn] Outlook REST MSAL extraction timed out (5s)\n");
@@ -438,7 +451,7 @@ async function acquireOutlookRestToken(progress: ProgressFn): Promise<string> {
       clearTimeout(timer);
       try { ws.close(); } catch {}
       try {
-        const msg = JSON.parse(event.data as string) as { result?: { result?: { value?: { token: string; expiresAt: number } | null } } };
+        const msg = JSON.parse(event.data as string) as { result?: { result?: { value?: { token: string; expiresAt: number; aud?: string } | null } } };
         resolve(msg.result?.result?.value ?? null);
       } catch (e) {
         process.stderr.write(`[alfred:warn] Outlook REST MSAL parse error: ${e instanceof Error ? e.message : String(e)}\n`);
@@ -455,10 +468,10 @@ async function acquireOutlookRestToken(progress: ProgressFn): Promise<string> {
 
   if (msalResult) {
     const expiresAt = msalResult.expiresAt > 0 ? msalResult.expiresAt : Date.now() + TOKEN_CACHE_FALLBACK_MS;
-    outlookRestTokenCache = { token: msalResult.token, expiresAt };
+    outlookRestTokenCache = { token: msalResult.token, expiresAt, aud: msalResult.aud };
     saveCachedAuth("outlookRestToken", msalResult.token, expiresAt);
     const mins = Math.round((expiresAt - Date.now()) / 60_000);
-    progress(`✅ Outlook REST token acquired from MSAL cache (~${mins} min valid)`);
+    progress(`✅ Outlook REST token acquired from MSAL cache (~${mins} min valid, audience: ${msalResult.aud ?? "unknown"})`);
     return msalResult.token;
   }
 
@@ -466,9 +479,9 @@ async function acquireOutlookRestToken(progress: ProgressFn): Promise<string> {
   // Fallback: capture Bearer token from the Outlook tab's own API requests.
   progress("🔑 MSAL cache unreadable — capturing token via network interception...");
 
-  const capturedToken = await new Promise<string | null>((resolve) => {
+  const capturedResult = await new Promise<{ token: string; requestUrl: string } | null>((resolve) => {
     const ws = new WebSocket(target.webSocketDebuggerUrl!);
-    let found: string | null = null;
+    let found = false;
 
     const timer = setTimeout(() => {
       process.stderr.write("[alfred:warn] Outlook REST network interception timed out (10s)\n");
@@ -487,11 +500,12 @@ async function acquireOutlookRestToken(progress: ProgressFn): Promise<string> {
         const msg = JSON.parse(event.data as string) as { id?: number; method?: string; params?: Record<string, unknown> };
         if (msg.id === 1) {
           // Network enabled — trigger API calls against all known Outlook API domains.
-          // The page is on outlook.cloud.microsoft.com but API goes to outlook.microsoft.com.
+          // New Outlook (outlook.cloud.microsoft.com) routes API through outlook.office365.com.
           const now = new Date().toISOString();
           const tomorrow = new Date(Date.now()+86400000).toISOString();
           send("Runtime.evaluate", {
             expression: [
+              `fetch('https://outlook.office365.com/api/v2.0/me/messages?$top=1', { credentials: 'include' }).catch(()=>{})`,
               `fetch('https://outlook.microsoft.com/api/v2.0/me/messages?$top=1', { credentials: 'include' }).catch(()=>{})`,
               `fetch('https://outlook.cloud.microsoft.com/api/v2.0/me/messages?$top=1', { credentials: 'include' }).catch(()=>{})`,
               `fetch('https://outlook.office.com/api/v2.0/me/messages?$top=1', { credentials: 'include' }).catch(()=>{})`,
@@ -503,13 +517,14 @@ async function acquireOutlookRestToken(progress: ProgressFn): Promise<string> {
           setTimeout(() => { if (!found) send("Page.reload"); }, 3_000);
         }
         if (msg.method === "Network.requestWillBeSent") {
+          const reqUrl = ((msg.params?.request as Record<string, unknown>)?.url ?? "") as string;
           const headers = ((msg.params?.request as Record<string, unknown>)?.headers ?? {}) as Record<string, string>;
           const auth = headers["Authorization"] ?? headers["authorization"] ?? "";
           if (!found && auth.startsWith("Bearer ")) {
-            found = auth.slice(7);
+            found = true;
             clearTimeout(timer);
             try { ws.close(); } catch {}
-            resolve(found);
+            resolve({ token: auth.slice(7), requestUrl: reqUrl });
           }
         }
       } catch (e) { process.stderr.write(`[alfred:warn] CDP network interception error: ${e instanceof Error ? e.message : String(e)}\n`); }
@@ -523,12 +538,15 @@ async function acquireOutlookRestToken(progress: ProgressFn): Promise<string> {
     });
   });
 
-  if (capturedToken) {
+  if (capturedResult) {
     const expiresAt = Date.now() + TOKEN_CACHE_FALLBACK_MS;
-    outlookRestTokenCache = { token: capturedToken, expiresAt };
-    saveCachedAuth("outlookRestToken", capturedToken, expiresAt);
-    progress("✅ Outlook REST token captured via network interception");
-    return capturedToken;
+    // Derive audience from the URL the token was sent to
+    let capturedAud = "";
+    try { capturedAud = new URL(capturedResult.requestUrl).origin.toLowerCase(); } catch {}
+    outlookRestTokenCache = { token: capturedResult.token, expiresAt, aud: capturedAud };
+    saveCachedAuth("outlookRestToken", capturedResult.token, expiresAt);
+    progress(`✅ Outlook REST token captured via network interception (${capturedAud || "unknown origin"})`);
+    return capturedResult.token;
   }
 
   throw new Error(
@@ -537,15 +555,24 @@ async function acquireOutlookRestToken(progress: ProgressFn): Promise<string> {
   );
 }
 
-// outlook.microsoft.com is browser-only (CORS-gated); outlook.office.com works for server-side Bearer calls
-const OUTLOOK_API = "https://outlook.office.com/api/v2.0/me";
+// Resolve the correct Outlook REST API base URL based on token audience.
+// New Outlook (outlook.cloud.microsoft.com) issues tokens for "https://outlook.office365.com"
+// which also serves the REST v2.0 API. Old tokens target "https://outlook.office.com".
+function getOutlookApiBase(): string {
+  const aud = outlookRestTokenCache?.aud ?? "";
+  if (aud.includes("outlook.office365")) return "https://outlook.office365.com/api/v2.0/me";
+  if (aud.includes("outlook.cloud.microsoft")) return "https://outlook.cloud.microsoft.com/api/v2.0/me";
+  if (aud.includes("outlook.microsoft")) return "https://outlook.microsoft.com/api/v2.0/me";
+  // Default: outlook.office.com (legacy, works with old Outlook tokens)
+  return "https://outlook.office.com/api/v2.0/me";
+}
 
 // ---------------------------------------------------------------------------
 // Outlook REST v2 fetch using Outlook REST Bearer token
 // ---------------------------------------------------------------------------
 
 async function outlookApiFetch(path: string, token: string, progress?: ProgressFn, _retryCount = 0): Promise<Record<string, unknown>> {
-  const res = await fetch(`${OUTLOOK_API}${path}`, {
+  const res = await fetch(`${getOutlookApiBase()}${path}`, {
     headers: { Authorization: `Bearer ${token}`, Accept: "application/json" },
     signal: AbortSignal.timeout(30_000),
   });
@@ -563,7 +590,7 @@ async function outlookApiFetch(path: string, token: string, progress?: ProgressF
     clearCachedAuthFile("outlookRestToken");
     progress?.("🔄 Outlook REST token expired — re-acquiring...");
     const freshToken = await acquireOutlookRestToken(progress ?? (() => {}));
-    const retry = await fetch(`${OUTLOOK_API}${path}`, {
+    const retry = await fetch(`${getOutlookApiBase()}${path}`, {
       headers: { Authorization: `Bearer ${freshToken}`, Accept: "application/json" },
       signal: AbortSignal.timeout(30_000),
     });
