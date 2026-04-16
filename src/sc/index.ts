@@ -1378,7 +1378,7 @@ server.tool(
   "get_calendar_events",
   `Fetch calendar events from Outlook via the debug Chrome window.
 
-Requires the user to be logged into Outlook (outlook.office.com or outlook.cloud.microsoft.com) in the Alfred Chrome window.
+Requires the user to be logged into Outlook (outlook.cloud.microsoft.com) in the Alfred Chrome window.
 No Azure registration needed — the request runs inside the already-authenticated browser tab.
 
 IMPORTANT: Before calling this tool, ask the user:
