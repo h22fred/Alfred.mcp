@@ -4,7 +4,7 @@ import { DYNAMICS_HOST } from "../config.js";
 import { loadCachedAuth, saveCachedAuth, clearCachedAuthFile } from "./authFileCache.js";
 
 const DYNAMICS_URL = DYNAMICS_HOST;
-const OUTLOOK_URLS = ["https://outlook.office.com", "https://outlook.cloud.microsoft.com", "https://outlook.office365.com"];
+const OUTLOOK_URLS = ["https://outlook.cloud.microsoft.com", "https://outlook.office.com", "https://outlook.office365.com"];
 const CDP_PORT = 9222;
 const COOKIE_REFRESH_MARGIN_MS = 5 * 60 * 1000;
 

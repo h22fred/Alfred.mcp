@@ -7,7 +7,7 @@ import { sanitizeODataSearch } from "./dynamicsClient.js";
 const CDP_PORT = 9222;
 
 /** All known Outlook web domains — new ones can be added here. */
-const OUTLOOK_DOMAINS = ["outlook.office.com", "outlook.cloud.microsoft.com", "outlook.office365.com", "outlook.live.com"] as const;
+const OUTLOOK_DOMAINS = ["outlook.cloud.microsoft.com", "outlook.office.com", "outlook.office365.com", "outlook.live.com"] as const;
 
 /** Match any known Outlook domain (legacy + new). */
 function isOutlookUrl(url: string): boolean {
@@ -586,8 +586,8 @@ function getOutlookApiBase(): string {
   if (aud.includes("outlook.office.com")) return "https://outlook.office.com/api/v2.0/me";
   // If we detected the browser origin, use that
   if (detectedOutlookOrigin) return `${detectedOutlookOrigin}/api/v2.0/me`;
-  // Fallback
-  return "https://outlook.office.com/api/v2.0/me";
+  // Fallback — new Outlook is the default now
+  return "https://outlook.cloud.microsoft.com/api/v2.0/me";
 }
 
 // ---------------------------------------------------------------------------

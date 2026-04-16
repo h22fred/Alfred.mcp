@@ -278,7 +278,7 @@ exec "\$CHROME" \
   --disable-domain-reliability \
   --disable-client-side-phishing-detection \
   "$NEW_DYNAMICS_URL" \
-  "https://outlook.office.com" \
+  "https://outlook.cloud.microsoft.com" \
   "https://teams.microsoft.com/v2/"
 SHELLEOF
 
