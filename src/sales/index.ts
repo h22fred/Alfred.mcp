@@ -1587,7 +1587,7 @@ server.tool(
   "get_calendar_events",
   `Fetch calendar events from Outlook via the debug Chrome window.
 
-Requires the user to be logged into https://outlook.office.com in the Alfred Chrome window.
+Requires the user to be logged into Outlook (outlook.office.com or outlook.cloud.microsoft.com) in the Alfred Chrome window.
 
 IMPORTANT: Before calling this tool, ask the user:
 1. "Which date range? (e.g. 'this week', 'next 2 weeks', specific dates)"

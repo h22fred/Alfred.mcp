@@ -5,12 +5,20 @@ import { stripHtml, urlHostMatches } from "../shared.js";
 import { sanitizeODataSearch } from "./dynamicsClient.js";
 
 const CDP_PORT = 9222;
-const OUTLOOK_ORIGIN = "https://outlook.office.com";
 
-/** Match both legacy (outlook.office.com) and new (outlook.cloud.microsoft.com) Outlook domains */
+/** All known Outlook web domains — new ones can be added here. */
+const OUTLOOK_DOMAINS = ["outlook.office.com", "outlook.cloud.microsoft.com", "outlook.office365.com", "outlook.live.com"] as const;
+
+/** Match any known Outlook domain (legacy + new). */
 function isOutlookUrl(url: string): boolean {
-  return urlHostMatches(url, "outlook.office.com") || urlHostMatches(url, "outlook.cloud.microsoft.com");
+  return OUTLOOK_DOMAINS.some(d => urlHostMatches(url, d));
 }
+
+/**
+ * Detected Outlook origin from the browser tab (set during token acquisition).
+ * E.g. "https://outlook.cloud.microsoft.com" or "https://outlook.office.com".
+ */
+let detectedOutlookOrigin: string | null = null;
 /** Decode the audience (aud) claim from a JWT without verifying signature. */
 function decodeJwtAudience(jwt: string): string {
   try {
@@ -389,7 +397,7 @@ const OUTLOOK_REST_MSAL_JS = `(function() {
 })()`;
 
 async function acquireOutlookRestToken(progress: ProgressFn): Promise<string> {
-  // Check in-memory cache
+  // Check in-memory cache (fast path — no CDP call needed)
   if (outlookRestTokenCache && Date.now() < outlookRestTokenCache.expiresAt - TOKEN_REFRESH_MARGIN_MS) {
     const mins = Math.round((outlookRestTokenCache.expiresAt - Date.now()) / 60_000);
     progress(`🔑 Using cached Outlook REST token (~${mins} min remaining)`);
@@ -410,6 +418,17 @@ async function acquireOutlookRestToken(progress: ProgressFn): Promise<string> {
 
   const listRes = await fetch(`http://localhost:${CDP_PORT}/json/list`);
   const targets = await listRes.json() as Array<{ webSocketDebuggerUrl?: string; type?: string; url?: string }>;
+
+  // Detect which Outlook domain is open — sets detectedOutlookOrigin for API URL resolution
+  if (!detectedOutlookOrigin) {
+    const outlookTabUrl = targets.find(t => t.type === "page" && t.url && isOutlookUrl(t.url))?.url;
+    if (outlookTabUrl) {
+      try {
+        detectedOutlookOrigin = new URL(outlookTabUrl).origin;
+        process.stderr.write(`[alfred] Detected Outlook origin: ${detectedOutlookOrigin}\n`);
+      } catch {}
+    }
+  }
 
   // Outlook REST tokens live in the Outlook tab's MSAL cache
   const outlookTarget = targets.find(t => t.type === "page" && t.url && isOutlookUrl(t.url) && t.webSocketDebuggerUrl);
@@ -555,15 +574,19 @@ async function acquireOutlookRestToken(progress: ProgressFn): Promise<string> {
   );
 }
 
-// Resolve the correct Outlook REST API base URL based on token audience.
-// New Outlook (outlook.cloud.microsoft.com) issues tokens for "https://outlook.office365.com"
-// which also serves the REST v2.0 API. Old tokens target "https://outlook.office.com".
+// Resolve the correct Outlook REST API base URL.
+// Priority: token audience → detected browser origin → fallback.
+// New Outlook (outlook.cloud.microsoft.com) issues tokens for outlook.office365.com.
 function getOutlookApiBase(): string {
   const aud = outlookRestTokenCache?.aud ?? "";
+  // If we know the token audience, use that directly
   if (aud.includes("outlook.office365")) return "https://outlook.office365.com/api/v2.0/me";
   if (aud.includes("outlook.cloud.microsoft")) return "https://outlook.cloud.microsoft.com/api/v2.0/me";
   if (aud.includes("outlook.microsoft")) return "https://outlook.microsoft.com/api/v2.0/me";
-  // Default: outlook.office.com (legacy, works with old Outlook tokens)
+  if (aud.includes("outlook.office.com")) return "https://outlook.office.com/api/v2.0/me";
+  // If we detected the browser origin, use that
+  if (detectedOutlookOrigin) return `${detectedOutlookOrigin}/api/v2.0/me`;
+  // Fallback
   return "https://outlook.office.com/api/v2.0/me";
 }
 

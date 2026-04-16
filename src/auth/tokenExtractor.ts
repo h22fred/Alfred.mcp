@@ -4,7 +4,7 @@ import { DYNAMICS_HOST } from "../config.js";
 import { loadCachedAuth, saveCachedAuth, clearCachedAuthFile } from "./authFileCache.js";
 
 const DYNAMICS_URL = DYNAMICS_HOST;
-const OUTLOOK_URL  = "https://outlook.office.com";
+const OUTLOOK_URLS = ["https://outlook.office.com", "https://outlook.cloud.microsoft.com", "https://outlook.office365.com"];
 const CDP_PORT = 9222;
 const COOKIE_REFRESH_MARGIN_MS = 5 * 60 * 1000;
 
@@ -152,7 +152,8 @@ export async function restartAlfred(progress: ProgressFn = () => {}): Promise<vo
 
   await waitForChrome(20_000);
   // Open standard tabs
-  for (const url of [DYNAMICS_URL, OUTLOOK_URL, "https://teams.microsoft.com/v2/"]) {
+  // Open one Outlook URL — Microsoft auto-redirects to the right domain for the tenant
+  for (const url of [DYNAMICS_URL, OUTLOOK_URLS[0]!, "https://teams.microsoft.com/v2/"]) {
     await fetch(`http://localhost:${CDP_PORT}/json/new?${url}`).catch((e) => { process.stderr.write(`[alfred:warn] failed to open tab ${url}: ${e instanceof Error ? e.message : String(e)}\n`); });
   }
   progress("✅ Alfred restarted — please log into Dynamics, Outlook and Teams if needed");
@@ -170,8 +171,8 @@ export async function ensureAlfred(progress: ProgressFn = () => {}): Promise<voi
   progress("🚀 Launching Alfred automatically...");
   launchAlfred();
   await waitForChrome();
-  // Open Dynamics, Outlook and Teams tabs via CDP
-  for (const url of [DYNAMICS_URL, OUTLOOK_URL, "https://teams.microsoft.com/v2/"]) {
+  // Open one Outlook URL — Microsoft auto-redirects to the right domain for the tenant
+  for (const url of [DYNAMICS_URL, OUTLOOK_URLS[0]!, "https://teams.microsoft.com/v2/"]) {
     await fetch(`http://localhost:${CDP_PORT}/json/new?${url}`).catch((e) => { process.stderr.write(`[alfred:warn] failed to open tab ${url}: ${e instanceof Error ? e.message : String(e)}\n`); });
   }
   progress("✅ Alfred ready — please log into Dynamics, Outlook and Teams in the new window");
@@ -180,7 +181,7 @@ export async function ensureAlfred(progress: ProgressFn = () => {}): Promise<voi
 /** Probe Dynamics and Outlook cookies to warn if sessions are expired or missing. */
 async function verifySessionHealth(progress: ProgressFn): Promise<void> {
   try {
-    const cookies = await getCookiesViaRawCDP([DYNAMICS_URL, OUTLOOK_URL]);
+    const cookies = await getCookiesViaRawCDP([DYNAMICS_URL, ...OUTLOOK_URLS]);
     const hasDynamics = cookies.some(c => AUTH_COOKIE_NAMES.includes(c.name));
     const hasOutlook = cookies.some(c => c.domain?.includes("outlook") || c.domain?.includes("office"));
 
@@ -361,7 +362,7 @@ export async function getOutlookCookies(progress: ProgressFn = () => {}): Promis
         throw new Error("Chrome debug port not available. Launch Alfred from your Desktop first.");
       }
 
-      const allCookies = await getCookiesViaRawCDP([OUTLOOK_URL]);
+      const allCookies = await getCookiesViaRawCDP(OUTLOOK_URLS);
       if (allCookies.length === 0) {
         process.stderr.write("[alfred] CDP auth: no Outlook cookies found — user not logged in\n");
         throw new Error(

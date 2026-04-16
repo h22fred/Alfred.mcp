@@ -421,7 +421,12 @@ describe("token extraction fallbacks", () => {
 
   it("Outlook CDP extraction tries multiple tab types with safe URL matching", () => {
     expect(outlookSrc).toContain("urlHostMatches");
-    expect(outlookSrc).not.toMatch(/\.includes\(["']outlook\.office\.com["']\)/);
+    // URL matching must use urlHostMatches, not .includes — but JWT audience checks (aud.includes) are fine
+    const lines = outlookSrc.split("\n");
+    const badUrlMatches = lines.filter(line =>
+      /\.includes\(["']outlook\.office\.com["']\)/.test(line) && !line.includes("aud")
+    );
+    expect(badUrlMatches).toHaveLength(0);
   });
 
   it("Teams MSAL extraction decodes JWT to check scopes", () => {
