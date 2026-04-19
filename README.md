@@ -198,6 +198,8 @@ The Teams webhook is optional but recommended — it's what allows Alfred to pos
 
 The webhook URL is stored in `~/.alfred-config.json` on your machine only and is never sent anywhere except to post cards to your Teams channel.
 
+> **Keep the webhook URL private.** Anyone with this URL can post messages to your channel. Never share it or commit it to version control.
+
 ---
 
 ## Troubleshooting
