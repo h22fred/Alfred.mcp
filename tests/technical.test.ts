@@ -53,8 +53,30 @@ describe("token management", () => {
     expect(outlookSrc).not.toMatch(/const page = await ctx\.newPage\(\);[\s]*let captured/);
   });
 
-  it("Teams Playwright fallback reuses existing tabs", () => {
-    expect(teamsSrc).toContain("existingPages");
+  it("Teams silent auth cleans up temporary CDP tab", () => {
+    expect(teamsSrc).toContain("closeTab");
+    expect(teamsSrc).toContain("json/close");
+  });
+
+  it("Teams chats use Skype messaging API (not Graph Chat.Read)", () => {
+    // getTeamsChats must use the Skype token, not Graph
+    expect(teamsSrc).toContain("acquireSkypeToken");
+    expect(teamsSrc).toContain("skypetoken_asm");
+    expect(teamsSrc).toContain("ng.msg.teams.microsoft.com");
+    // Must handle auth header correctly (not Bearer, uses "Authentication: skypetoken=")
+    expect(teamsSrc).toContain("Authentication");
+    expect(teamsSrc).toContain("skypetoken=");
+  });
+
+  it("Teams Skype token cache clears on auth failure", () => {
+    expect(teamsSrc).toContain("skypeTokenCache = null");
+    expect(teamsSrc).toContain('clearCachedAuthFile("teamsSkypeToken")');
+  });
+
+  it("Teams transcripts search OneDrive instead of onlineMeetings API", () => {
+    expect(teamsSrc).toContain("Meeting Transcript");
+    expect(teamsSrc).toContain("/me/drive/root/search");
+    expect(teamsSrc).toContain("isOnlineMeeting");
   });
 });
 
@@ -127,8 +149,8 @@ describe("auth resilience", () => {
     // The comment warns against browser.close(), but no actual await browser.close() call should exist
     expect(outlookSrc).not.toContain("await browser.close()");
     expect(outlookSrc).toContain("Do NOT call browser.close()");
+    // Teams uses silent auth (no Playwright) — just verify no browser.close()
     expect(teamsSrc).not.toContain("await browser.close()");
-    expect(teamsSrc).toContain("Do NOT call browser.close()");
   });
 
   it("MSAL extraction logs timeout and parse errors for diagnostics", () => {
@@ -187,7 +209,7 @@ describe("error handling patterns", () => {
 
   it("Teams scope error gives actionable guidance", () => {
     const teamsSrc = readSource("src/tools/teamsClient.ts");
-    expect(teamsSrc).toContain("Open the Teams tab in Alfred");
+    expect(teamsSrc).toContain("Azure AD app registration with admin consent");
   });
 });
 
