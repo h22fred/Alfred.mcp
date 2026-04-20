@@ -1754,12 +1754,7 @@ Requires Alfred to be running with Teams or Outlook open.`,
       ];
 
       if (t.transcript) {
-        const cleaned = t.transcript
-          .split("\n")
-          .filter(l => l.trim() && !/^\d+$/.test(l.trim()) && !/^\d{2}:\d{2}/.test(l.trim()) && l.trim() !== "WEBVTT")
-          .filter((l, i, arr) => l !== arr[i - 1])
-          .join("\n");
-        lines.push("", "**Transcript:**", cleaned);
+        lines.push("", "**Transcript:**", t.transcript);
       } else {
         lines.push("", "_No transcript available for this meeting._");
       }

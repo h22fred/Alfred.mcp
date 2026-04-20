@@ -507,7 +507,9 @@ async function acquireOutlookRestToken(progress: ProgressFn): Promise<string> {
       try {
         detectedOutlookOrigin = new URL(outlookTabUrl).origin;
         process.stderr.write(`[alfred] Detected Outlook origin: ${detectedOutlookOrigin}\n`);
-      } catch {}
+      } catch (e) {
+        process.stderr.write(`[alfred:warn] Could not parse Outlook tab URL "${outlookTabUrl}": ${e instanceof Error ? e.message : String(e)}\n`);
+      }
     }
   }
 
