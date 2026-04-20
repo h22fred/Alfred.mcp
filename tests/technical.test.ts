@@ -462,3 +462,75 @@ describe("token extraction fallbacks", () => {
     expect(outlookSrc).toContain("await ctx.newPage()");
   });
 });
+
+// ---------------------------------------------------------------------------
+// exitAlfred / restartAlfred lifecycle
+// ---------------------------------------------------------------------------
+describe("exitAlfred and restartAlfred lifecycle", () => {
+  const tokenSrc = readSource("src/auth/tokenExtractor.ts");
+
+  it("exitAlfred uses CDP Browser.close before platform kill", () => {
+    expect(tokenSrc).toContain("Browser.close");
+    // CDP close should come before pkill/taskkill fallback
+    const cdpIdx = tokenSrc.indexOf("Browser.close");
+    const pkillIdx = tokenSrc.indexOf("pkill");
+    expect(cdpIdx).toBeLessThan(pkillIdx);
+  });
+
+  it("exitAlfred clears auth cache after shutdown", () => {
+    // clearAuthCache must be called inside exitAlfred, after the kill logic
+    const fnBody = tokenSrc.slice(
+      tokenSrc.indexOf("export async function exitAlfred"),
+      tokenSrc.indexOf("export async function restartAlfred")
+    );
+    expect(fnBody).toContain("clearAuthCache()");
+    const closeIdx = fnBody.indexOf("Browser.close");
+    const clearIdx = fnBody.indexOf("clearAuthCache()");
+    expect(clearIdx).toBeGreaterThan(closeIdx);
+  });
+
+  it("exitAlfred returns false when Alfred is not running", () => {
+    // isAlfredgable check must be first — early return false
+    const fnBody = tokenSrc.slice(
+      tokenSrc.indexOf("export async function exitAlfred"),
+      tokenSrc.indexOf("export async function restartAlfred")
+    );
+    expect(fnBody).toContain("isAlfredgable()");
+    expect(fnBody).toContain("return false");
+  });
+
+  it("exitAlfred has platform-specific fallback kill", () => {
+    expect(tokenSrc).toContain("win32");
+    expect(tokenSrc).toContain("taskkill");
+    expect(tokenSrc).toContain("pkill");
+  });
+
+  it("restartAlfred calls exitAlfred before relaunching", () => {
+    const fnBody = tokenSrc.slice(
+      tokenSrc.indexOf("export async function restartAlfred")
+    );
+    const exitIdx = fnBody.indexOf("exitAlfred(");
+    const launchIdx = Math.min(
+      fnBody.indexOf("Alfred.app") === -1 ? Infinity : fnBody.indexOf("Alfred.app"),
+      fnBody.indexOf("launchAlfred") === -1 ? Infinity : fnBody.indexOf("launchAlfred")
+    );
+    expect(exitIdx).toBeLessThan(launchIdx);
+  });
+
+  it("restartAlfred opens Dynamics, Outlook and Teams tabs", () => {
+    const fnBody = tokenSrc.slice(
+      tokenSrc.indexOf("export async function restartAlfred")
+    );
+    expect(fnBody).toContain("DYNAMICS_URL");
+    expect(fnBody).toContain("OUTLOOK_URLS");
+    expect(fnBody).toContain("teams.microsoft.com");
+  });
+
+  it("restartAlfred supports macOS .app and Windows .bat shortcuts", () => {
+    const fnBody = tokenSrc.slice(
+      tokenSrc.indexOf("export async function restartAlfred")
+    );
+    expect(fnBody).toContain("Alfred.app");
+    expect(fnBody).toContain("Alfred.bat");
+  });
+});

@@ -1115,7 +1115,9 @@ async function getCollabNoteEntity(progress: ProgressFn): Promise<string> {
         return resolvedCollabNoteEntity;
       }
     }
-  } catch { /* metadata discovery failed */ }
+  } catch (e) {
+    process.stderr.write(`[alfred:warn] Collab Notes metadata discovery failed: ${e instanceof Error ? e.message : String(e)}\n`);
+  }
 
   throw new Error(
     "Could not find the Collaboration Notes entity in Dynamics.\n" +
@@ -1963,7 +1965,9 @@ async function getClosingPlanEntity(progress: ProgressFn): Promise<string> {
         return resolvedClosingPlanEntity;
       }
     }
-  } catch { /* metadata discovery failed */ }
+  } catch (e) {
+    process.stderr.write(`[alfred:warn] Closing Plan metadata discovery failed: ${e instanceof Error ? e.message : String(e)}\n`);
+  }
 
   throw new Error(
     "Could not find the Closing Plan entity in Dynamics.\n" +
@@ -2323,7 +2327,9 @@ async function getOppSummaryEntity(progress: ProgressFn): Promise<string | null>
         return resolvedOppSummaryEntity;
       }
     }
-  } catch { /* metadata failed */ }
+  } catch (e) {
+    process.stderr.write(`[alfred:warn] Opportunity Summary metadata discovery failed: ${e instanceof Error ? e.message : String(e)}\n`);
+  }
 
   return null; // No custom entity — fall back to annotations
 }

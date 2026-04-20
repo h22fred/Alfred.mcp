@@ -495,7 +495,9 @@ export async function acquireTeamsGraphToken(progress: ProgressFn): Promise<stri
     try {
       const payload = JSON.parse(atob(silentToken.split(".")[1]!.replace(/-/g, "+").replace(/_/g, "/")));
       if (payload.exp) expiresAt = payload.exp * 1000;
-    } catch { /* use fallback */ }
+    } catch (e) {
+      process.stderr.write(`[alfred:warn] Graph token JWT decode failed, using fallback expiry: ${e instanceof Error ? e.message : String(e)}\n`);
+    }
     teamsTokenCache = { token: silentToken, expiresAt };
     saveCachedAuth("teamsGraphToken", silentToken, expiresAt);
     progress("✅ Graph token acquired via silent Azure AD auth");
@@ -534,7 +536,9 @@ async function acquireSkypeToken(progress: ProgressFn): Promise<{ token: string;
     try {
       const payload = JSON.parse(Buffer.from(fileCached.value.split(".")[1]!, "base64url").toString());
       if (payload.rgn) region = payload.rgn;
-    } catch { /* use default */ }
+    } catch (e) {
+      process.stderr.write(`[alfred:warn] Skype token JWT decode failed, using default region: ${e instanceof Error ? e.message : String(e)}\n`);
+    }
     skypeTokenCache = { token: fileCached.value, region, expiresAt: fileCached.expiresAt };
     return { token: fileCached.value, region };
   }
@@ -586,13 +590,18 @@ async function acquireSkypeToken(progress: ProgressFn): Promise<{ token: string;
           const payload = JSON.parse(Buffer.from(skypeCookie.value.split(".")[1]!, "base64url").toString());
           if (payload.rgn) region = payload.rgn;
           if (payload.exp) expiresAt = payload.exp * 1000;
-        } catch { /* use defaults */ }
+        } catch (e) {
+          process.stderr.write(`[alfred:warn] Skype cookie JWT decode failed: ${e instanceof Error ? e.message : String(e)}\n`);
+        }
 
         // Reject expired tokens
         if (Date.now() >= expiresAt) { resolve(null); return; }
 
         resolve({ token: skypeCookie.value, region });
-      } catch { resolve(null); }
+      } catch (e) {
+        process.stderr.write(`[alfred:warn] Skype cookie extraction failed: ${e instanceof Error ? e.message : String(e)}\n`);
+        resolve(null);
+      }
     });
 
     ws.addEventListener("error", () => {
@@ -613,7 +622,9 @@ async function acquireSkypeToken(progress: ProgressFn): Promise<{ token: string;
   try {
     const payload = JSON.parse(Buffer.from(result.token.split(".")[1]!, "base64url").toString());
     if (payload.exp) expiresAt = payload.exp * 1000;
-  } catch { /* use fallback */ }
+  } catch (e) {
+    process.stderr.write(`[alfred:warn] Skype token exp decode failed, using fallback expiry: ${e instanceof Error ? e.message : String(e)}\n`);
+  }
   skypeTokenCache = { token: result.token, region: result.region, expiresAt };
   saveCachedAuth("teamsSkypeToken", result.token, expiresAt);
 
@@ -621,28 +632,57 @@ async function acquireSkypeToken(progress: ProgressFn): Promise<{ token: string;
   return result;
 }
 
-/** Make an authenticated request to the Teams Skype messaging API. */
+/** Known Teams Skype messaging API regions, ordered by likelihood. */
+const SKYPE_REGIONS = ["amer", "emea", "apac"];
+
+/** Make an authenticated request to the Teams Skype messaging API.
+ *  If the primary region fails with a non-auth error, tries other regions
+ *  (handles cases where the JWT rgn field doesn't match the data region). */
 async function skypeFetch(
   path: string,
   token: string,
   region: string
 ): Promise<Record<string, unknown>> {
-  const url = `https://${region}.ng.msg.teams.microsoft.com${path}`;
-  const res = await fetch(url, {
-    headers: { Authentication: `skypetoken=${token}`, Accept: "application/json" },
-    signal: AbortSignal.timeout(30_000),
-  });
+  const regionsToTry = [region, ...SKYPE_REGIONS.filter(r => r !== region)];
 
-  if (!res.ok) {
+  for (let i = 0; i < regionsToTry.length; i++) {
+    const r = regionsToTry[i]!;
+    const url = `https://${r}.ng.msg.teams.microsoft.com${path}`;
+    const res = await fetch(url, {
+      headers: { Authentication: `skypetoken=${token}`, Accept: "application/json" },
+      signal: AbortSignal.timeout(30_000),
+    });
+
+    if (res.ok) {
+      // If a fallback region worked, update the cache so future calls use it directly
+      if (i > 0 && skypeTokenCache) {
+        process.stderr.write(`[alfred] Skype API: region ${region} failed, ${r} works — updating cache\n`);
+        skypeTokenCache = { ...skypeTokenCache, region: r };
+      }
+      return res.json() as Promise<Record<string, unknown>>;
+    }
+
     if (res.status === 401 || res.status === 403) {
-      // Clear cache on auth failure so next call gets fresh token
+      // Auth failure — don't try other regions, the token itself is bad
       skypeTokenCache = null;
       clearCachedAuthFile("teamsSkypeToken");
+      const body = await res.text().catch(() => "");
+      throw new Error(`Teams messaging API ${res.status}: ${body.slice(0, 300)}`);
     }
+
+    // Non-auth error on non-last region — try next region
+    if (i < regionsToTry.length - 1) {
+      process.stderr.write(`[alfred:warn] Skype API ${r} returned ${res.status}, trying next region...\n`);
+      continue;
+    }
+
+    // Last region also failed
     const body = await res.text().catch(() => "");
     throw new Error(`Teams messaging API ${res.status}: ${body.slice(0, 300)}`);
   }
-  return res.json() as Promise<Record<string, unknown>>;
+
+  // Should never reach here, but TypeScript needs it
+  throw new Error("Teams messaging API: no regions available");
 }
 
 async function graphFetch(path: string, token: string, _retryCount = 0): Promise<Record<string, unknown>> {
@@ -756,9 +796,24 @@ export async function getTeamsTranscript(opts: {
     // Apply search filter if specified
     if (opts.search && !subject.toLowerCase().includes(opts.search.toLowerCase())) continue;
 
-    // Match this meeting to a transcript file by subject name
+    // Match this meeting to a transcript file by subject + date.
+    // Filename format: "{subject}-{YYYYMMDD}_{HHMMSS}-Meeting Transcript.mp4"
+    // Calendar subjects may use en-dashes (–) while filenames use hyphens (-),
+    // so we normalize both to alphanumeric-only for comparison.
     const subjectNorm = subject.toLowerCase().replace(/[^a-z0-9]/g, "");
+    const eventDate = startTime.slice(0, 10).replace(/-/g, ""); // YYYYMMDD
     const matchingFile = transcriptFiles.find(f => {
+      const parsed = f.name.match(/^(.+)-(\d{8})_\d{6}-Meeting Transcript\.mp4$/i);
+      if (!parsed) return false;
+      const fileSubjectNorm = parsed[1]!.toLowerCase().replace(/[^a-z0-9]/g, "");
+      const fileDate = parsed[2]!;
+      // Match by subject (exact normalized match OR one contains the other for partial matches)
+      const subjectMatch = fileSubjectNorm === subjectNorm ||
+        (subjectNorm.length > 5 && (fileSubjectNorm.includes(subjectNorm) || subjectNorm.includes(fileSubjectNorm)));
+      // Date must match (same day)
+      return subjectMatch && fileDate === eventDate;
+    }) ?? transcriptFiles.find(f => {
+      // Fallback: subject-only match (for cases where date extraction fails)
       const fileSubject = f.name.replace(/-\d{8}_\d{6}-Meeting Transcript\.mp4$/i, "");
       return fileSubject.toLowerCase().replace(/[^a-z0-9]/g, "") === subjectNorm;
     });
