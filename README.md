@@ -48,7 +48,8 @@ Two flavours — one installer:
 - macOS or Windows 10+
 - [Claude Desktop](https://claude.ai/download)
 - Google Chrome
-- Node.js — **installed automatically if missing** (macOS)
+
+> **All other prerequisites (Git, Node.js) are installed automatically** by the setup script on both macOS and Windows.
 
 ---
 
@@ -66,14 +67,18 @@ bash ~/Downloads/Setup_macOS.command
 curl -fsSL https://raw.githubusercontent.com/h22fred/Alfred.mcp/refs/heads/main/Setup_macOS.command | bash
 ```
 
+> Git (via Xcode Command Line Tools) and Node.js (via nvm) are **installed automatically** if missing.
+>
 > If a popup appears asking to install Command Line Tools, click **Install**, wait for it to finish, then run the same command again.
+>
+> **macOS Sequoia+:** If the file is blocked ("cannot confirm it is free from malware"), go to **System Settings → Privacy & Security**, scroll down and click **Open Anyway**.
 
 ## Setup — Windows
 
 1. **[⬇️ Download Setup_Windows.bat](https://raw.githubusercontent.com/h22fred/Alfred.mcp/refs/heads/main/Setup_Windows.bat)**
 2. Double-click the downloaded file (or right-click → Run as administrator if prompted)
 
-> Git and Node.js are **installed automatically** if missing.
+> Git (via winget) and Node.js are **installed automatically** if missing.
 
 ## What the installer asks
 
