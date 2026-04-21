@@ -4,6 +4,7 @@
 
 set -e
 
+ZIP_URL="https://github.com/h22fred/Alfred.mcp/archive/refs/heads/main.zip"
 REPO_URL="https://github.com/h22fred/Alfred.mcp.git"
 
 # Ask role first so we know which folder to install into
@@ -33,40 +34,38 @@ echo "=================================================="
 echo ""
 
 # ------------------------------------------------------------
-# 1. Check Git — install Xcode Command Line Tools if missing
+# 1. Download or update the repo (no Git/Xcode required)
 # ------------------------------------------------------------
-if ! command -v git &>/dev/null; then
-  echo "   ⚠️  Git not found — installing Xcode Command Line Tools..."
-  xcode-select --install 2>/dev/null || true
-  echo ""
-  echo "   A popup will appear asking you to install the Command Line Tools."
-  echo "   Click Install, wait for it to finish, then re-run this script:"
-  echo ""
-  echo "   bash ~/Downloads/Setup_macOS.command"
-  echo ""
-  echo "   (Full instructions and download: https://github.com/h22fred/Alfred.mcp)"
-  echo ""
-  echo "Press any key to close..."
-  read -n 1 </dev/tty
-  exit 1
-fi
-
-# ------------------------------------------------------------
-# 2. Clone or update the repo
-# ------------------------------------------------------------
-if [ -d "$INSTALL_DIR/.git" ]; then
-  echo "▶ Updating existing installation..."
-  git -C "$INSTALL_DIR" fetch -q origin 2>/dev/null
-  git -C "$INSTALL_DIR" reset -q --hard origin/main
-  echo "   ✅ Updated to latest"
+# Prefer git if available (faster updates), fall back to zip download
+if command -v git &>/dev/null; then
+  if [ -d "$INSTALL_DIR/.git" ]; then
+    echo "▶ Updating existing installation..."
+    git -C "$INSTALL_DIR" fetch -q origin 2>/dev/null
+    git -C "$INSTALL_DIR" reset -q --hard origin/main
+    echo "   ✅ Updated to latest"
+  else
+    echo "▶ Cloning alfred.mcp..."
+    git clone "$REPO_URL" "$INSTALL_DIR"
+    echo "   ✅ Cloned to $INSTALL_DIR"
+  fi
 else
-  echo "▶ Cloning alfred.mcp..."
-  git clone "$REPO_URL" "$INSTALL_DIR"
-  echo "   ✅ Cloned to $INSTALL_DIR"
+  echo "▶ Downloading alfred.mcp..."
+  TMP_ZIP="/tmp/alfred-mcp-$$.zip"
+  curl -fsSL "$ZIP_URL" -o "$TMP_ZIP"
+  # Remove old install if it exists (non-git install)
+  if [ -d "$INSTALL_DIR" ] && [ ! -d "$INSTALL_DIR/.git" ]; then
+    rm -rf "$INSTALL_DIR"
+  fi
+  mkdir -p "$INSTALL_DIR"
+  unzip -qo "$TMP_ZIP" -d /tmp
+  # Move contents from extracted folder (Alfred.mcp-main/) into install dir
+  cp -R /tmp/Alfred.mcp-main/* "$INSTALL_DIR/"
+  rm -rf /tmp/Alfred.mcp-main "$TMP_ZIP"
+  echo "   ✅ Downloaded to $INSTALL_DIR"
 fi
 
 # ------------------------------------------------------------
-# 3. Run setup
+# 2. Run setup
 # ------------------------------------------------------------
 echo ""
 bash "$INSTALL_DIR/setup/setup.sh"
