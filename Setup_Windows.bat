@@ -25,7 +25,7 @@ if "!VARIANT_CHOICE!"=="2" (
 
 echo.
 echo ==================================================
-echo   AlFred.mcp — Installer
+echo   AlFred.mcp - Installer
 echo ==================================================
 echo.
 
