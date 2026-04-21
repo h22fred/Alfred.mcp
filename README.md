@@ -73,9 +73,9 @@ curl -fsSL https://raw.githubusercontent.com/h22fred/Alfred.mcp/refs/heads/main/
 1. **[⬇️ Download Setup_Windows.bat](https://raw.githubusercontent.com/h22fred/Alfred.mcp/refs/heads/main/Setup_Windows.bat)**
 2. Double-click the downloaded file (or right-click → Run as administrator if prompted)
 
-> **Prerequisites:** Git and Node.js must be installed before running the Windows installer.
+> **Prerequisite:** Git must be installed before running the Windows installer.
 > - Git: [git-scm.com/download/win](https://git-scm.com/download/win)
-> - Node.js LTS: [nodejs.org](https://nodejs.org)
+> - Node.js is **installed automatically** if missing
 
 ## What the installer asks
 
