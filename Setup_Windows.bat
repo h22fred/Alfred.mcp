@@ -1,14 +1,15 @@
 @echo off
+chcp 65001 >nul 2>&1
 setlocal enabledelayedexpansion
-title AlFred.mcp — Installer
+title AlFred.mcp - Installer
 
 set "REPO_URL=https://github.com/h22fred/Alfred.mcp.git"
 
 echo.
 echo   What is your role?
 echo.
-echo     1) SC / SSC / Manager           — Solution Consulting
-echo     2) Sales / Specialist / Manager — Account Executive
+echo     1) SC / SSC / Manager           - Solution Consulting
+echo     2) Sales / Specialist / Manager - Account Executive
 echo.
 set /p VARIANT_CHOICE="   Enter 1 or 2 (default: 1): "
 

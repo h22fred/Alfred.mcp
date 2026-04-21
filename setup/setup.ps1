@@ -105,12 +105,64 @@ if (-not $NodePath) {
 
 if (-not $NodePath) {
     Write-Host ""
-    Write-Host "   Node.js not found."
+    Write-Host "   Node.js not found — installing automatically..."
     Write-Host ""
-    Write-Host "   Please install Node.js LTS from: https://nodejs.org"
-    Write-Host "   Then re-run this script."
-    Write-Host ""
-    exit 1
+
+    # Download and run the official Node.js LTS installer silently
+    $NodeMsi = Join-Path $env:TEMP "node-lts-setup.msi"
+    $NodeUrl = "https://nodejs.org/dist/v22.15.0/node-v22.15.0-x64.msi"
+    Write-Host "   Downloading Node.js LTS..."
+    try {
+        [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+        Invoke-WebRequest -Uri $NodeUrl -OutFile $NodeMsi -UseBasicParsing
+    } catch {
+        Write-Host "   Download failed: $_"
+        Write-Host ""
+        Write-Host "   Please install Node.js LTS manually from: https://nodejs.org"
+        Write-Host "   Then re-run this script."
+        Write-Host ""
+        exit 1
+    }
+
+    Write-Host "   Installing Node.js (this may take a minute)..."
+    $msiArgs = "/i `"$NodeMsi`" /qn /norestart"
+    $process = Start-Process msiexec.exe -ArgumentList $msiArgs -Wait -PassThru
+    Remove-Item $NodeMsi -Force -ErrorAction SilentlyContinue
+
+    if ($process.ExitCode -ne 0) {
+        # MSI might need admin — try interactive install as fallback
+        Write-Host "   Silent install needs admin — launching interactive installer..."
+        $NodeMsi2 = Join-Path $env:TEMP "node-lts-setup.msi"
+        Invoke-WebRequest -Uri $NodeUrl -OutFile $NodeMsi2 -UseBasicParsing
+        Start-Process msiexec.exe -ArgumentList "/i `"$NodeMsi2`"" -Wait
+        Remove-Item $NodeMsi2 -Force -ErrorAction SilentlyContinue
+    }
+
+    # Re-check after installation — refresh PATH from registry
+    $MachinePath = [Environment]::GetEnvironmentVariable("Path", "Machine")
+    $UserPath = [Environment]::GetEnvironmentVariable("Path", "User")
+    $env:PATH = "$MachinePath;$UserPath"
+
+    foreach ($p in $SearchPaths) {
+        if (Test-Path $p) {
+            $NodePath = $p
+            break
+        }
+    }
+    if (-not $NodePath) {
+        $cmd = Get-Command node -ErrorAction SilentlyContinue
+        if ($cmd) { $NodePath = $cmd.Source }
+    }
+
+    if (-not $NodePath) {
+        Write-Host ""
+        Write-Host "   Node.js installation failed."
+        Write-Host "   Please install Node.js LTS manually from: https://nodejs.org"
+        Write-Host "   Then re-run this script."
+        Write-Host ""
+        exit 1
+    }
+    Write-Host "   Node.js installed successfully"
 }
 
 $NodeDir = Split-Path -Parent $NodePath
