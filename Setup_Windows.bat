@@ -81,25 +81,26 @@ if !ERRORLEVEL! neq 0 (
 :: ------------------------------------------------------------
 if exist "!INSTALL_DIR!\.git" (
     echo   Updating existing installation...
-    git -C "!INSTALL_DIR!" fetch origin >nul 2>&1
+    git -C "!INSTALL_DIR!" fetch origin 2>&1
+    git -C "!INSTALL_DIR!" reset --hard origin/main 2>&1
     if !ERRORLEVEL! neq 0 (
-        echo   WARNING: Could not fetch updates. Using existing version.
+        echo   Update failed - doing fresh install...
+        rmdir /s /q "!INSTALL_DIR!" 2>nul
+        git clone "!REPO_URL!" "!INSTALL_DIR!"
     ) else (
-        git -C "!INSTALL_DIR!" reset --hard origin/main >nul 2>&1
         echo   Updated to latest
     )
 ) else (
     echo   Cloning alfred.mcp...
     git clone "!REPO_URL!" "!INSTALL_DIR!"
-    if !ERRORLEVEL! neq 0 (
-        echo.
-        echo   ERROR: Failed to clone repository.
-        echo   Please check your internet connection and GitHub access.
-        echo.
-        pause
-        exit /b 1
-    )
-    echo   Cloned to !INSTALL_DIR!
+)
+if not exist "!INSTALL_DIR!\setup\setup.ps1" (
+    echo.
+    echo   ERROR: Installation failed - setup.ps1 not found.
+    echo   Please check your internet connection and try again.
+    echo.
+    pause
+    exit /b 1
 )
 
 :: ------------------------------------------------------------
