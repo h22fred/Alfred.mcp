@@ -30,19 +30,50 @@ echo ==================================================
 echo.
 
 :: ------------------------------------------------------------
-:: 1. Check Git
+:: 1. Check / install Git
 :: ------------------------------------------------------------
 where git >nul 2>&1
 if !ERRORLEVEL! neq 0 (
-    echo   ERROR: Git is not installed or not in PATH.
+    echo   Git not found - installing automatically...
     echo.
-    echo   Please install Git for Windows from:
-    echo   https://git-scm.com/download/win
-    echo.
-    echo   Then re-run this script.
-    echo.
-    pause
-    exit /b 1
+
+    :: Try winget first (built into Windows 10 1709+ and Windows 11)
+    where winget >nul 2>&1
+    if !ERRORLEVEL! equ 0 (
+        echo   Installing Git via winget...
+        winget install --id Git.Git -e --source winget --accept-package-agreements --accept-source-agreements
+    ) else (
+        :: Fallback: download Git installer directly
+        echo   Downloading Git for Windows...
+        set "GIT_INSTALLER=%TEMP%\git-installer.exe"
+        powershell -Command "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; Invoke-WebRequest -Uri 'https://github.com/git-for-windows/git/releases/latest/download/Git-2.49.0-64-bit.exe' -OutFile '!GIT_INSTALLER!' -UseBasicParsing"
+        if not exist "!GIT_INSTALLER!" (
+            echo   Download failed. Please install Git manually from:
+            echo   https://git-scm.com/download/win
+            echo   Then re-run this script.
+            pause
+            exit /b 1
+        )
+        echo   Installing Git (this may take a minute)...
+        "!GIT_INSTALLER!" /VERYSILENT /NORESTART /NOCANCEL /SP- /CLOSEAPPLICATIONS /RESTARTAPPLICATIONS /COMPONENTS="icons,ext\reg\shellhere,assoc,assoc_sh"
+        del "!GIT_INSTALLER!" >nul 2>&1
+    )
+
+    :: Refresh PATH from registry so git is available in this session
+    for /f "tokens=2*" %%a in ('reg query "HKLM\SYSTEM\CurrentControlSet\Control\Session Manager\Environment" /v Path 2^>nul') do set "SYS_PATH=%%b"
+    for /f "tokens=2*" %%a in ('reg query "HKCU\Environment" /v Path 2^>nul') do set "USR_PATH=%%b"
+    set "PATH=!SYS_PATH!;!USR_PATH!"
+
+    where git >nul 2>&1
+    if !ERRORLEVEL! neq 0 (
+        echo.
+        echo   Git installation finished but git is not in PATH yet.
+        echo   Please close this window and re-run Setup_Windows.bat.
+        echo.
+        pause
+        exit /b 1
+    )
+    echo   Git installed successfully
 )
 
 :: ------------------------------------------------------------
