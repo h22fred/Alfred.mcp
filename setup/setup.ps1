@@ -289,7 +289,15 @@ Write-Host "   Claude Desktop config updated"
 Write-Host ""
 Write-Host "[>] Creating Alfred.bat on Desktop..."
 
-$AlfredBatPath = Join-Path $env:USERPROFILE "Desktop\Alfred.bat"
+# Use Shell API to find the real Desktop path (handles OneDrive, localized names, etc.)
+$DesktopPath = [Environment]::GetFolderPath("Desktop")
+if (-not $DesktopPath -or -not (Test-Path $DesktopPath)) {
+    $DesktopPath = Join-Path $env:USERPROFILE "Desktop"
+}
+if (-not (Test-Path $DesktopPath)) {
+    New-Item -ItemType Directory -Path $DesktopPath -Force | Out-Null
+}
+$AlfredBatPath = Join-Path $DesktopPath "Alfred.bat"
 
 $BatContent = @"
 @echo off
