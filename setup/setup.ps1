@@ -24,7 +24,8 @@ function Read-AlfredConfig {
 
 function Write-AlfredConfig {
     param([PSCustomObject]$Config)
-    $Config | ConvertTo-Json -Depth 5 | Set-Content $ConfigPath -Encoding UTF8
+    $JsonText = $Config | ConvertTo-Json -Depth 5
+    [System.IO.File]::WriteAllText($ConfigPath, $JsonText, [System.Text.UTF8Encoding]::new($false))
 }
 
 # --- Helper: ensure a property exists on the config object ---
@@ -280,7 +281,9 @@ if ($ClaudeConfig.mcpServers.PSObject.Properties.Name -contains "alfred") {
     $ClaudeConfig.mcpServers | Add-Member -NotePropertyName "alfred" -NotePropertyValue $AlfredEntry
 }
 
-$ClaudeConfig | ConvertTo-Json -Depth 5 | Set-Content $ClaudeConfigPath -Encoding UTF8
+# Write UTF-8 without BOM - PowerShell 5's -Encoding UTF8 adds a BOM which breaks JSON parsers
+$JsonText = $ClaudeConfig | ConvertTo-Json -Depth 5
+[System.IO.File]::WriteAllText($ClaudeConfigPath, $JsonText, [System.Text.UTF8Encoding]::new($false))
 Write-Host "   Claude Desktop config updated"
 
 # ------------------------------------------------------------
