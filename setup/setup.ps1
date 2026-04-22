@@ -351,7 +351,7 @@ start "" "%CHROME_EXE%" ^
 :: Background update check
 start /b powershell -WindowStyle Hidden -ExecutionPolicy Bypass -Command ^"& { ^
     try { ^
-        `$alfredDir = (Get-Item '%~dp0').Parent.Parent.FullName; ^
+        `$alfredDir = '$($RepoDir -replace "'","''")'; ^
         `$installed = (git -C `$alfredDir rev-parse --short HEAD 2>`$null); ^
         if (-not `$installed) { exit }; ^
         git -C `$alfredDir fetch --quiet 2>`$null; ^
@@ -559,7 +559,7 @@ if ($InstallHygiene -notmatch "^[nN]") {
     $HygieneScheduleDesc = "$HygieneDay at $HygieneTime"
     $HygieneTimeStr = "{0:D2}:{1:D2}" -f $HygieneHour, $HygieneMin
     $HygieneLogFile = Join-Path $env:USERPROFILE ".alfred-hygiene.log"
-    $HygieneScript = Join-Path $RepoDir "scripts\hygiene-sweep.mjs"
+    $HygieneScript = Join-Path $RepoDir "setup\hygiene-sweep.mjs"
 
     # Build the action: run node with the hygiene script, redirect output to log
     $HygieneAction = New-ScheduledTaskAction `
@@ -611,7 +611,7 @@ if ($InstallMeeting -notmatch "^[nN]") {
 
     $MeetingScheduleDesc = "$MeetingDay at $MeetingTime"
     $MeetingTimeStr = "{0:D2}:{1:D2}" -f $MeetingHour, $MeetingMin
-    $MeetingScript = Join-Path $RepoDir "scripts\post-meeting-sweep.mjs"
+    $MeetingScript = Join-Path $RepoDir "setup\post-meeting-sweep.mjs"
 
     $MeetingAction = New-ScheduledTaskAction `
         -Execute $NodePath `
