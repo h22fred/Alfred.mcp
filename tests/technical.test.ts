@@ -114,8 +114,8 @@ describe("auth resilience", () => {
   });
 
   it("isAlfredgable uses 3s timeout to avoid false negatives", () => {
-    expect(tokenExtSrc).toContain("--max-time\", \"3\"");
-    expect(tokenExtSrc).toContain("timeout: 5_000");
+    expect(tokenExtSrc).toContain("AbortSignal.timeout(3_000)");
+    expect(tokenExtSrc).toContain("/json/version");
   });
 
   it("Outlook detects login-page redirect and surfaces clear error", () => {
@@ -140,9 +140,9 @@ describe("auth resilience", () => {
     expect(teamsSrc).toContain("fileCached.expiresAt - TOKEN_REFRESH_MARGIN_MS");
   });
 
-  it("Teams CDP health check uses 3s timeout", () => {
-    expect(teamsSrc).toContain("--max-time\", \"3\"");
-    expect(teamsSrc).toContain("timeout: 5_000");
+  it("Teams CDP health check uses async isAlfredgable", () => {
+    expect(teamsSrc).toContain("isAlfredgable");
+    expect(teamsSrc).toContain("await isAlfredgable()");
   });
 
   it("Playwright fallbacks do NOT call browser.close() to preserve Alfred Chrome", () => {
@@ -532,5 +532,48 @@ describe("exitAlfred and restartAlfred lifecycle", () => {
     );
     expect(fnBody).toContain("Alfred.app");
     expect(fnBody).toContain("Alfred.bat");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Performance improvements — structural verification
+// ---------------------------------------------------------------------------
+describe("performance improvements", () => {
+  const outlookSrc   = readSource("src/tools/outlookClient.ts");
+  const teamsSrc     = readSource("src/tools/teamsClient.ts");
+  const dynamicsSrc  = readSource("src/tools/dynamicsClient.ts");
+  const authCacheSrc = readSource("src/auth/authFileCache.ts");
+
+  it("listMailFolders uses Promise.allSettled for parallel child folder fetching", () => {
+    const fetchFn = outlookSrc.slice(outlookSrc.indexOf("const fetchChildren"));
+    expect(fetchFn).toContain("Promise.allSettled");
+    // Must not iterate over parents sequentially with await
+    expect(fetchFn).not.toContain("for (const parent of withChildren)");
+  });
+
+  it("getTeamsChats uses Promise.allSettled for parallel message fetching", () => {
+    const fn = teamsSrc.slice(teamsSrc.indexOf("if (opts.includeMessages)"));
+    expect(fn).toContain("Promise.allSettled");
+    // Must not fetch messages with a simple for-of loop
+    expect(fn).not.toContain("for (const chat of chats)");
+  });
+
+  it("checkForAlfredUpdate caches its result to avoid repeated execFileSync calls", () => {
+    const fn = outlookSrc.slice(outlookSrc.indexOf("function checkForAlfredUpdate"));
+    expect(fn).toContain("_updateHintCache");
+    expect(fn).toContain("_updateHintCache !== null");
+  });
+
+  it("authFileCache uses an in-memory singleton to avoid repeated disk reads", () => {
+    expect(authCacheSrc).toContain("_memCache");
+    expect(authCacheSrc).toContain("if (_memCache !== null) return _memCache");
+    // Full wipe must also clear the in-memory cache
+    expect(authCacheSrc).toContain("_memCache = null");
+  });
+
+  it("fetchOpportunities runs main query and collab validation with Promise.all", () => {
+    const fn = dynamicsSrc.slice(dynamicsSrc.indexOf("const needsCollabValidation"));
+    expect(fn).toContain("needsCollabValidation");
+    expect(fn).toContain("Promise.all([mainFetch, collabFetch])");
   });
 });

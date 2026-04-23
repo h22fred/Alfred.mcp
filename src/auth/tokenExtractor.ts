@@ -8,6 +8,40 @@ const OUTLOOK_URLS = ["https://outlook.cloud.microsoft", "https://outlook.cloud.
 const CDP_PORT = 9222;
 const COOKIE_REFRESH_MARGIN_MS = 5 * 60 * 1000;
 
+// ---------------------------------------------------------------------------
+// CDP connection helpers — cached to avoid redundant HTTP calls
+// ---------------------------------------------------------------------------
+
+/** Fast async health check — replaces the old execFileSync("curl") which spawned a process. */
+export async function isAlfredgable(): Promise<boolean> {
+  try {
+    const res = await fetch(`http://localhost:${CDP_PORT}/json/version`, { signal: AbortSignal.timeout(3_000) });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+/** CDP target list with short TTL cache — avoids repeated /json/list calls within a burst. */
+interface CdpTarget { webSocketDebuggerUrl?: string; type?: string; url?: string; }
+let _cdpTargetsCache: { targets: CdpTarget[]; ts: number } | null = null;
+const CDP_TARGETS_TTL_MS = 10_000; // 10 seconds
+
+export async function getCdpTargets(): Promise<CdpTarget[]> {
+  if (_cdpTargetsCache && Date.now() - _cdpTargetsCache.ts < CDP_TARGETS_TTL_MS) {
+    return _cdpTargetsCache.targets;
+  }
+  const res = await fetch(`http://localhost:${CDP_PORT}/json/list`, { signal: AbortSignal.timeout(5_000) });
+  const targets = await res.json() as CdpTarget[];
+  _cdpTargetsCache = { targets, ts: Date.now() };
+  return targets;
+}
+
+/** Invalidate the target list cache (call after opening/closing tabs). */
+export function invalidateCdpTargetsCache(): void {
+  _cdpTargetsCache = null;
+}
+
 // Cookie names that authenticate Dynamics requests
 const AUTH_COOKIE_NAMES = ["CrmOwinAuthC1", "CrmOwinAuthC2", "CrmOwinAuth"];
 
@@ -36,15 +70,6 @@ function isChromeProcessRunning(): boolean {
   }
 }
 
-function isAlfredgable(): boolean {
-  try {
-    execFileSync("curl", ["-s", "--max-time", "3", `http://localhost:${CDP_PORT}/json/version`], { timeout: 5_000 });
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 function launchAlfred(): void {
   if (isChromeProcessRunning()) {
     console.error("[auth] Alfred process already running — waiting for port to become ready...");
@@ -66,7 +91,7 @@ function launchAlfred(): void {
 async function waitForChrome(timeoutMs = 15_000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    if (isAlfredgable()) return;
+    if (await isAlfredgable()) return;
     await new Promise(r => setTimeout(r, 500));
   }
   throw new Error("Alfred browser did not start in time. Double-click Alfred on your Desktop to launch manually.");
@@ -89,7 +114,7 @@ export function clearAuthCache(): void {
 
 /** Stop the Alfred Chrome process gracefully via CDP Browser.close — cross-platform. */
 export async function exitAlfred(progress: ProgressFn = () => {}): Promise<boolean> {
-  if (!isAlfredgable()) {
+  if (!await isAlfredgable()) {
     progress("ℹ️ Alfred is not running");
     return false;
   }
@@ -115,7 +140,7 @@ export async function exitAlfred(progress: ProgressFn = () => {}): Promise<boole
 
   // Fallback: if CDP close didn't work, try platform-specific kill
   await new Promise(r => setTimeout(r, 500));
-  if (isAlfredgable()) {
+  if (await isAlfredgable()) {
     try {
       if (process.platform === "win32") {
         execFileSync("taskkill", ["/F", "/IM", "chrome.exe", "/FI", `WINDOWTITLE eq *alfred*`], { timeout: 5_000 });
@@ -151,16 +176,18 @@ export async function restartAlfred(progress: ProgressFn = () => {}): Promise<vo
   }
 
   await waitForChrome(20_000);
+  invalidateCdpTargetsCache();
   // Open standard tabs
   // Open one Outlook URL — Microsoft auto-redirects to the right domain for the tenant
   for (const url of [DYNAMICS_URL, OUTLOOK_URLS[0]!, "https://teams.microsoft.com/v2/"]) {
     await fetch(`http://localhost:${CDP_PORT}/json/new?${url}`).catch((e) => { process.stderr.write(`[alfred:warn] failed to open tab ${url}: ${e instanceof Error ? e.message : String(e)}\n`); });
   }
+  invalidateCdpTargetsCache();
   progress("✅ Alfred restarted — please log into Dynamics, Outlook and Teams if needed");
 }
 
 export async function ensureAlfred(progress: ProgressFn = () => {}): Promise<void> {
-  if (isAlfredgable()) {
+  if (await isAlfredgable()) {
     // Alfred is running — verify sessions are still alive
     await verifySessionHealth(progress);
     return;
@@ -171,10 +198,12 @@ export async function ensureAlfred(progress: ProgressFn = () => {}): Promise<voi
   progress("🚀 Launching Alfred automatically...");
   launchAlfred();
   await waitForChrome();
+  invalidateCdpTargetsCache();
   // Open one Outlook URL — Microsoft auto-redirects to the right domain for the tenant
   for (const url of [DYNAMICS_URL, OUTLOOK_URLS[0]!, "https://teams.microsoft.com/v2/"]) {
     await fetch(`http://localhost:${CDP_PORT}/json/new?${url}`).catch((e) => { process.stderr.write(`[alfred:warn] failed to open tab ${url}: ${e instanceof Error ? e.message : String(e)}\n`); });
   }
+  invalidateCdpTargetsCache();
   progress("✅ Alfred ready — please log into Dynamics, Outlook and Teams in the new window");
 }
 
@@ -231,8 +260,7 @@ interface RawCookie { name: string; value: string; expires: number; domain: stri
 
 async function getCookiesViaRawCDP(urls: string[]): Promise<RawCookie[]> {
   // Use any available page target — Network.getCookies works across all domains
-  const listRes = await fetch(`http://localhost:${CDP_PORT}/json/list`);
-  const targets = await listRes.json() as Array<{ webSocketDebuggerUrl?: string; type?: string }>;
+  const targets = await getCdpTargets();
   const target = targets.find(t => t.type === "page" && t.webSocketDebuggerUrl);
   if (!target?.webSocketDebuggerUrl) {
     throw new Error("No browser tabs found. Make sure the Alfred browser is running.");
@@ -358,7 +386,7 @@ export async function getOutlookCookies(progress: ProgressFn = () => {}): Promis
     try {
       progress("🔐 Extracting Outlook cookies via CDP...");
 
-      if (!isAlfredgable()) {
+      if (!await isAlfredgable()) {
         throw new Error("Chrome debug port not available. Launch Alfred from your Desktop first.");
       }
 
