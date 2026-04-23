@@ -1,5 +1,5 @@
-import { execFileSync } from "child_process";
 import type { ProgressFn } from "../auth/tokenExtractor.js";
+import { isAlfredgable, getCdpTargets } from "../auth/tokenExtractor.js";
 import { loadCachedAuth, saveCachedAuth, clearCachedAuthFile } from "../auth/authFileCache.js";
 import { stripHtml, urlHostMatches } from "../shared.js";
 
@@ -443,19 +443,14 @@ export async function acquireTeamsGraphToken(progress: ProgressFn): Promise<stri
     return fileCached.value;
   }
 
-  try {
-    execFileSync("curl", ["-s", "--max-time", "3", `http://localhost:${CDP_PORT}/json/version`], { timeout: 5_000 });
-  } catch {
+  if (!await isAlfredgable()) {
     throw new Error("The Alfred browser is not running. Launch Alfred from your Desktop first.");
   }
 
   progress("🔐 Acquiring Graph token via Teams/Outlook in Alfred...");
 
   // Step 1: try to read Graph token directly from MSAL cache in open tabs (fast, no new page)
-  const listRes = await fetch(`http://localhost:${CDP_PORT}/json/list`).catch(() => null);
-  const targets = listRes?.ok
-    ? await listRes.json() as Array<{ webSocketDebuggerUrl?: string; type?: string; url?: string }>
-    : [];
+  const targets = await getCdpTargets();
 
   // Prefer Teams tab — it has broader Graph scopes (Chat.Read etc.)
   const teamsTarget = targets.find(t => t.type === "page" && t.webSocketDebuggerUrl &&
@@ -468,19 +463,23 @@ export async function acquireTeamsGraphToken(progress: ProgressFn): Promise<stri
     process.stderr.write("[alfred] No Teams tab found in Alfred — Graph token capture may fail. Open teams.microsoft.com/v2/ in Alfred.\n");
   }
 
-  // Try MSAL extraction from each candidate tab
-  for (let attempt = 0; attempt < 3; attempt++) {
-    for (const t of candidates) {
-      const token = await extractGraphTokenFromTab(t.webSocketDebuggerUrl!);
-      if (token) {
-        const expiresAt = Date.now() + TOKEN_CACHE_FALLBACK_MS;
-        teamsTokenCache = { token, expiresAt };
-        saveCachedAuth("teamsGraphToken", token, expiresAt);
-        progress("✅ Graph token acquired from MSAL cache");
-        return token;
-      }
+  // Try MSAL extraction from all candidate tabs in parallel — first success wins
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const results = await Promise.allSettled(
+      candidates.map(t => extractGraphTokenFromTab(t.webSocketDebuggerUrl!))
+    );
+    const token = results
+      .filter((r): r is PromiseFulfilledResult<string | null> => r.status === "fulfilled")
+      .map(r => r.value)
+      .find(v => v != null);
+    if (token) {
+      const expiresAt = Date.now() + TOKEN_CACHE_FALLBACK_MS;
+      teamsTokenCache = { token, expiresAt };
+      saveCachedAuth("teamsGraphToken", token, expiresAt);
+      progress("✅ Graph token acquired from MSAL cache");
+      return token;
     }
-    if (attempt < 2) await new Promise(r => setTimeout(r, 2_000));
+    if (attempt < 1) await new Promise(r => setTimeout(r, 1_000));
   }
 
   // Step 2: Silent Azure AD auth — open a temporary CDP tab, navigate to the
@@ -543,18 +542,13 @@ async function acquireSkypeToken(progress: ProgressFn): Promise<{ token: string;
     return { token: fileCached.value, region };
   }
 
-  try {
-    execFileSync("curl", ["-s", "--max-time", "3", `http://localhost:${CDP_PORT}/json/version`], { timeout: 5_000 });
-  } catch {
+  if (!await isAlfredgable()) {
     throw new Error("The Alfred browser is not running. Launch Alfred from your Desktop first.");
   }
 
   progress("🔑 Extracting Teams chat token from browser cookies...");
 
-  const listRes = await fetch(`http://localhost:${CDP_PORT}/json/list`).catch(() => null);
-  const targets = listRes?.ok
-    ? await listRes.json() as Array<{ webSocketDebuggerUrl?: string; type?: string; url?: string }>
-    : [];
+  const targets = await getCdpTargets();
 
   const anyPage = targets.find(t => t.type === "page" && t.webSocketDebuggerUrl);
   if (!anyPage?.webSocketDebuggerUrl) {
@@ -938,8 +932,16 @@ export async function getTeamsChats(opts: {
   progress(`✅ Found ${chats.length} chat(s)`);
 
   if (opts.includeMessages) {
-    for (const chat of chats) {
-      chat.messages = await fetchSkypeChatMessages(chat.chatId, token, region, 25, progress);
+    const MSG_BATCH = 5;
+    for (let i = 0; i < chats.length; i += MSG_BATCH) {
+      const batch = chats.slice(i, i + MSG_BATCH);
+      const results = await Promise.allSettled(
+        batch.map(chat => fetchSkypeChatMessages(chat.chatId, token, region, 25, progress))
+      );
+      for (let j = 0; j < results.length; j++) {
+        const result = results[j]!;
+        batch[j]!.messages = result.status === "fulfilled" ? result.value : [];
+      }
     }
   }
 

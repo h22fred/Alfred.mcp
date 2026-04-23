@@ -20,18 +20,24 @@ interface CacheFile {
   outlookRestToken?: CacheEntry;
 }
 
+let _memCache: CacheFile | null = null;
+
 function readCache(): CacheFile {
+  if (_memCache !== null) return _memCache;
   try {
     if (existsSync(CACHE_FILE)) {
-      return JSON.parse(readFileSync(CACHE_FILE, "utf8")) as CacheFile;
+      _memCache = JSON.parse(readFileSync(CACHE_FILE, "utf8")) as CacheFile;
+      return _memCache;
     }
   } catch (e) {
     process.stderr.write(`[alfred:warn] auth cache read failed: ${e instanceof Error ? e.message : String(e)}\n`);
   }
-  return {};
+  _memCache = {};
+  return _memCache;
 }
 
 function writeCache(cache: CacheFile): void {
+  _memCache = cache;
   try {
     writeFileSync(CACHE_FILE, JSON.stringify(cache, null, 2), { mode: 0o600 });
   } catch (e) {
@@ -54,6 +60,7 @@ export function saveCachedAuth(key: CacheKey, value: string, expiresAt: number):
 
 export function clearCachedAuthFile(key?: CacheKey): void {
   if (!key) {
+    _memCache = null;
     try { unlinkSync(CACHE_FILE); } catch { /* file may not exist */ }
     return;
   }

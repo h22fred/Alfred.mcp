@@ -368,25 +368,24 @@ export async function fetchOpportunities(filter: OpportunityFilter = {}, progres
     `&$orderby=estimatedclosedate asc` +
     `&$top=${top}`;
 
-  const res = await dynamicsFetch(path, {}, progress);
-  const data = await res.json();
+  const needsCollabValidation = filter.myOpportunitiesOnly && !filteredByCollab && filter.myOppsFilterField !== "owner";
+
+  const mainFetch = dynamicsFetch(path, {}, progress).then(res => res.json());
+  const collabFetch = needsCollabValidation
+    ? fetchMyCollaborationOpportunities(progress)
+    : null;
+
+  const [data, collabOpps] = await Promise.all([mainFetch, collabFetch]);
   let results = (data.value ?? []).map(mapOpportunity);
 
-  // When filtering to "my opps" by SC field, cross-reference against the collaboration
-  // team table which is the authoritative source of SC assignment. The denormalised
-  // _sn_solutionconsultant_value field can be stale/incorrect.
-  // Skip for owner-based filtering (AEs) and collab-based filtering (already authoritative).
-  if (filter.myOpportunitiesOnly && !filteredByCollab && filter.myOppsFilterField !== "owner" && results.length > 0) {
+  if (collabOpps && results.length > 0) {
     progress("🔍 Validating against collaboration team...");
-    const collabOpps = await fetchMyCollaborationOpportunities(progress);
     const collabIds = new Set(collabOpps.map(o => o.opportunityid));
-    // Flag opps where the user isn't on the collab team (stale scName)
     for (const opp of results) {
       if (!collabIds.has(opp.opportunityid)) {
         opp.scNameMismatch = true;
       }
     }
-    // Drop opps where user isn't on the collab team at all
     const before = results.length;
     results = results.filter((o: Opportunity) => !o.scNameMismatch);
     if (before > results.length) {

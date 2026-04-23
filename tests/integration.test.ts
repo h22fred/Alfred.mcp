@@ -777,3 +777,208 @@ describe("post-meeting candidate matching", () => {
     expect(matchReason).toBe("organizer");
   });
 });
+
+// ---------------------------------------------------------------------------
+// listMailFolders — parallel child folder batching
+// ---------------------------------------------------------------------------
+describe("listMailFolders parallel child folder batching", () => {
+  let listMailFolders: typeof import("../src/tools/outlookClient.js").listMailFolders;
+  let _seedOutlookRestTokenCache: typeof import("../src/tools/outlookClient.js")._seedOutlookRestTokenCache;
+  let fetchSpy: ReturnType<typeof vi.fn>;
+
+  beforeEach(async () => {
+    vi.resetModules();
+
+    vi.doMock("../src/auth/tokenExtractor.js", () => ({
+      getAuthCookies: vi.fn().mockResolvedValue("mock-cookie"),
+      clearAuthCache: vi.fn(),
+      clearMemoryAuthCache: vi.fn(),
+      connectWithRetry: vi.fn(),
+      isAlfredgable: vi.fn().mockResolvedValue(true),
+      getCdpTargets: vi.fn().mockResolvedValue([]),
+    }));
+    vi.doMock("../src/config.js", () => ({
+      DYNAMICS_HOST: "https://test.crm.dynamics.com",
+      ENGAGEMENT_TYPE_GUIDS: {},
+      ALL_ENGAGEMENT_TYPES: [],
+      alfredConfig: {},
+    }));
+    vi.doMock("os", async (importOriginal) => {
+      const actual = await importOriginal() as typeof import("os");
+      return { ...actual, userInfo: () => ({ username: "testuser" }) };
+    });
+    vi.doMock("../src/auth/authFileCache.js", () => ({
+      loadCachedAuth: vi.fn().mockReturnValue(null),
+      saveCachedAuth: vi.fn(),
+      clearCachedAuthFile: vi.fn(),
+    }));
+
+    fetchSpy = vi.fn();
+    vi.stubGlobal("fetch", fetchSpy);
+
+    const mod = await import("../src/tools/outlookClient.js");
+    listMailFolders = mod.listMailFolders;
+    _seedOutlookRestTokenCache = mod._seedOutlookRestTokenCache;
+    _seedOutlookRestTokenCache("mock-rest-token");
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  });
+
+  const makeFolder = (id: string, name: string, children: number) => ({
+    id, displayName: name, parentFolderId: "root",
+    childFolderCount: children, totalItemCount: 0, unreadItemCount: 0,
+  });
+
+  it("collects children from all parents including parallel batch members", async () => {
+    fetchSpy.mockImplementation((url: string) => {
+      const u = String(url);
+      if (u.includes("childfolders")) {
+        const parentId = u.match(/mailfolders\/([^/]+)\/childfolders/)?.[1] ?? "x";
+        return Promise.resolve(mockResponse({
+          value: [makeFolder(`child-of-${parentId}`, `Child of ${parentId}`, 0)],
+        }, { contentType: "application/json" }));
+      }
+      return Promise.resolve(mockResponse({
+        value: [makeFolder("p1", "Parent1", 1), makeFolder("p2", "Parent2", 1), makeFolder("p3", "Leaf", 0)],
+      }, { contentType: "application/json" }));
+    });
+
+    const folders = await listMailFolders(() => {});
+    expect(folders).toHaveLength(5); // 3 root + 2 children
+    expect(folders.map(f => f.id)).toContain("child-of-p1");
+    expect(folders.map(f => f.id)).toContain("child-of-p2");
+    expect(fetchSpy).toHaveBeenCalledTimes(3); // 1 root + 2 child fetches
+  });
+
+  it("continues collecting sibling children when one parent's fetch fails", async () => {
+    fetchSpy.mockImplementation((url: string) => {
+      const u = String(url);
+      if (u.includes("mailfolders/p1/childfolders")) {
+        return Promise.resolve(mockResponse(
+          { value: [makeFolder("child-p1", "Good Child", 0)] },
+          { contentType: "application/json" }
+        ));
+      }
+      if (u.includes("mailfolders/p2/childfolders")) {
+        return Promise.resolve(mockResponse("Server Error", { status: 500, statusText: "Internal Server Error", contentType: "text/plain" }));
+      }
+      return Promise.resolve(mockResponse(
+        { value: [makeFolder("p1", "Parent1", 1), makeFolder("p2", "Parent2", 1)] },
+        { contentType: "application/json" }
+      ));
+    });
+
+    const folders = await listMailFolders(() => {});
+    // p2's child fetch failed but p1's child is still collected
+    expect(folders).toHaveLength(3); // 2 root + 1 surviving child
+    expect(folders.map(f => f.id)).toContain("child-p1");
+    expect(folders.map(f => f.id)).not.toContain("child-p2");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// fetchOpportunities — parallel collab validation
+// ---------------------------------------------------------------------------
+describe("fetchOpportunities parallel collab validation", () => {
+  let fetchOpportunities: typeof import("../src/tools/dynamicsClient.js").fetchOpportunities;
+  let fetchSpy: ReturnType<typeof vi.fn>;
+
+  const USER_ID  = "aabbccdd-1234-5678-9abc-def012345678";
+  const VALID_ID = "11111111-aaaa-bbbb-cccc-000000000001";
+  const STALE_ID = "22222222-aaaa-bbbb-cccc-000000000002";
+
+  beforeEach(async () => {
+    vi.resetModules();
+    vi.doMock("../src/auth/tokenExtractor.js", () => ({
+      getAuthCookies: vi.fn().mockResolvedValue("CrmOwinAuth=mock"),
+      clearAuthCache: vi.fn(),
+      clearMemoryAuthCache: vi.fn(),
+      connectWithRetry: vi.fn(),
+    }));
+    vi.doMock("../src/config.js", () => ({
+      DYNAMICS_HOST: "https://test.crm.dynamics.com",
+      ENGAGEMENT_TYPE_GUIDS: {},
+      ALL_ENGAGEMENT_TYPES: [],
+      alfredConfig: {},
+    }));
+    vi.doMock("os", async (importOriginal) => {
+      const actual = await importOriginal() as typeof import("os");
+      return { ...actual, userInfo: () => ({ username: "testuser" }) };
+    });
+    vi.doMock("../src/auth/authFileCache.js", () => ({
+      loadCachedAuth: vi.fn().mockReturnValue(null),
+      saveCachedAuth: vi.fn(),
+      clearCachedAuthFile: vi.fn(),
+    }));
+
+    fetchSpy = vi.fn();
+    vi.stubGlobal("fetch", fetchSpy);
+    const mod = await import("../src/tools/dynamicsClient.js");
+    fetchOpportunities = mod.fetchOpportunities;
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  });
+
+  it("filters out opps not on the collab team (stale SC assignment)", async () => {
+    fetchSpy.mockImplementation((url: string) => {
+      const u = String(url);
+      if (u.includes("/WhoAmI")) {
+        return Promise.resolve(mockResponse({ UserId: USER_ID }, { contentType: "application/json" }));
+      }
+      if (u.includes("sn_opportunitycollaborationteams")) {
+        return Promise.resolve(mockResponse(
+          { value: [{ _sn_opportunity_value: VALID_ID }] },
+          { contentType: "application/json" }
+        ));
+      }
+      // Collab batch opp detail fetch
+      if (u.includes(`opportunityid eq ${VALID_ID}`)) {
+        return Promise.resolve(mockResponse({
+          value: [{ opportunityid: VALID_ID, name: "Valid", statuscode: 1, parentaccountid: { accountid: "a", name: "Acme" } }],
+        }, { contentType: "application/json" }));
+      }
+      // Main opportunities query
+      if (u.includes("/opportunities")) {
+        return Promise.resolve(mockResponse({
+          value: [
+            { opportunityid: VALID_ID, name: "Valid", statuscode: 1, parentaccountid: { accountid: "a", name: "Acme" } },
+            { opportunityid: STALE_ID, name: "Stale", statuscode: 1, parentaccountid: { accountid: "b", name: "OldCo" } },
+          ],
+        }, { contentType: "application/json" }));
+      }
+      return Promise.resolve(mockResponse({ value: [] }, { contentType: "application/json" }));
+    });
+
+    const results = await fetchOpportunities({ myOpportunitiesOnly: true }, () => {});
+    expect(results).toHaveLength(1);
+    expect(results[0].opportunityid).toBe(VALID_ID);
+
+    const urls = fetchSpy.mock.calls.map(c => String(c[0]));
+    expect(urls.some(u => u.includes("sn_opportunitycollaborationteams"))).toBe(true);
+    expect(urls.some(u => u.includes("/opportunities"))).toBe(true);
+  });
+
+  it("skips collab validation and WhoAmI when myOpportunitiesOnly is false", async () => {
+    fetchSpy.mockImplementation((url: string) => {
+      if (String(url).includes("/opportunities")) {
+        return Promise.resolve(mockResponse({
+          value: [{ opportunityid: VALID_ID, name: "Any", statuscode: 1, parentaccountid: { accountid: "a", name: "Acme" } }],
+        }, { contentType: "application/json" }));
+      }
+      return Promise.resolve(mockResponse({ value: [] }, { contentType: "application/json" }));
+    });
+
+    const results = await fetchOpportunities({ myOpportunitiesOnly: false }, () => {});
+    expect(results).toHaveLength(1);
+
+    const urls = fetchSpy.mock.calls.map(c => String(c[0]));
+    expect(urls.every(u => !u.includes("WhoAmI"))).toBe(true);
+    expect(urls.every(u => !u.includes("sn_opportunitycollaborationteams"))).toBe(true);
+  });
+});

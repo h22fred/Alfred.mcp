@@ -1,7 +1,7 @@
 import { execFileSync } from "child_process";
 import { dirname, join } from "path";
 import { fileURLToPath } from "url";
-import { connectWithRetry } from "../auth/tokenExtractor.js";
+import { connectWithRetry, getCdpTargets } from "../auth/tokenExtractor.js";
 import type { ProgressFn } from "../auth/tokenExtractor.js";
 import { loadCachedAuth, saveCachedAuth, clearCachedAuthFile } from "../auth/authFileCache.js";
 import { stripHtml, urlHostMatches } from "../shared.js";
@@ -17,20 +17,22 @@ function isOutlookUrl(url: string): boolean {
   return OUTLOOK_DOMAINS.some(d => urlHostMatches(url, d));
 }
 
-/** Quick check if an Alfred update is available — returns hint string or empty. */
+let _updateHintCache: string | null = null;
 function checkForAlfredUpdate(): string {
+  if (_updateHintCache !== null) return _updateHintCache;
   try {
     const __fn = fileURLToPath(import.meta.url);
     const installDir = join(dirname(__fn), "..", "..");
     const localSha = execFileSync("git", ["-C", installDir, "rev-parse", "--short", "HEAD"], { encoding: "utf8", timeout: 5_000 }).trim();
-    // Use already-fetched remote ref (git fetch runs at startup) — don't block on network here
     const remoteSha = execFileSync("git", ["-C", installDir, "rev-parse", "--short", "origin/main"], { encoding: "utf8", timeout: 3_000 }).trim();
     if (localSha !== remoteSha) {
       const behind = execFileSync("git", ["-C", installDir, "rev-list", "--count", `${localSha}..origin/main`], { encoding: "utf8", timeout: 3_000 }).trim();
-      return `\n\n💡 An Alfred update is available (${behind} commit(s) behind). Ask Claude to run "update_alfred" — this may fix the issue.`;
+      _updateHintCache = `\n\n💡 An Alfred update is available (${behind} commit(s) behind). Ask Claude to run "update_alfred" — this may fix the issue.`;
+    } else {
+      _updateHintCache = "";
     }
-  } catch { /* git not available or not a git repo */ }
-  return "";
+  } catch { _updateHintCache = ""; }
+  return _updateHintCache;
 }
 
 /**
@@ -157,8 +159,7 @@ async function acquireGraphTokenRawCDP(progress: ProgressFn): Promise<string> {
 
   progress("🔑 Acquiring Graph Bearer token via CDP...");
 
-  const listRes = await fetch(`http://localhost:${CDP_PORT}/json/list`);
-  const targets = await listRes.json() as Array<{ webSocketDebuggerUrl?: string; type?: string; url?: string }>;
+  const targets = await getCdpTargets();
 
   // Prefer Teams tab — it actually talks to graph.microsoft.com.
   // Outlook uses the Outlook REST API (outlook.office.com), so its MSAL cache
@@ -436,8 +437,7 @@ async function verifyOutlookConnection(progress: ProgressFn): Promise<void> {
   // Step 1: Can we reach the Alfred browser (CDP)?
   let targets: Array<{ type?: string; url?: string; webSocketDebuggerUrl?: string }>;
   try {
-    const res = await fetch(`http://localhost:${CDP_PORT}/json/list`, { signal: AbortSignal.timeout(3_000) });
-    targets = await res.json() as typeof targets;
+    targets = await getCdpTargets();
   } catch {
     throw new Error(
       "Cannot connect to Alfred — the Alfred browser window is not running or CDP is not reachable.\n" +
@@ -496,8 +496,7 @@ async function acquireOutlookRestToken(progress: ProgressFn): Promise<string> {
 
   progress("🔑 Acquiring Outlook REST token via CDP...");
 
-  const listRes = await fetch(`http://localhost:${CDP_PORT}/json/list`);
-  const targets = await listRes.json() as Array<{ webSocketDebuggerUrl?: string; type?: string; url?: string }>;
+  const targets = await getCdpTargets();
 
   // Detect which Outlook domain is open — sets detectedOutlookOrigin for API URL resolution
   if (!detectedOutlookOrigin) {
@@ -1001,24 +1000,30 @@ export async function listMailFolders(progress: ProgressFn = () => {}): Promise<
 
   const folders = (data.value as Record<string, unknown>[] ?? []).map(mapFolder);
 
-  // Recursively fetch child folders (Clients → PMI - Philip Morris → …)
   const MAX_DEPTH = 4;
+  const CHILD_BATCH = 5;
   const fetchChildren = async (parents: MailFolder[], depth: number) => {
     if (depth >= MAX_DEPTH) return;
     const withChildren = parents.filter(f => f.childFolderCount > 0);
-    for (const parent of withChildren) {
-      try {
-        const childData = await outlookApiFetch(
-          `/mailfolders/${parent.id}/childfolders?${SELECT}`,
-          token, progress
-        );
-        const children = (childData.value as Record<string, unknown>[] ?? []).map(mapFolder);
-        folders.push(...children);
-        // Recurse into children that also have subfolders
-        await fetchChildren(children, depth + 1);
-      } catch (e) {
-        process.stderr.write(`[alfred:warn] child folder fetch failed for "${parent.displayName}" (${parent.id}): ${e instanceof Error ? e.message : String(e)}\n`);
+    for (let i = 0; i < withChildren.length; i += CHILD_BATCH) {
+      const batch = withChildren.slice(i, i + CHILD_BATCH);
+      const results = await Promise.allSettled(
+        batch.map(parent =>
+          outlookApiFetch(`/mailfolders/${parent.id}/childfolders?${SELECT}`, token, progress)
+            .then(data => (data.value as Record<string, unknown>[] ?? []).map(mapFolder))
+        )
+      );
+      const allChildren: MailFolder[] = [];
+      for (let j = 0; j < results.length; j++) {
+        const result = results[j]!;
+        if (result.status === "fulfilled") {
+          folders.push(...result.value);
+          allChildren.push(...result.value);
+        } else {
+          process.stderr.write(`[alfred:warn] child folder fetch failed for "${batch[j]!.displayName}" (${batch[j]!.id}): ${result.reason instanceof Error ? result.reason.message : String(result.reason)}\n`);
+        }
       }
+      await fetchChildren(allChildren, depth + 1);
     }
   };
   await fetchChildren(folders, 0);
