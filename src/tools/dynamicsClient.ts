@@ -50,25 +50,36 @@ export interface Opportunity {
   statuscode: number;
   statusName?: string;
   estimatedclosedate?: string;
+  createdon?: string;
+  modifiedon?: string;
   msdyn_forecastcategory?: number;
-  forecastCategoryName?: string;
+  forecastCategoryName?: string;   // from sn_forecastcategory (SN field, matches UI)
   ownerName?: string;
+  aeName?: string;                 // _sn_fieldsalesrep_value — the actual AE
   scName?: string;
-  totalamount?: number;  // Total ACV (full contract value)
-  nnacv?: number;        // Net New ACV (sn_netnewacv) — the real NNACV
+  totalamount?: number;            // Total ACV (full contract value)
+  nnacv?: number;                  // Net New ACV (sn_netnewacv)
+  currencyCode?: string;           // e.g. "CHF"
+  closeQuarter?: string;           // e.g. "26-Q2"
+  ptcInQuarter?: number;           // Probability to Close in quarter (sn_probabilitytocloseinquarter)
   // Extended fields
-  opportunityType?: string;       // e.g. "Order Reset", "New Business"
-  salesStage?: string;            // e.g. "7 - Deal Imminent"
-  probability?: number;           // e.g. 90
-  businessUnitList?: string;      // e.g. "Customer Service, ITSM, AI Platform Foundations, Impact"
+  opportunityType?: string;        // e.g. "Upsell", "New Business"
+  salesStage?: string;             // e.g. "4 - Present Solution"
+  probability?: number;            // e.g. 20
+  businessUnitList?: string;       // e.g. "Impact, Sales CRM"
   dealChampion?: string;
   industrySolution?: string;
-  description?: string;           // opportunity description / notes
+  description?: string;
   isCompetitive?: boolean;
   winLossReason?: string;
   winLossNotes?: string;
-  aeNotes?: string;                 // sn_activitycustomnotes — AE activity/custom notes
-  territoryName?: string;           // e.g. "CHLPC-TER-6" or "LUX-CPG-Switzerland"
+  territoryName?: string;          // e.g. "CHLPC-TER-3"
+  recordUrl?: string;              // sn_recordurl — pre-built Dynamics deep link
+  // SC milestone statuses (detail view)
+  scDemo?: string;                 // e.g. "Yes", "No", "In Progress"
+  scTechnicalWin?: string;
+  scPov?: string;
+  scWorkshops?: string;
   /** True when scName doesn't match the authenticated user — field may be stale */
   scNameMismatch?: boolean;
 }
@@ -215,14 +226,22 @@ function mapOpportunity(r: Record<string, unknown>): Opportunity {
     statuscode:          r.statuscode as number,
     statusName:          r["statuscode@OData.Community.Display.V1.FormattedValue"] as string | undefined,
     estimatedclosedate:  r.estimatedclosedate as string | undefined,
+    createdon:           r.createdon as string | undefined,
+    modifiedon:          r.modifiedon as string | undefined,
     msdyn_forecastcategory: forecastCode,
-    forecastCategoryName: r["msdyn_forecastcategory@OData.Community.Display.V1.FormattedValue"] as string
+    // sn_forecastcategory is SN's custom field — matches what the UI shows (e.g. "Upside")
+    // msdyn_forecastcategory is Microsoft's field ("Pipeline") — used as fallback only
+    forecastCategoryName: r["sn_forecastcategory@OData.Community.Display.V1.FormattedValue"] as string
+                          ?? r["msdyn_forecastcategory@OData.Community.Display.V1.FormattedValue"] as string
                           ?? (forecastCode ? (FORECAST_NAMES[forecastCode] ?? String(forecastCode)) : undefined),
     ownerName:           r["_ownerid_value@OData.Community.Display.V1.FormattedValue"] as string | undefined,
+    aeName:              r["_sn_fieldsalesrep_value@OData.Community.Display.V1.FormattedValue"] as string | undefined,
     scName:              r["_sn_solutionconsultant_value@OData.Community.Display.V1.FormattedValue"] as string | undefined,
     totalamount:         r.totalamount as number | undefined,
     nnacv:               r.sn_netnewacv as number | undefined,
-    // Extended fields (field names verified against Dynamics EntityDefinitions metadata)
+    currencyCode:        r.sn_currencycode as string | undefined,
+    closeQuarter:        r.sn_closequarter as string | undefined,
+    ptcInQuarter:        r.sn_probabilitytocloseinquarter as number | undefined,
     opportunityType:     r["sn_opportunitytype@OData.Community.Display.V1.FormattedValue"] as string | undefined,
     salesStage:          r["sn_salesstage@OData.Community.Display.V1.FormattedValue"] as string
                          ?? r["stepname"] as string | undefined,
@@ -234,8 +253,12 @@ function mapOpportunity(r: Record<string, unknown>): Opportunity {
     isCompetitive:       r.sn_noncompetitive != null ? !(r.sn_noncompetitive as boolean) : undefined,
     winLossReason:       r["sn_winlossnodecisionreason@OData.Community.Display.V1.FormattedValue"] as string | undefined,
     winLossNotes:        r.sn_winlossnodecisionnotes as string | undefined,
-    aeNotes:             r.sn_activitycustomnotes as string | undefined,
-    territoryName:       undefined, // territory lookup field not available on this tenant
+    territoryName:       r["_sn_fieldterritory_value@OData.Community.Display.V1.FormattedValue"] as string | undefined,
+    recordUrl:           r.sn_recordurl as string | undefined,
+    scDemo:              r["sn_scdemo@OData.Community.Display.V1.FormattedValue"] as string | undefined,
+    scTechnicalWin:      r["sn_sctechnicalwin@OData.Community.Display.V1.FormattedValue"] as string | undefined,
+    scPov:               r["sn_scpov@OData.Community.Display.V1.FormattedValue"] as string | undefined,
+    scWorkshops:         r["sn_scworkshops@OData.Community.Display.V1.FormattedValue"] as string | undefined,
   };
 }
 
@@ -362,7 +385,7 @@ export async function fetchOpportunities(filter: OpportunityFilter = {}, progres
     }
   }
 
-  const selectFields = "opportunityid,sn_number,name,_accountid_value,_ownerid_value,_sn_solutionconsultant_value,statuscode,estimatedclosedate,totalamount,sn_netnewacv,msdyn_forecastcategory,stepname,sn_salesstage,closeprobability,sn_opportunitytype,sn_opportunitybusinessunitlist";
+  const selectFields = "opportunityid,sn_number,name,_accountid_value,_ownerid_value,_sn_solutionconsultant_value,_sn_fieldsalesrep_value,_sn_fieldterritory_value,statuscode,estimatedclosedate,createdon,modifiedon,totalamount,sn_netnewacv,sn_forecastcategory,msdyn_forecastcategory,stepname,sn_salesstage,closeprobability,sn_opportunitytype,sn_opportunitybusinessunitlist,sn_currencycode,sn_closequarter,sn_probabilitytocloseinquarter";
 
   const path =
     `/opportunities` +
@@ -431,10 +454,10 @@ export async function resolveOpportunityId(input: string, progress: ProgressFn =
 
 export async function fetchOpportunityById(id: string, progress: ProgressFn = () => {}): Promise<Opportunity> {
   progress(`📡 Fetching opportunity ${id}...`);
-  const baseFields = "opportunityid,sn_number,name,_accountid_value,_ownerid_value,_sn_solutionconsultant_value,statuscode,estimatedclosedate,totalamount,sn_netnewacv,msdyn_forecastcategory,stepname,sn_salesstage,closeprobability,sn_opportunitytype,sn_opportunitybusinessunitlist";
+  const baseFields = "opportunityid,sn_number,name,_accountid_value,_ownerid_value,_sn_solutionconsultant_value,_sn_fieldsalesrep_value,_sn_fieldterritory_value,statuscode,estimatedclosedate,createdon,modifiedon,totalamount,sn_netnewacv,sn_forecastcategory,msdyn_forecastcategory,stepname,sn_salesstage,closeprobability,sn_opportunitytype,sn_opportunitybusinessunitlist,sn_currencycode,sn_closequarter,sn_probabilitytocloseinquarter";
   // Enrichment fields for single-opp detail view — may not exist in all instances
   // sn_industrysolution is Virtual — excluded from $select, may come through via annotations
-  const enrichFields = ",_sn_executivesponsor_value,description,sn_noncompetitive,sn_winlossnodecisionreason,sn_winlossnodecisionnotes";
+  const enrichFields = ",_sn_executivesponsor_value,description,sn_noncompetitive,sn_winlossnodecisionreason,sn_winlossnodecisionnotes,sn_recordurl,sn_scdemo,sn_sctechnicalwin,sn_scpov,sn_scworkshops";
   const expand = "&$expand=parentaccountid($select=accountid,name)";
 
   let res: Response;
@@ -1674,7 +1697,7 @@ export async function fetchMyCollaborationOpportunities(
   for (let i = 0; i < oppIds.length; i += 15) {
     const batch = oppIds.slice(i, i + 15);
     const idFilter = batch.map(id => `opportunityid eq ${id}`).join(" or ");
-    const selectFields = "opportunityid,sn_number,name,_accountid_value,_ownerid_value,_sn_solutionconsultant_value,statuscode,estimatedclosedate,totalamount,sn_netnewacv,msdyn_forecastcategory,stepname,sn_salesstage,closeprobability,sn_opportunitytype,sn_opportunitybusinessunitlist";
+    const selectFields = "opportunityid,sn_number,name,_accountid_value,_ownerid_value,_sn_solutionconsultant_value,_sn_fieldsalesrep_value,_sn_fieldterritory_value,statuscode,estimatedclosedate,createdon,modifiedon,totalamount,sn_netnewacv,sn_forecastcategory,msdyn_forecastcategory,stepname,sn_salesstage,closeprobability,sn_opportunitytype,sn_opportunitybusinessunitlist,sn_currencycode,sn_closequarter,sn_probabilitytocloseinquarter";
     const path =
       `/opportunities?$select=${selectFields}` +
       `&$expand=parentaccountid($select=accountid,name)` +
