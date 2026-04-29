@@ -67,6 +67,7 @@ export interface Opportunity {
   isCompetitive?: boolean;
   winLossReason?: string;
   winLossNotes?: string;
+  aeNotes?: string;                 // sn_activitycustomnotes — AE activity/custom notes
   territoryName?: string;           // e.g. "CHLPC-TER-6" or "LUX-CPG-Switzerland"
   /** True when scName doesn't match the authenticated user — field may be stale */
   scNameMismatch?: boolean;
@@ -215,14 +216,16 @@ function mapOpportunity(r: Record<string, unknown>): Opportunity {
     statusName:          r["statuscode@OData.Community.Display.V1.FormattedValue"] as string | undefined,
     estimatedclosedate:  r.estimatedclosedate as string | undefined,
     msdyn_forecastcategory: forecastCode,
-    forecastCategoryName: forecastCode ? (FORECAST_NAMES[forecastCode] ?? String(forecastCode)) : undefined,
+    forecastCategoryName: r["msdyn_forecastcategory@OData.Community.Display.V1.FormattedValue"] as string
+                          ?? (forecastCode ? (FORECAST_NAMES[forecastCode] ?? String(forecastCode)) : undefined),
     ownerName:           r["_ownerid_value@OData.Community.Display.V1.FormattedValue"] as string | undefined,
     scName:              r["_sn_solutionconsultant_value@OData.Community.Display.V1.FormattedValue"] as string | undefined,
     totalamount:         r.totalamount as number | undefined,
     nnacv:               r.sn_netnewacv as number | undefined,
     // Extended fields (field names verified against Dynamics EntityDefinitions metadata)
     opportunityType:     r["sn_opportunitytype@OData.Community.Display.V1.FormattedValue"] as string | undefined,
-    salesStage:          r["stepname"] as string | undefined,
+    salesStage:          r["sn_salesstagecode@OData.Community.Display.V1.FormattedValue"] as string
+                         ?? r["stepname"] as string | undefined,
     probability:         r.closeprobability as number | undefined,
     businessUnitList:    r.sn_opportunitybusinessunitlist as string | undefined,
     dealChampion:        r["_sn_executivesponsor_value@OData.Community.Display.V1.FormattedValue"] as string | undefined,
@@ -231,6 +234,7 @@ function mapOpportunity(r: Record<string, unknown>): Opportunity {
     isCompetitive:       r.sn_noncompetitive != null ? !(r.sn_noncompetitive as boolean) : undefined,
     winLossReason:       r["sn_winlossnodecisionreason@OData.Community.Display.V1.FormattedValue"] as string | undefined,
     winLossNotes:        r.sn_winlossnodecisionnotes as string | undefined,
+    aeNotes:             r.sn_activitycustomnotes as string | undefined,
     territoryName:       undefined, // territory lookup field not available on this tenant
   };
 }
@@ -358,7 +362,7 @@ export async function fetchOpportunities(filter: OpportunityFilter = {}, progres
     }
   }
 
-  const selectFields = "opportunityid,sn_number,name,_accountid_value,_ownerid_value,_sn_solutionconsultant_value,statuscode,estimatedclosedate,totalamount,sn_netnewacv,msdyn_forecastcategory,stepname,closeprobability,sn_opportunitytype,sn_opportunitybusinessunitlist";
+  const selectFields = "opportunityid,sn_number,name,_accountid_value,_ownerid_value,_sn_solutionconsultant_value,statuscode,estimatedclosedate,totalamount,sn_netnewacv,msdyn_forecastcategory,stepname,sn_salesstagecode,closeprobability,sn_opportunitytype,sn_opportunitybusinessunitlist";
 
   const path =
     `/opportunities` +
@@ -427,10 +431,10 @@ export async function resolveOpportunityId(input: string, progress: ProgressFn =
 
 export async function fetchOpportunityById(id: string, progress: ProgressFn = () => {}): Promise<Opportunity> {
   progress(`📡 Fetching opportunity ${id}...`);
-  const baseFields = "opportunityid,sn_number,name,_accountid_value,_ownerid_value,_sn_solutionconsultant_value,statuscode,estimatedclosedate,totalamount,sn_netnewacv,msdyn_forecastcategory,stepname,closeprobability,sn_opportunitytype,sn_opportunitybusinessunitlist";
+  const baseFields = "opportunityid,sn_number,name,_accountid_value,_ownerid_value,_sn_solutionconsultant_value,statuscode,estimatedclosedate,totalamount,sn_netnewacv,msdyn_forecastcategory,stepname,sn_salesstagecode,closeprobability,sn_opportunitytype,sn_opportunitybusinessunitlist";
   // Enrichment fields for single-opp detail view — may not exist in all instances
   // sn_industrysolution is Virtual — excluded from $select, may come through via annotations
-  const enrichFields = ",_sn_executivesponsor_value,description,sn_noncompetitive,sn_winlossnodecisionreason,sn_winlossnodecisionnotes";
+  const enrichFields = ",_sn_executivesponsor_value,description,sn_noncompetitive,sn_winlossnodecisionreason,sn_winlossnodecisionnotes,sn_activitycustomnotes";
   const expand = "&$expand=parentaccountid($select=accountid,name)";
 
   let res: Response;
@@ -1059,7 +1063,7 @@ export interface CollaborationNote {
 function mapCollabNote(r: Record<string, unknown>): CollaborationNote {
   const noteTypeCode = r.sn_notetype as number | undefined;
   return {
-    id: r.sn_collaborationnoteid as string ?? r.activityid as string ?? "",
+    id: r.sn_activitycustomnoteid as string ?? r.sn_collaborationnoteid as string ?? r.activityid as string ?? "",
     noteType: (r["sn_notetype@OData.Community.Display.V1.FormattedValue"] as string)
               ?? COLLAB_NOTE_TYPE_NAMES[noteTypeCode ?? -1]
               ?? String(noteTypeCode ?? "Unknown"),
@@ -1075,6 +1079,7 @@ function mapCollabNote(r: Record<string, unknown>): CollaborationNote {
 
 // Auto-discover the correct entity set name for Collaboration Notes (varies by Dynamics instance)
 const COLLAB_NOTE_ENTITY_CANDIDATES = [
+  "sn_activitycustomnotes",       // confirmed correct entity on this tenant
   "sn_collaborationnotes",        // plural (standard ServiceNow pattern)
   "sn_collaborationnote",         // singular
   "sn_salescollaborationnotes",   // alternate naming
@@ -1669,7 +1674,7 @@ export async function fetchMyCollaborationOpportunities(
   for (let i = 0; i < oppIds.length; i += 15) {
     const batch = oppIds.slice(i, i + 15);
     const idFilter = batch.map(id => `opportunityid eq ${id}`).join(" or ");
-    const selectFields = "opportunityid,sn_number,name,_accountid_value,_ownerid_value,_sn_solutionconsultant_value,statuscode,estimatedclosedate,totalamount,sn_netnewacv,msdyn_forecastcategory,stepname,closeprobability,sn_opportunitytype,sn_opportunitybusinessunitlist";
+    const selectFields = "opportunityid,sn_number,name,_accountid_value,_ownerid_value,_sn_solutionconsultant_value,statuscode,estimatedclosedate,totalamount,sn_netnewacv,msdyn_forecastcategory,stepname,sn_salesstagecode,closeprobability,sn_opportunitytype,sn_opportunitybusinessunitlist";
     const path =
       `/opportunities?$select=${selectFields}` +
       `&$expand=parentaccountid($select=accountid,name)` +
@@ -2536,6 +2541,7 @@ export async function listQuotes(
   let quotes: Quote[] = [];
   try {
     const res = await dynamicsFetch(path, {}, progress);
+    if (!res.ok) throw new Error(`Quotes fetch failed — HTTP ${res.status} (entity may be named differently on this tenant)`);
     if (res.ok) {
       const data = await res.json() as { value: Record<string, unknown>[] };
       quotes = (data.value ?? []).map((r): Quote => ({

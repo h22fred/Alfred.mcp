@@ -357,6 +357,11 @@ DISPLAY: Show both values clearly labelled — "NNACV: $X | ACV: $Y". NNACV (nna
       extraSections += "\n\n--- No engagements on this opportunity ---";
     }
 
+    // AE activity / custom notes
+    if (opp.aeNotes?.trim()) {
+      extraSections += "\n\n--- AE Notes (sn_activitycustomnotes) ---\n" + opp.aeNotes.trim();
+    }
+
     // Timeline notes
     if (notes.length > 0) {
       extraSections += "\n\n--- Opportunity Timeline Notes ---\n" +
