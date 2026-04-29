@@ -224,7 +224,8 @@ function mapOpportunity(r: Record<string, unknown>): Opportunity {
     nnacv:               r.sn_netnewacv as number | undefined,
     // Extended fields (field names verified against Dynamics EntityDefinitions metadata)
     opportunityType:     r["sn_opportunitytype@OData.Community.Display.V1.FormattedValue"] as string | undefined,
-    salesStage:          r["stepname"] as string | undefined,
+    salesStage:          r["sn_salesstage@OData.Community.Display.V1.FormattedValue"] as string
+                         ?? r["stepname"] as string | undefined,
     probability:         r.closeprobability as number | undefined,
     businessUnitList:    r.sn_opportunitybusinessunitlist as string | undefined,
     dealChampion:        r["_sn_executivesponsor_value@OData.Community.Display.V1.FormattedValue"] as string | undefined,
@@ -433,7 +434,7 @@ export async function fetchOpportunityById(id: string, progress: ProgressFn = ()
   const baseFields = "opportunityid,sn_number,name,_accountid_value,_ownerid_value,_sn_solutionconsultant_value,statuscode,estimatedclosedate,totalamount,sn_netnewacv,msdyn_forecastcategory,stepname,closeprobability,sn_opportunitytype,sn_opportunitybusinessunitlist";
   // Enrichment fields for single-opp detail view — may not exist in all instances
   // sn_industrysolution is Virtual — excluded from $select, may come through via annotations
-  const enrichFields = ",_sn_executivesponsor_value,description,sn_noncompetitive,sn_winlossnodecisionreason,sn_winlossnodecisionnotes,sn_activitycustomnotes";
+  const enrichFields = ",_sn_executivesponsor_value,description,sn_noncompetitive,sn_winlossnodecisionreason,sn_winlossnodecisionnotes,sn_activitycustomnotes,sn_salesstage";
   const expand = "&$expand=parentaccountid($select=accountid,name)";
 
   let res: Response;
