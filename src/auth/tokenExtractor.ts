@@ -258,16 +258,9 @@ export async function connectWithRetry(retries = 3) {
 
 interface RawCookie { name: string; value: string; expires: number; domain: string; }
 
-async function getCookiesViaRawCDP(urls: string[]): Promise<RawCookie[]> {
-  // Use any available page target — Network.getCookies works across all domains
-  const targets = await getCdpTargets();
-  const target = targets.find(t => t.type === "page" && t.webSocketDebuggerUrl);
-  if (!target?.webSocketDebuggerUrl) {
-    throw new Error("No browser tabs found. Make sure the Alfred browser is running.");
-  }
-
+async function getCookiesViaRawCDPTarget(wsUrl: string, urls: string[]): Promise<RawCookie[]> {
   return new Promise((resolve, reject) => {
-    const ws = new WebSocket(target.webSocketDebuggerUrl!);
+    const ws = new WebSocket(wsUrl);
     const timer = setTimeout(() => {
       try { ws.close(); } catch { /* ignore */ }
       reject(new Error("CDP cookie fetch timed out"));
@@ -289,9 +282,32 @@ async function getCookiesViaRawCDP(urls: string[]): Promise<RawCookie[]> {
 
     ws.addEventListener("error", () => {
       clearTimeout(timer);
-      reject(new Error("CDP WebSocket error — is Alfred running?"));
+      reject(new Error("CDP WebSocket error — stale target"));
     });
   });
+}
+
+async function getCookiesViaRawCDP(urls: string[]): Promise<RawCookie[]> {
+  // Use any available page target — Network.getCookies works across all domains.
+  // If the cached target is stale (tab closed/navigated), invalidate and retry once.
+  for (let attempt = 0; attempt < 2; attempt++) {
+    if (attempt === 1) invalidateCdpTargetsCache();
+    const targets = await getCdpTargets();
+    const target = targets.find(t => t.type === "page" && t.webSocketDebuggerUrl);
+    if (!target?.webSocketDebuggerUrl) {
+      throw new Error("No browser tabs found. Make sure the Alfred browser is running.");
+    }
+    try {
+      return await getCookiesViaRawCDPTarget(target.webSocketDebuggerUrl, urls);
+    } catch (e) {
+      if (attempt === 0 && e instanceof Error && e.message.includes("stale target")) {
+        // Target went away — retry with a fresh list
+        continue;
+      }
+      throw e;
+    }
+  }
+  throw new Error("CDP WebSocket error — is Alfred running?");
 }
 
 async function getAuthCookiesViaCDP(progress: ProgressFn): Promise<CachedAuth> {
@@ -339,7 +355,20 @@ export async function getAuthCookies(progress: ProgressFn = () => {}): Promise<s
   const promise = (async () => {
     try {
       progress("🔐 Acquiring Dynamics session cookies...");
-      await ensureAlfred(progress);
+      // Only launch Chrome if it's not already running — skip the verifySessionHealth
+      // round-trip here since getAuthCookiesViaCDP immediately fetches cookies anyway.
+      if (!await isAlfredgable()) {
+        clearMemoryAuthCache();
+        progress("🚀 Launching Alfred automatically...");
+        launchAlfred();
+        await waitForChrome();
+        invalidateCdpTargetsCache();
+        for (const url of [DYNAMICS_URL, OUTLOOK_URLS[0]!, "https://teams.microsoft.com/v2/"]) {
+          await fetch(`http://localhost:${CDP_PORT}/json/new?${url}`).catch((e) => { process.stderr.write(`[alfred:warn] failed to open tab ${url}: ${e instanceof Error ? e.message : String(e)}\n`); });
+        }
+        invalidateCdpTargetsCache();
+        progress("✅ Alfred ready — please log into Dynamics in the new window");
+      }
 
       const auth = await getAuthCookiesViaCDP(progress);
       cachedAuth = auth;
