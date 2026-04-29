@@ -115,8 +115,9 @@ function engagementListItem(e: Engagement): string {
   const link = engagementLink(e);
   const status = e.statuscode === 876130000 ? "Cancelled" : e.statecode === 0 ? "Open" : "Complete";
   const completed = e.sn_completeddate ? ` · ${e.sn_completeddate.slice(0, 10)}` : "";
+  const product = e.primaryProductName ? ` · 📦 ${e.primaryProductName}` : "";
   const lines = [
-    `**${e.sn_name}** (${e.sn_engagementnumber ?? "—"}) · ${e.engagementTypeName ?? "—"} · ${status}${completed}`,
+    `**${e.sn_name}** (${e.sn_engagementnumber ?? "—"}) · ${e.engagementTypeName ?? "—"} · ${status}${completed}${product}`,
     ...(link ? [`🔗 Open in Dynamics: ${link}`] : []),
     ...(e.sn_description ? [e.sn_description] : []),
   ];
