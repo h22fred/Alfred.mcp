@@ -24,6 +24,7 @@ import {
   fetchAccountById,
   searchAccounts,
   addAttendeesToEngagement,
+  addSelfToEngagement,
   addCollabTeamToEngagement,
   deleteEngagement,
   fetchCollaborationTeam,
@@ -547,10 +548,11 @@ The Dynamics link is in the tool response. This applies to EVERY engagement crea
       name:  z.string(),
       email: z.string(),
     })).optional().describe("Meeting attendees from the calendar event. Always pass these when creating from a meeting — internal (@servicenow.com/@now.com) become Active Participants, external become Active Engagement Contacts."),
+    include_self: z.boolean().optional().describe("When true, adds the current logged-in user as an Active Participant on the new engagement."),
     include_collaboration_team: z.boolean().optional().describe("When true, automatically fetches the opportunity's collaboration team and adds all members as Active Participants on the new engagement."),
     confirmed: z.boolean().optional().describe("MUST be true to actually create. Omit or set false to get a dry-run preview first. Always preview before creating."),
   },
-  async ({ opportunity_id, primary_product_id, name, type, completed_date, use_case, key_points, secondary_points, submission_date, next_actions, risks, stakeholders, notes, attendees, include_collaboration_team, confirmed }) => {
+  async ({ opportunity_id, primary_product_id, name, type, completed_date, use_case, key_points, secondary_points, submission_date, next_actions, risks, stakeholders, notes, attendees, include_self, include_collaboration_team, confirmed }) => {
     requireGuid(opportunity_id, "opportunity_id");
     requireGuid(primary_product_id, "primary_product_id");
 
@@ -568,6 +570,7 @@ The Dynamics link is in the tool response. This applies to EVERY engagement crea
           `**Account:** ${opp.accountName ?? "—"}\n` +
           `**Completed date:** ${completed_date ?? "not set"}\n` +
           `**Attendees to link:** ${attendees?.length ?? 0}\n` +
+          `**Include self:** ${include_self ? "Yes" : "No"}\n` +
           `**Include collaboration team:** ${include_collaboration_team ? "Yes" : "No"}\n\n` +
           `Call again with \`confirmed: true\` to create this engagement.`
         }],
@@ -597,6 +600,11 @@ The Dynamics link is in the tool response. This applies to EVERY engagement crea
     if (attendees?.length && engagement.sn_engagementid) {
       progress(`👥 Linking ${attendees.length} attendee(s)...`);
       await addAttendeesToEngagement(engagement.sn_engagementid, attendees, progress);
+    }
+
+    // Auto-link self if requested
+    if (include_self && engagement.sn_engagementid) {
+      await addSelfToEngagement(engagement.sn_engagementid, progress);
     }
 
     // Auto-link collaboration team members if requested

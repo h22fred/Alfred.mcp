@@ -1947,6 +1947,23 @@ export async function addAttendeesToEngagement(
   return results;
 }
 
+export async function addSelfToEngagement(
+  engagementId: string,
+  progress: ProgressFn = () => {}
+): Promise<void> {
+  const userId = await fetchCurrentUserId(progress);
+  requireGuid(userId, "currentUserId");
+  auditLog("add_self_to_engagement", { engagementId, userId });
+  await dynamicsFetch("/sn_engagementassignees", {
+    method: "POST",
+    body: JSON.stringify({
+      "sn_assigneeid@odata.bind":   `/systemusers(${userId})`,
+      "sn_engagementid@odata.bind": `/sn_engagements(${engagementId})`,
+    }),
+  }, progress);
+  progress("👤 Added yourself as participant");
+}
+
 export async function addCollabTeamToEngagement(
   engagementId: string,
   opportunityId: string,
