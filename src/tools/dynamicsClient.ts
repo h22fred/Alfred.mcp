@@ -1947,6 +1947,33 @@ export async function addAttendeesToEngagement(
   return results;
 }
 
+export async function addCollabTeamToEngagement(
+  engagementId: string,
+  opportunityId: string,
+  progress: ProgressFn = () => {}
+): Promise<void> {
+  const members = await fetchCollaborationTeam(opportunityId, progress);
+  if (members.length === 0) {
+    progress("ℹ️ No collaboration team members found to add");
+    return;
+  }
+  auditLog("add_collab_team_to_engagement", { engagementId, opportunityId, count: members.length });
+  const results = await Promise.allSettled(
+    members.filter(m => m.userId).map(async (m) => {
+      await dynamicsFetch("/sn_engagementassignees", {
+        method: "POST",
+        body: JSON.stringify({
+          "sn_assigneeid@odata.bind":   `/systemusers(${m.userId})`,
+          "sn_engagementid@odata.bind": `/sn_engagements(${engagementId})`,
+        }),
+      }, progress);
+      progress(`👤 Added collab member as participant: ${m.userName}`);
+    })
+  );
+  const failed = results.filter(r => r.status === "rejected").length;
+  if (failed > 0) progress(`⚠️ ${failed} collab member(s) could not be added as participants`);
+}
+
 // ---------------------------------------------------------------------------
 // Closing Plan — entity auto-discovery + CRUD
 // ---------------------------------------------------------------------------
