@@ -12,6 +12,9 @@ REPO_DIR="$(dirname "$SCRIPT_DIR")"
 CLAUDE_CONFIG="$HOME/Library/Application Support/Claude/claude_desktop_config.json"
 CHROMELINK_APP="$HOME/Desktop/Alfred.app"
 
+# Non-interactive / CI mode
+CI_MODE="${ALFRED_CI:-0}"
+
 echo ""
 echo "=================================================="
 echo "  SC Engagement MCP — Setup"
@@ -111,8 +114,12 @@ EXISTING_DYNAMICS_URL=$(python3 -c "import json,os; d=json.load(open(os.path.exp
 
 if [ -n "$EXISTING_DYNAMICS_URL" ]; then
   echo "   ✅ Dynamics URL already set: $EXISTING_DYNAMICS_URL"
-  printf "   Change company name? (press Enter to keep): "
-  read -r NEW_COMPANY </dev/tty
+  if [ "$CI_MODE" = "1" ]; then
+    NEW_COMPANY=""
+  else
+    printf "   Change company name? (press Enter to keep): "
+    read -r NEW_COMPANY </dev/tty
+  fi
   if [ -n "$NEW_COMPANY" ]; then
     NEW_COMPANY=$(echo "$NEW_COMPANY" | tr -cd 'a-zA-Z0-9.-')
     [ -z "$NEW_COMPANY" ] && NEW_COMPANY="servicenow"
@@ -121,8 +128,12 @@ if [ -n "$EXISTING_DYNAMICS_URL" ]; then
     NEW_DYNAMICS_URL="$EXISTING_DYNAMICS_URL"
   fi
 else
-  printf "   What is your company name? (press Enter for 'servicenow'): "
-  read -r NEW_COMPANY </dev/tty
+  if [ "$CI_MODE" = "1" ]; then
+    NEW_COMPANY="servicenow"
+  else
+    printf "   What is your company name? (press Enter for 'servicenow'): "
+    read -r NEW_COMPANY </dev/tty
+  fi
   [ -z "$NEW_COMPANY" ] && NEW_COMPANY="servicenow"
   # Strip anything that isn't a valid hostname character
   NEW_COMPANY=$(echo "$NEW_COMPANY" | tr -cd 'a-zA-Z0-9.-')
@@ -137,8 +148,12 @@ if [ "$HTTP_STATUS" = "000" ]; then
   echo "   ⚠️  Could not reach ${NEW_DYNAMICS_URL} — check the company name"
   echo "       If this is wrong, re-run setup and enter the correct name."
   echo "       (Your company name is the subdomain in https://COMPANY.crm.dynamics.com)"
-  printf "   Continue anyway? [y/N]: "
-  read -r CONTINUE_ANYWAY </dev/tty
+  if [ "$CI_MODE" = "1" ]; then
+    CONTINUE_ANYWAY="y"
+  else
+    printf "   Continue anyway? [y/N]: "
+    read -r CONTINUE_ANYWAY </dev/tty
+  fi
   if [ "$CONTINUE_ANYWAY" != "y" ] && [ "$CONTINUE_ANYWAY" != "Y" ]; then
     echo "   Aborting — please re-run setup with the correct company name."
     exit 1
@@ -321,8 +336,12 @@ if [ -n "$EXISTING_WEBHOOK" ]; then
   echo "   ✅ Teams webhook already configured"
   echo "      $EXISTING_WEBHOOK"
   echo ""
-  printf "   Replace it? (press Enter to keep, or paste a new URL): "
-  read -r NEW_WEBHOOK </dev/tty
+  if [ "$CI_MODE" = "1" ]; then
+    NEW_WEBHOOK=""
+  else
+    printf "   Replace it? (press Enter to keep, or paste a new URL): "
+    read -r NEW_WEBHOOK </dev/tty
+  fi
   if [ -n "$NEW_WEBHOOK" ]; then
     EXISTING_WEBHOOK="$NEW_WEBHOOK"
     ALFRED_CONFIG="$CONFIG_FILE" ALFRED_WEBHOOK="$NEW_WEBHOOK" python3 -c "import json,os; f=os.environ['ALFRED_CONFIG']; d=json.load(open(f)) if os.path.exists(f) else {}; d['teamsWebhook']=os.environ['ALFRED_WEBHOOK']; json.dump(d,open(f,'w'),indent=2)"
@@ -334,8 +353,12 @@ else
   echo "   To get a webhook URL:"
   echo "   Teams → any channel → ··· → Connectors → Incoming Webhook → configure → copy URL"
   echo ""
-  printf "   Paste your Teams incoming webhook URL (or press Enter to skip): "
-  read -r NEW_WEBHOOK </dev/tty
+  if [ "$CI_MODE" = "1" ]; then
+    NEW_WEBHOOK=""
+  else
+    printf "   Paste your Teams incoming webhook URL (or press Enter to skip): "
+    read -r NEW_WEBHOOK </dev/tty
+  fi
   if [ -n "$NEW_WEBHOOK" ]; then
     ALFRED_CONFIG="$CONFIG_FILE" ALFRED_WEBHOOK="$NEW_WEBHOOK" python3 -c "import json,os; f=os.environ['ALFRED_CONFIG']; d=json.load(open(f)) if os.path.exists(f) else {}; d['teamsWebhook']=os.environ['ALFRED_WEBHOOK']; json.dump(d,open(f,'w'),indent=2)"
     chmod 600 "$CONFIG_FILE"
@@ -357,8 +380,12 @@ if [ "$ALFRED_VARIANT" = "sales" ]; then
   echo "   2) Sales Specialist  — AE CRM, AE Risk, etc. (you support AEs, no assigned pipeline)"
   echo "   3) Manager           — Sales Manager (you oversee a team of AEs)"
   echo ""
-  printf "   Enter 1, 2 or 3 (default: 1): "
-  read -r ROLE_CHOICE </dev/tty
+  if [ "$CI_MODE" = "1" ]; then
+    ROLE_CHOICE=""
+  else
+    printf "   Enter 1, 2 or 3 (default: 1): "
+    read -r ROLE_CHOICE </dev/tty
+  fi
   case "$ROLE_CHOICE" in
     2) USER_ROLE="sales_specialist"; echo "   ✅ Role set to Sales Specialist — Alfred will search all accounts by default" ;;
     3) USER_ROLE="sales_manager";    echo "   ✅ Role set to Sales Manager — Alfred will show territory-wide pipeline" ;;
@@ -371,8 +398,12 @@ else
   echo "   2) SSC     — Sales Support Consultant (you support SCs, no assigned pipeline)"
   echo "   3) Manager — SC Manager (you want to see your team's pipeline)"
   echo ""
-  printf "   Enter 1, 2 or 3 (default: 1): "
-  read -r ROLE_CHOICE </dev/tty
+  if [ "$CI_MODE" = "1" ]; then
+    ROLE_CHOICE=""
+  else
+    printf "   Enter 1, 2 or 3 (default: 1): "
+    read -r ROLE_CHOICE </dev/tty
+  fi
   case "$ROLE_CHOICE" in
     2) USER_ROLE="ssc";     echo "   ✅ Role set to SSC — Alfred will search all accounts by default" ;;
     3) USER_ROLE="manager"; echo "   ✅ Role set to Manager — Alfred will browse by territory/SC by default" ;;
@@ -402,8 +433,12 @@ if [ "$ALFRED_VARIANT" = "sales" ]; then
   echo "    2) Opportunity Summary     5) Implementation Plan"
   echo "    3) Mutual Plan             6) Stakeholder Alignment"
   echo ""
-  printf "   Your selection (e.g. 1 2 3), or Enter for all: "
-  read -r TYPE_SELECTION </dev/tty
+  if [ "$CI_MODE" = "1" ]; then
+    TYPE_SELECTION=""
+  else
+    printf "   Your selection (e.g. 1 2 3), or Enter for all: "
+    read -r TYPE_SELECTION </dev/tty
+  fi
 
   ALFRED_TYPE_SEL="$TYPE_SELECTION" python3 -c "
 import json, os
@@ -431,8 +466,12 @@ else
   echo "    4) Discovery                9) Technical Win"
   echo "    5) EBC                     10) Workshop"
   echo ""
-  printf "   Your selection (e.g. 3 4 8 9), or Enter for all: "
-  read -r TYPE_SELECTION </dev/tty
+  if [ "$CI_MODE" = "1" ]; then
+    TYPE_SELECTION=""
+  else
+    printf "   Your selection (e.g. 3 4 8 9), or Enter for all: "
+    read -r TYPE_SELECTION </dev/tty
+  fi
 
   ALFRED_TYPE_SEL="$TYPE_SELECTION" python3 -c "
 import json, os
@@ -459,8 +498,12 @@ chmod 600 "$HOME/.alfred-config.json"
 # 9. Install cron jobs (optional)
 # ------------------------------------------------------------
 echo ""
-printf "▶ Would you like to set up automated weekly checks (hygiene sweep, meeting review)? [y/N]: "
-read -r WANT_AUTOMATION </dev/tty
+if [ "$CI_MODE" = "1" ]; then
+  WANT_AUTOMATION="n"
+else
+  printf "▶ Would you like to set up automated weekly checks (hygiene sweep, meeting review)? [y/N]: "
+  read -r WANT_AUTOMATION </dev/tty
+fi
 
 # Helper: parse day name to cron weekday number (1=Mon … 5=Fri, 0=Sun)
 day_to_cron() {
@@ -495,25 +538,41 @@ case "$WANT_AUTOMATION" in
     echo ""
 
     # --- Hygiene sweep ---
-    printf "   Install hygiene sweep (flags missing engagements on your pipeline)? [Y/n]: "
-    read -r INSTALL_HYGIENE </dev/tty
+    if [ "$CI_MODE" = "1" ]; then
+      INSTALL_HYGIENE="n"
+    else
+      printf "   Install hygiene sweep (flags missing engagements on your pipeline)? [Y/n]: "
+      read -r INSTALL_HYGIENE </dev/tty
+    fi
 
     case "$INSTALL_HYGIENE" in
       [nN]*) echo "   ⏭  Hygiene sweep skipped" ;;
       *)
-        printf "   Run on which day?       [Monday]: "
-        read -r HYGIENE_DAY </dev/tty
+        if [ "$CI_MODE" = "1" ]; then
+          HYGIENE_DAY="Monday"
+        else
+          printf "   Run on which day?       [Monday]: "
+          read -r HYGIENE_DAY </dev/tty
+        fi
         HYGIENE_DAY="${HYGIENE_DAY:-Monday}"
         HYGIENE_CRON_DAY=$(day_to_cron "$HYGIENE_DAY")
         while [ -z "$HYGIENE_CRON_DAY" ]; do
-          printf "   Unknown day — try again [Monday]: "
-          read -r HYGIENE_DAY </dev/tty
+          if [ "$CI_MODE" = "1" ]; then
+            HYGIENE_DAY="Monday"
+          else
+            printf "   Unknown day — try again [Monday]: "
+            read -r HYGIENE_DAY </dev/tty
+          fi
           HYGIENE_DAY="${HYGIENE_DAY:-Monday}"
           HYGIENE_CRON_DAY=$(day_to_cron "$HYGIENE_DAY")
         done
 
-        printf "   Run at what time? (HH:MM 24h) [09:30]: "
-        read -r HYGIENE_TIME </dev/tty
+        if [ "$CI_MODE" = "1" ]; then
+          HYGIENE_TIME="09:30"
+        else
+          printf "   Run at what time? (HH:MM 24h) [09:30]: "
+          read -r HYGIENE_TIME </dev/tty
+        fi
         HYGIENE_TIME="${HYGIENE_TIME:-09:30}"
         parse_time "$HYGIENE_TIME"
         HYGIENE_HOUR=$T_HOUR; HYGIENE_MIN=$T_MIN
@@ -528,25 +587,41 @@ case "$WANT_AUTOMATION" in
     esac
 
     # --- Meeting review ---
-    printf "   Install meeting review (matches this week's meetings to open opps)? [Y/n]: "
-    read -r INSTALL_MEETING </dev/tty
+    if [ "$CI_MODE" = "1" ]; then
+      INSTALL_MEETING="n"
+    else
+      printf "   Install meeting review (matches this week's meetings to open opps)? [Y/n]: "
+      read -r INSTALL_MEETING </dev/tty
+    fi
 
     case "$INSTALL_MEETING" in
       [nN]*) echo "   ⏭  Meeting review skipped" ;;
       *)
-        printf "   Run on which day?       [Friday]: "
-        read -r MEETING_DAY </dev/tty
+        if [ "$CI_MODE" = "1" ]; then
+          MEETING_DAY="Friday"
+        else
+          printf "   Run on which day?       [Friday]: "
+          read -r MEETING_DAY </dev/tty
+        fi
         MEETING_DAY="${MEETING_DAY:-Friday}"
         MEETING_CRON_DAY=$(day_to_cron "$MEETING_DAY")
         while [ -z "$MEETING_CRON_DAY" ]; do
-          printf "   Unknown day — try again [Friday]: "
-          read -r MEETING_DAY </dev/tty
+          if [ "$CI_MODE" = "1" ]; then
+            MEETING_DAY="Friday"
+          else
+            printf "   Unknown day — try again [Friday]: "
+            read -r MEETING_DAY </dev/tty
+          fi
           MEETING_DAY="${MEETING_DAY:-Friday}"
           MEETING_CRON_DAY=$(day_to_cron "$MEETING_DAY")
         done
 
-        printf "   Run at what time? (HH:MM 24h) [14:00]: "
-        read -r MEETING_TIME </dev/tty
+        if [ "$CI_MODE" = "1" ]; then
+          MEETING_TIME="14:00"
+        else
+          printf "   Run at what time? (HH:MM 24h) [14:00]: "
+          read -r MEETING_TIME </dev/tty
+        fi
         MEETING_TIME="${MEETING_TIME:-14:00}"
         parse_time "$MEETING_TIME"
         MEETING_HOUR=$T_HOUR; MEETING_MIN=$T_MIN
