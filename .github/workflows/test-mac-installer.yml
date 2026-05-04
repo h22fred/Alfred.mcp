@@ -1,0 +1,94 @@
+name: Mac Installer Test
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'setup/setup.sh'
+      - 'setup/setup.ps1'
+      - 'setup/assets/**'
+  workflow_dispatch:
+
+jobs:
+  test-mac-installer:
+    runs-on: macos-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      # ------------------------------------------------------------------
+      # 1. Shell syntax check
+      # ------------------------------------------------------------------
+      - name: Syntax-check setup.sh
+        run: bash -n setup/setup.sh && echo "setup.sh syntax OK"
+
+      # ------------------------------------------------------------------
+      # 2. Run setup.sh end-to-end (non-interactive, sales variant)
+      #    ALFRED_CI=1 skips all read </dev/tty prompts, uses defaults:
+      #      company     -> servicenow
+      #      webhook     -> skip
+      #      role        -> sales (AE)
+      #      types       -> all
+      #      automation  -> n
+      # ------------------------------------------------------------------
+      - name: Run setup.sh end-to-end
+        env:
+          ALFRED_VARIANT: sales
+          ALFRED_CI: "1"
+        run: |
+          mkdir -p "$HOME/Library/Application Support/Claude"
+          mkdir -p "$HOME/Desktop"
+          bash setup/setup.sh
+
+      # ------------------------------------------------------------------
+      # 3. Verify Alfred.app was created on Desktop
+      # ------------------------------------------------------------------
+      - name: Verify Alfred.app exists
+        run: |
+          [ -d "$HOME/Desktop/Alfred.app" ] || { echo "Alfred.app not found on Desktop"; exit 1; }
+          [ -x "$HOME/Desktop/Alfred.app/Contents/MacOS/Alfred" ] || { echo "Alfred binary not executable"; exit 1; }
+          bash -n "$HOME/Desktop/Alfred.app/Contents/MacOS/Alfred" || { echo "Alfred script has syntax errors"; exit 1; }
+          echo "Alfred.app OK"
+
+      # ------------------------------------------------------------------
+      # 4. Verify Claude Desktop config
+      # ------------------------------------------------------------------
+      - name: Verify Claude Desktop config
+        run: |
+          CFG="$HOME/Library/Application Support/Claude/claude_desktop_config.json"
+          [ -f "$CFG" ] || { echo "claude_desktop_config.json not found"; exit 1; }
+          python3 -c "
+          import json, sys
+          with open('$HOME/Library/Application Support/Claude/claude_desktop_config.json') as f:
+              cfg = json.load(f)
+          assert 'alfred' in cfg.get('mcpServers', {}), 'alfred MCP entry missing'
+          entry = cfg['mcpServers']['alfred']
+          print('node :', entry['command'])
+          print('script:', entry['args'][0])
+          print('Claude Desktop config OK')
+          "
+
+      # ------------------------------------------------------------------
+      # 5. Verify .alfred-config.json was written correctly
+      # ------------------------------------------------------------------
+      - name: Verify alfred config
+        run: |
+          python3 -c "
+          import json, os
+          f = os.path.expanduser('~/.alfred-config.json')
+          assert os.path.exists(f), '~/.alfred-config.json not found'
+          d = json.load(open(f))
+          assert d.get('dynamicsUrl') == 'https://servicenow.crm.dynamics.com', f'wrong URL: {d.get(\"dynamicsUrl\")}'
+          assert d.get('role') == 'sales', f'wrong role: {d.get(\"role\")}'
+          assert isinstance(d.get('engagementTypes'), list) and len(d['engagementTypes']) > 0, 'engagementTypes missing'
+          print('dynamicsUrl:', d['dynamicsUrl'])
+          print('role:', d['role'])
+          print('engagementTypes:', d['engagementTypes'])
+          print('alfred-config.json OK')
+          "
