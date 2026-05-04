@@ -112,3 +112,4 @@ powershell -ExecutionPolicy Bypass -File "!INSTALL_DIR!\setup\setup.ps1"
 echo.
 pause
 endlocal
+\r

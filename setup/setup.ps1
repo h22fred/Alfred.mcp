@@ -373,7 +373,8 @@ start /b powershell -WindowStyle Hidden -ExecutionPolicy Bypass -Command ^"& { ^
 }^"
 "@
 
-Set-Content -Path $AlfredBatPath -Value $BatContent -Encoding ASCII
+$BatContent = $BatContent -replace "`r`n", "`n" -replace "`n", "`r`n"
+[System.IO.File]::WriteAllText($AlfredBatPath, $BatContent, [System.Text.Encoding]::ASCII)
 Write-Host "   Alfred.bat created on Desktop"
 Write-Host "   First launch: double-click Alfred.bat, then log into Dynamics, Outlook and Teams"
 
