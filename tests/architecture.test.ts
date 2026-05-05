@@ -36,6 +36,7 @@ describe("SC / Sales tool parity", () => {
   const REQUIRED_SHARED = [
     "get_opportunity",
     "list_engagements",
+    "list_engagements_by_account",
     "get_engagement",
     "create_engagement",
     "update_engagement",
