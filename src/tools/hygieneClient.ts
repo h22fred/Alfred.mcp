@@ -55,12 +55,29 @@ export async function runHygieneSweep(opts: {
   const requiredTypes = opts.engagementTypes?.length ? opts.engagementTypes : DEFAULT_REQUIRED;
   const excludeAppStore = opts.excludeAppStore ?? true; // default: skip noise
 
-  // Use collaboration team table as authoritative source — the denormalised
-  // _sn_solutionconsultant_value field on opportunities can be stale/incorrect.
   const minNnacv = opts.minNnacv ?? 100_000;
-  const allCollab = await fetchMyCollaborationOpportunities(progress);
-  // Apply the same filters fetchOpportunities would: open, non-zero, min NNACV
-  const opps = allCollab.filter(o =>
+
+  // Union collab team entries + opps where user is named SC — either source alone
+  // can miss opps when the collab table entry is absent but SC field is set (or vice versa).
+  const [collabOpps, scOpps] = await Promise.all([
+    fetchMyCollaborationOpportunities(progress),
+    fetchOpportunities({
+      myOpportunitiesOnly: true,
+      myOppsFilterField: "sc",
+      includeClosed: false,
+      includeZeroValue: true,
+      excludeStale: false,
+      top: 200,
+    }, progress),
+  ]);
+  const seen = new Set<string>();
+  const allOpps: typeof collabOpps = [];
+  for (const o of [...collabOpps, ...scOpps]) {
+    if (!seen.has(o.opportunityid)) { seen.add(o.opportunityid); allOpps.push(o); }
+  }
+
+  // Apply threshold filters client-side
+  const opps = allOpps.filter(o =>
     o.statuscode === 1 &&                                   // open only
     o.nnacv != null && o.nnacv !== 0 &&                     // non-zero NNACV
     (o.nnacv >= minNnacv || o.nnacv < 0)                    // above threshold or negative
