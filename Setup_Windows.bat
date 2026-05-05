@@ -37,13 +37,13 @@ if !ERRORLEVEL! neq 0 (
     echo   Git not found - installing automatically...
     echo.
 
-    :: Try winget first (built into Windows 10 1709+ and Windows 11)
+    rem Try winget first (built into Windows 10 1709+ and Windows 11)
     where winget >nul 2>&1
     if !ERRORLEVEL! equ 0 (
         echo   Installing Git via winget...
         winget install --id Git.Git -e --source winget --accept-package-agreements --accept-source-agreements
     ) else (
-        :: Fallback: download Git installer directly
+        rem Fallback: download Git installer directly
         echo   Downloading Git for Windows...
         set "GIT_INSTALLER=%TEMP%\git-installer.exe"
         powershell -Command "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; Invoke-WebRequest -Uri 'https://github.com/git-for-windows/git/releases/latest/download/Git-2.49.0-64-bit.exe' -OutFile '!GIT_INSTALLER!' -UseBasicParsing"
@@ -59,7 +59,7 @@ if !ERRORLEVEL! neq 0 (
         del "!GIT_INSTALLER!" >nul 2>&1
     )
 
-    :: Refresh PATH from registry so git is available in this session
+    rem Refresh PATH from registry so git is available in this session
     for /f "tokens=2*" %%a in ('reg query "HKLM\SYSTEM\CurrentControlSet\Control\Session Manager\Environment" /v Path 2^>nul') do set "SYS_PATH=%%b"
     for /f "tokens=2*" %%a in ('reg query "HKCU\Environment" /v Path 2^>nul') do set "USR_PATH=%%b"
     set "PATH=!SYS_PATH!;!USR_PATH!"
