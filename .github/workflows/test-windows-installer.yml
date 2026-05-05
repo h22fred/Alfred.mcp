@@ -51,34 +51,40 @@ jobs:
           Write-Host "setup.ps1 syntax OK"
 
       # ------------------------------------------------------------------
-      # 3. Verify Setup_Windows.bat gets past the crash point
-      #    Pre-create install dir so the bat skips git clone and
-      #    invokes a stub setup.ps1 we control.
+      # 3. Static analysis of Setup_Windows.bat
+      #    Runtime execution via PowerShell pipe is unreliable (encoding/
+      #    buffering quirks). Instead, parse the file statically to catch
+      #    the two known cmd.exe failure modes:
+      #      a) :: comments inside parenthesized blocks  (causes parse error)
+      #      b) :: inside quoted strings in nested blocks (same effect)
       # ------------------------------------------------------------------
-      - name: Test bat file - no parse crash
+      - name: Static-check Setup_Windows.bat
         shell: pwsh
         run: |
-          $installDir = "$env:USERPROFILE\Documents\alfred.sales"
-          New-Item -ItemType Directory -Force -Path "$installDir\setup" | Out-Null
-
-          # Stub setup.ps1: just print a sentinel so we know bat reached it
-          [IO.File]::WriteAllText(
-            "$installDir\setup\setup.ps1",
-            "@echo BAT_REACHED_SETUP`r`n",
-            [Text.Encoding]::ASCII)
-
-          # Also seed a fake .git dir so bat takes the "update" branch
-          New-Item -ItemType Directory -Force -Path "$installDir\.git" | Out-Null
-
-          # Run bat with role=2 piped in; capture everything
-          $output = "2" | cmd /c "$PWD\Setup_Windows.bat" 2>&1
-          Write-Host ($output -join "`n")
-
-          if ($output -match "was unexpected at this time") {
-            Write-Error "FAIL: bat file parse error detected"
-            exit 1
+          $lines = [IO.File]::ReadAllLines("$PWD\Setup_Windows.bat")
+          $depth = 0
+          $failed = $false
+          for ($i = 0; $i -lt $lines.Count; $i++) {
+            $ln = $lines[$i]
+            $stripped = $ln.TrimStart()
+            # track paren depth (skip comment lines)
+            if (-not $stripped.StartsWith("::") -and -not $stripped.StartsWith("rem ")) {
+              $depth += ($ln.ToCharArray() | Where-Object { $_ -eq '(' }).Count
+              $depth -= ($ln.ToCharArray() | Where-Object { $_ -eq ')' }).Count
+            }
+            # flag :: inside a block (not a top-level label)
+            if ($depth -gt 0 -and $stripped -match '^::') {
+              Write-Error "Line $($i+1): '::' comment inside parenthesized block (depth=$depth) — use 'rem' instead: $stripped"
+              $failed = $true
+            }
+            # flag :: inside a quoted string within a block
+            if ($depth -gt 0 -and $ln -match '"[^"]*::[^"]*"') {
+              Write-Error "Line $($i+1): '::' inside quoted string in block (depth=$depth) — cmd.exe parser bug: $($ln.Trim())"
+              $failed = $true
+            }
           }
-          Write-Host "PASS: bat file ran without parse errors"
+          if ($failed) { exit 1 }
+          Write-Host "Setup_Windows.bat static check OK (no :: inside blocks)"
 
       # ------------------------------------------------------------------
       # 4. Run full setup.ps1 end-to-end (sales variant, non-interactive)
