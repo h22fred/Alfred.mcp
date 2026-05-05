@@ -641,7 +641,7 @@ case "$WANT_AUTOMATION" in
 esac
 
 # Apply crontab — remove stale entries then add new ones
-CURRENT_CRON=$(crontab -l 2>/dev/null)
+CURRENT_CRON=$(crontab -l 2>/dev/null || true)
 UPDATED_CRON="$CURRENT_CRON"
 
 if [ -n "$HYGIENE_CRON" ]; then
