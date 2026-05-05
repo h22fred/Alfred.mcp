@@ -292,12 +292,12 @@ export async function fetchOpportunities(filter: OpportunityFilter = {}, progres
   let filterClause = filter.includeClosed ? "statecode ge 0" : "statecode eq 0";
   if (filter.search) {
     const safe = sanitizeODataSearch(filter.search);
-    filterClause += ` and (contains(name,'${safe}') or contains(sn_number,'${safe}'))`;
+    filterClause += ` and (contains(name,'${safe}') or contains(sn_number,'${safe}') or contains(parentaccountid/name,'${safe}'))`;
   }
-  if (!filter.includeZeroValue) {
+  if (!filter.includeZeroValue && filter.minNnacv !== 0) {
     filterClause += ` and sn_netnewacv ne 0`;
   }
-  if (filter.minNnacv) {
+  if (filter.minNnacv != null && filter.minNnacv > 0) {
     // Include opps >= threshold OR negative (negative NNACV is always important)
     filterClause += ` and (sn_netnewacv ge ${filter.minNnacv} or sn_netnewacv lt 0)`;
   }
@@ -494,6 +494,25 @@ export async function getProductById(id: string, progress: ProgressFn = () => {}
   const res = await dynamicsFetch(`/sn_productfamilies(${id})?$select=sn_productfamilyid,sn_name`, {}, progress);
   const r = await res.json() as Record<string, unknown>;
   return { productid: r.sn_productfamilyid as string, name: r.sn_name as string };
+}
+
+export async function fetchEngagementsByAccount(accountId: string, typeFilter?: string, progress: ProgressFn = () => {}): Promise<Engagement[]> {
+  requireGuid(accountId, "accountId");
+  progress(`📡 Fetching engagements for account ${accountId}...`);
+  let filter = `_sn_accountid_value eq ${accountId}`;
+  if (typeFilter) filter += ` and sn_engagementtypeid/sn_name eq '${typeFilter.replace(/'/g, "''")}'`;
+  const path =
+    `/sn_engagements` +
+    `?$filter=${filter}` +
+    `&$select=sn_engagementid,sn_engagementnumber,sn_name,sn_description,sn_completeddate,sn_categorycode,sn_salesstagecode,statecode,statuscode,_sn_engagementtypeid_value,_sn_opportunityid_value,_sn_accountid_value,_sn_primaryproductid_value,_ownerid_value,createdon,modifiedon` +
+    `&$expand=sn_engagementtypeid($select=sn_name),sn_opportunityid($select=name),sn_primaryproductid($select=sn_name)` +
+    `&$orderby=modifiedon desc`;
+
+  const res = await dynamicsFetch(path, {}, progress);
+  const data = await res.json();
+  const results = (data.value ?? []).map(mapEngagement);
+  progress(`✅ Found ${results.length} engagements`);
+  return results;
 }
 
 export async function fetchEngagementsByOpportunity(opportunityId: string, progress: ProgressFn = () => {}): Promise<Engagement[]> {

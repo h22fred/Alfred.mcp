@@ -7,6 +7,7 @@ import {
   fetchOpportunities,
   fetchOpportunityById,
   fetchEngagementsByOpportunity,
+  fetchEngagementsByAccount,
   fetchEngagementById,
   createEngagement,
   updateEngagement,
@@ -1174,6 +1175,35 @@ Use this to see what SC milestones and activities exist before creating or updat
     const engagements = await fetchEngagementsByOpportunity(id, progress);
     if (engagements.length === 0) {
       return { content: [{ type: "text", text: "No engagements found for this opportunity." }] };
+    }
+    const text = engagements.map(engagementListItem).join("\n\n---\n\n");
+    return { content: [{ type: "text", text }] };
+  }
+);
+
+// ---------------------------------------------------------------------------
+// Tool: list_engagements_by_account
+// ---------------------------------------------------------------------------
+server.tool(
+  "list_engagements_by_account",
+  `List all engagements linked to a Dynamics account, regardless of whether they have an associated opportunity.
+
+Use this when you need a complete picture of engagement activity on an account — some SCs log POVs and other milestones directly at the account level rather than on a specific opportunity, so those records won't appear in list_engagements.
+
+Optionally filter by engagement type (e.g. type="POV") to keep the response lean.`,
+  {
+    account_id: z.string().describe("Dynamics account GUID"),
+    type:       z.string().optional().describe("Optional engagement type filter, e.g. 'POV', 'Demo', 'Technical Win'"),
+  },
+  async ({ account_id, type }) => {
+    const id = requireGuid(account_id, "account_id");
+    const progress = makeProgress(server);
+    const engagements = await fetchEngagementsByAccount(id, type, progress);
+    if (engagements.length === 0) {
+      const msg = type
+        ? `No ${type} engagements found for this account.`
+        : "No engagements found for this account.";
+      return { content: [{ type: "text", text: msg }] };
     }
     const text = engagements.map(engagementListItem).join("\n\n---\n\n");
     return { content: [{ type: "text", text }] };
