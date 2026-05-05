@@ -504,7 +504,7 @@ if ($env:ALFRED_VARIANT -eq "sales") {
 Write-Host ""
 $TypeSelection = Read-Host "   Your selection (e.g. 1 2 3), or Enter for all"
 
-if ($TypeSelection.Trim()) {
+if ($TypeSelection -and $TypeSelection.Trim()) {
     $Indices = $TypeSelection.Trim() -split '\s+' | ForEach-Object {
         $num = 0
         if ([int]::TryParse($_, [ref]$num) -and $num -ge 1 -and $num -le $AllTypes.Length) {
