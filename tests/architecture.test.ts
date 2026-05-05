@@ -83,6 +83,7 @@ describe("SC / Sales tool parity", () => {
     "update_closing_plan_milestone",
     "get_forecast_summary",
     "get_opportunity_summary",
+    "generate_opportunity_summary",
     "update_opportunity_summary",
     "list_quotes",
   ];
