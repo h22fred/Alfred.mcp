@@ -1243,6 +1243,60 @@ Useful for understanding deal context, history, and current status.`,
 );
 
 // ---------------------------------------------------------------------------
+// Tool: generate_opportunity_summary
+// ---------------------------------------------------------------------------
+server.tool(
+  "generate_opportunity_summary",
+  `Collect all CRM data for an opportunity and generate a comprehensive AI deal summary.
+
+Fetches in parallel: opportunity details, all engagements, timeline notes (last 30),
+contacts/stakeholders, activities, collaboration team, and any existing summary.
+
+After receiving the data, generate a structured deal summary with these sections:
+**Deal Overview** — name, account, stage, NNACV/ACV, close date, BU, forecast category
+**Team** — SC, AE, collaboration team members with roles
+**Engagement History** — all completed and active milestones grouped by type;
+  note what's complete ✅ and what's in progress 🔄 or missing
+**Stakeholders** — customer contacts with their role/title
+**Recent Activity** — last 5 timeline notes and activities, newest first
+**Current Status** — one-paragraph honest deal assessment: where we are, key risks, blockers
+**Next Steps** — 3–5 concrete actions the SC/AE should take
+
+Format for readability. After generating, ask the user: "Save this to Dynamics as the opportunity summary?" — if yes, call update_opportunity_summary with confirmed=true.`,
+  { opportunity_id: z.string().describe("Dynamics opportunity GUID or OPTY number") },
+  async ({ opportunity_id }) => {
+    const progress = makeProgress(server);
+    const id = await resolveOpportunityId(opportunity_id, progress);
+
+    const [opp, engagements, notes, contacts, activities, team, existingSummary] = await Promise.all([
+      fetchOpportunityById(id, progress).catch(() => null),
+      fetchEngagementsByOpportunity(id, progress).catch(() => []),
+      listTimelineNotes(id, progress).catch(() => []),
+      listOpportunityContacts(id, progress).catch(() => []),
+      listActivities(id, progress, { includeCompleted: true, top: 30 }).catch(() => []),
+      fetchCollaborationTeam(id, progress).catch(() => []),
+      getOpportunitySummary(id, progress).catch(() => []),
+    ]);
+
+    if (!opp) {
+      return { content: [{ type: "text", text: "❌ Opportunity not found." }] };
+    }
+
+    const data = {
+      opportunity: opp,
+      engagements,
+      timelineNotes: notes.slice(0, 30),
+      contacts,
+      activities: activities.slice(0, 30),
+      collaborationTeam: team,
+      existingSummary: existingSummary.length > 0 ? existingSummary[0] : null,
+    };
+
+    return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
+  }
+);
+
+// ---------------------------------------------------------------------------
 // Tool: update_opportunity_summary
 // ---------------------------------------------------------------------------
 server.tool(
