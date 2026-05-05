@@ -515,6 +515,51 @@ export async function fetchEngagementsByAccount(accountId: string, typeFilter?: 
   return results;
 }
 
+export interface GlobalEngagementFilter {
+  type?:   string;
+  status?: "open" | "complete" | "all";
+  search?: string;
+  top?:    number;
+}
+
+export async function fetchEngagementsGlobal(
+  filter: GlobalEngagementFilter = {},
+  progress: ProgressFn = () => {}
+): Promise<Engagement[]> {
+  const top = filter.top ?? 50;
+  const filters: string[] = [];
+
+  if (filter.type) {
+    const safe = filter.type.replace(/'/g, "''");
+    filters.push(`sn_engagementtypeid/sn_name eq '${safe}'`);
+  }
+
+  const normStatus = filter.status?.toLowerCase();
+  if (normStatus === "open")     filters.push("statecode eq 0");
+  else if (normStatus === "complete") filters.push("statecode eq 1");
+
+  if (filter.search) {
+    const safe = sanitizeODataSearch(filter.search);
+    filters.push(`contains(sn_name,'${safe}')`);
+  }
+
+  const filterClause = filters.length ? `&$filter=${filters.join(" and ")}` : "";
+  const path =
+    `/sn_engagements` +
+    `?$select=sn_engagementid,sn_engagementnumber,sn_name,sn_description,sn_completeddate,sn_categorycode,sn_salesstagecode,statecode,statuscode,_sn_engagementtypeid_value,_sn_opportunityid_value,_sn_accountid_value,_sn_primaryproductid_value,_ownerid_value,createdon,modifiedon` +
+    `&$expand=sn_engagementtypeid($select=sn_name),sn_accountid($select=name),sn_opportunityid($select=name),sn_primaryproductid($select=sn_name)` +
+    filterClause +
+    `&$orderby=modifiedon desc` +
+    `&$top=${top}`;
+
+  progress(`📡 Searching engagements (type=${filter.type ?? "any"}, status=${filter.status ?? "all"})...`);
+  const res = await dynamicsFetch(path, {}, progress);
+  const data = await res.json();
+  const results = (data.value ?? []).map(mapEngagement);
+  progress(`✅ Found ${results.length} engagements`);
+  return results;
+}
+
 export async function fetchEngagementsByOpportunity(opportunityId: string, progress: ProgressFn = () => {}): Promise<Engagement[]> {
   requireGuid(opportunityId, "opportunityId");
   progress(`📡 Fetching engagements for opportunity ${opportunityId}...`);

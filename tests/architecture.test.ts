@@ -37,6 +37,7 @@ describe("SC / Sales tool parity", () => {
     "get_opportunity",
     "list_engagements",
     "list_engagements_by_account",
+    "search_engagements",
     "get_engagement",
     "create_engagement",
     "update_engagement",

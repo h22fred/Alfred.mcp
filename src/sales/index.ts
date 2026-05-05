@@ -8,6 +8,7 @@ import {
   fetchOpportunityById,
   fetchEngagementsByOpportunity,
   fetchEngagementsByAccount,
+  fetchEngagementsGlobal,
   fetchEngagementById,
   createEngagement,
   updateEngagement,
@@ -1207,6 +1208,42 @@ Optionally filter by engagement type (e.g. type="POV") to keep the response lean
     }
     const text = engagements.map(engagementListItem).join("\n\n---\n\n");
     return { content: [{ type: "text", text }] };
+  }
+);
+
+// ---------------------------------------------------------------------------
+// Tool: search_engagements
+// ---------------------------------------------------------------------------
+server.tool(
+  "search_engagements",
+  `Search all engagements across all accounts and opportunities — no ownership filter.
+
+Use this when you need a region-wide or team-wide view. For example:
+- "Show me all open POVs across all accounts"
+- "List every Demo engagement created this quarter"
+- Managers checking pipeline health across their whole territory
+
+Filters:
+- type: engagement type name, e.g. "POV", "Demo", "Discovery"
+- status: "open" | "complete" | "all" (default: all)
+- search: partial match on engagement name
+- top: max results (default 50, max 200)
+
+Returns engagements with account name, opportunity name (if any), owner, and status.`,
+  {
+    type:   z.string().optional().describe("Engagement type, e.g. 'POV', 'Demo', 'Discovery'"),
+    status: z.enum(["open", "complete", "all"]).optional().describe("Status filter (default: all)"),
+    search: z.string().optional().describe("Partial match on engagement name"),
+    top:    z.number().optional().describe("Max results (default 50)"),
+  },
+  async ({ type, status, search, top }) => {
+    const progress = makeProgress(server);
+    const engagements = await fetchEngagementsGlobal({ type, status, search, top }, progress);
+    if (engagements.length === 0) {
+      return { content: [{ type: "text", text: "No engagements found matching your criteria." }] };
+    }
+    const lines = engagements.map(e => engagementListItem(e));
+    return { content: [{ type: "text", text: `Found ${engagements.length} engagement(s):\n\n${lines.join("\n\n---\n\n")}` }] };
   }
 );
 
