@@ -658,7 +658,9 @@ $MEETING_CRON"
   echo "   ✅ Meeting review scheduled: $MEETING_SCHEDULE_DESC"
 fi
 
-echo "$UPDATED_CRON" | crontab -
+if [ -n "$HYGIENE_CRON" ] || [ -n "$MEETING_CRON" ]; then
+  echo "$UPDATED_CRON" | crontab - 2>/dev/null || echo "   ⚠️  Could not update crontab — run 'crontab -e' manually to add scheduled tasks"
+fi
 
 # ------------------------------------------------------------
 # Done

@@ -43,10 +43,10 @@ if !ERRORLEVEL! neq 0 (
         echo   Installing Git via winget...
         winget install --id Git.Git -e --source winget --accept-package-agreements --accept-source-agreements
     ) else (
-        rem Fallback: download Git installer directly
+        rem Fallback: download Git installer directly via curl (built-in Windows 10+)
         echo   Downloading Git for Windows...
         set "GIT_INSTALLER=%TEMP%\git-installer.exe"
-        powershell -Command "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; Invoke-WebRequest -Uri 'https://github.com/git-for-windows/git/releases/latest/download/Git-2.49.0-64-bit.exe' -OutFile '!GIT_INSTALLER!' -UseBasicParsing"
+        curl -fL -o "!GIT_INSTALLER!" "https://github.com/git-for-windows/git/releases/latest/download/Git-2.49.0-64-bit.exe"
         if not exist "!GIT_INSTALLER!" (
             echo   Download failed. Please install Git manually from:
             echo   https://git-scm.com/download/win
