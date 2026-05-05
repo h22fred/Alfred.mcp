@@ -338,10 +338,15 @@ describe("collaboration team validation", () => {
     expect(dynamicsSrc).toContain("!o.scNameMismatch");
   });
 
-  it("hygiene sweep uses collaboration team as authoritative data source", () => {
+  it("hygiene sweep uses collaboration team as one source", () => {
     expect(hygieneSrc).toContain("fetchMyCollaborationOpportunities");
-    // Should NOT use fetchOpportunities(myOpportunitiesOnly) for the sweep
-    expect(hygieneSrc).not.toMatch(/fetchOpportunities\(\{[\s\S]*?myOpportunitiesOnly/);
+  });
+
+  it("hygiene sweep unions collab team with SC-field opps to avoid blind spots", () => {
+    // Union approach: collab table can miss opps where SC field is set but no collab entry
+    expect(hygieneSrc).toMatch(/fetchOpportunities\(\{[\s\S]*?myOppsFilterField:\s*["']sc["']/);
+    // Must deduplicate the union
+    expect(hygieneSrc).toMatch(/new Set|seen\.has|seen\.add/);
   });
 });
 
