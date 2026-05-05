@@ -438,26 +438,34 @@ server.tool(
   `Search all engagements across all accounts and opportunities — no ownership filter.
 
 Use this when you need a region-wide or team-wide view. For example:
-- "Show me all open POVs across all accounts"
-- "List every Demo engagement created this quarter"
+- "Show me all open POVs across EMEA"
+- "List every Demo engagement in Germany"
+- "Find all active POVs in the DACH region"
 - Managers checking pipeline health across their whole territory
 
 Filters:
 - type: engagement type name, e.g. "POV", "Demo", "Discovery"
 - status: "open" | "complete" | "all" (default: all)
 - search: partial match on engagement name
-- top: max results (default 50, max 200)
+- country: filter by account country, e.g. "Germany", "France", "United Kingdom"
+- region: geographic rollup — supported values: EMEA, DACH, Nordics, Benelux, "Central Europe",
+  "Southern Europe", "Eastern Europe", "Middle East", Africa, AMER, "North America", LATAM,
+  APAC, ANZ, Japan, "Greater China", India
+- top: max results (default 50)
 
-Returns engagements with account name, opportunity name (if any), owner, and status.`,
+country and region are mutually exclusive — if both supplied, country takes precedence.
+Filtering by country/region only matches engagements with a linked account that has a country set.`,
   {
-    type:   z.string().optional().describe("Engagement type, e.g. 'POV', 'Demo', 'Discovery'"),
-    status: z.enum(["open", "complete", "all"]).optional().describe("Status filter (default: all)"),
-    search: z.string().optional().describe("Partial match on engagement name"),
-    top:    z.number().optional().describe("Max results (default 50)"),
+    type:    z.string().optional().describe("Engagement type, e.g. 'POV', 'Demo', 'Discovery'"),
+    status:  z.enum(["open", "complete", "all"]).optional().describe("Status filter (default: all)"),
+    search:  z.string().optional().describe("Partial match on engagement name"),
+    country: z.string().optional().describe("Account country, e.g. 'Germany', 'France', 'United Kingdom'"),
+    region:  z.string().optional().describe("Geographic region, e.g. 'EMEA', 'DACH', 'Central Europe', 'APAC'"),
+    top:     z.number().optional().describe("Max results (default 50)"),
   },
-  async ({ type, status, search, top }) => {
+  async ({ type, status, search, country, region, top }) => {
     const progress = makeProgress(server);
-    const engagements = await fetchEngagementsGlobal({ type, status, search, top }, progress);
+    const engagements = await fetchEngagementsGlobal({ type, status, search, country, region, top }, progress);
     if (engagements.length === 0) {
       return { content: [{ type: "text", text: "No engagements found matching your criteria." }] };
     }

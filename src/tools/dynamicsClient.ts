@@ -515,11 +515,73 @@ export async function fetchEngagementsByAccount(accountId: string, typeFilter?: 
   return results;
 }
 
+// ---------------------------------------------------------------------------
+// Region → country list mapping for search_engagements geo filter
+// Country values must match what Dynamics stores in account.address1_country
+// ---------------------------------------------------------------------------
+const REGION_COUNTRIES: Record<string, string[]> = {
+  EMEA: [
+    "Albania","Algeria","Angola","Austria","Bahrain","Belgium","Benin","Bosnia and Herzegovina",
+    "Botswana","Bulgaria","Burkina Faso","Cameroon","Chad","Croatia","Cyprus","Czech Republic",
+    "Denmark","Egypt","Estonia","Ethiopia","Finland","France","Gabon","Germany","Ghana","Greece",
+    "Hungary","Iceland","Iraq","Ireland","Israel","Italy","Ivory Coast","Jordan","Kenya","Kuwait",
+    "Latvia","Lebanon","Libya","Lithuania","Luxembourg","Madagascar","Malawi","Mali","Malta",
+    "Mauritania","Mauritius","Morocco","Mozambique","Namibia","Netherlands","Niger","Nigeria",
+    "North Macedonia","Norway","Oman","Poland","Portugal","Qatar","Romania","Rwanda","Saudi Arabia",
+    "Senegal","Serbia","Slovakia","Slovenia","South Africa","Spain","Sudan","Sweden","Switzerland",
+    "Tanzania","Tunisia","Turkey","Uganda","Ukraine","United Arab Emirates","United Kingdom",
+    "Zambia","Zimbabwe",
+  ],
+  "Central Europe": [
+    "Austria","Czech Republic","Germany","Hungary","Poland","Slovakia","Slovenia","Switzerland",
+  ],
+  DACH: ["Germany","Austria","Switzerland"],
+  Nordics: ["Denmark","Finland","Iceland","Norway","Sweden"],
+  Benelux: ["Belgium","Luxembourg","Netherlands"],
+  "Southern Europe": ["France","Italy","Portugal","Spain","Greece","Cyprus","Malta"],
+  "Eastern Europe": [
+    "Albania","Bosnia and Herzegovina","Bulgaria","Croatia","Czech Republic","Estonia","Hungary",
+    "Latvia","Lithuania","North Macedonia","Poland","Romania","Serbia","Slovakia","Slovenia","Ukraine",
+  ],
+  "Middle East": [
+    "Bahrain","Egypt","Iraq","Israel","Jordan","Kuwait","Lebanon","Oman","Qatar","Saudi Arabia",
+    "Tunisia","Turkey","United Arab Emirates",
+  ],
+  Africa: [
+    "Algeria","Angola","Benin","Botswana","Burkina Faso","Cameroon","Chad","Ethiopia","Gabon",
+    "Ghana","Ivory Coast","Kenya","Libya","Madagascar","Malawi","Mali","Mauritania","Mauritius",
+    "Morocco","Mozambique","Namibia","Niger","Nigeria","Rwanda","Senegal","South Africa","Sudan",
+    "Tanzania","Uganda","Zambia","Zimbabwe",
+  ],
+  AMER: [
+    "Argentina","Bolivia","Brazil","Canada","Chile","Colombia","Costa Rica","Cuba","Dominican Republic",
+    "Ecuador","El Salvador","Guatemala","Honduras","Jamaica","Mexico","Nicaragua","Panama","Paraguay",
+    "Peru","Puerto Rico","Trinidad and Tobago","United States","Uruguay","Venezuela",
+  ],
+  "North America": ["Canada","Mexico","United States"],
+  LATAM: [
+    "Argentina","Bolivia","Brazil","Chile","Colombia","Costa Rica","Cuba","Dominican Republic",
+    "Ecuador","El Salvador","Guatemala","Honduras","Jamaica","Mexico","Nicaragua","Panama","Paraguay",
+    "Peru","Puerto Rico","Trinidad and Tobago","Uruguay","Venezuela",
+  ],
+  APAC: [
+    "Australia","Bangladesh","China","Hong Kong","India","Indonesia","Japan","Malaysia",
+    "Myanmar","New Zealand","Pakistan","Philippines","Singapore","South Korea","Sri Lanka",
+    "Taiwan","Thailand","Vietnam",
+  ],
+  ANZ: ["Australia","New Zealand"],
+  Japan: ["Japan"],
+  "Greater China": ["China","Hong Kong","Taiwan"],
+  India: ["India"],
+};
+
 export interface GlobalEngagementFilter {
-  type?:   string;
-  status?: "open" | "complete" | "all";
-  search?: string;
-  top?:    number;
+  type?:    string;
+  status?:  "open" | "complete" | "all";
+  search?:  string;
+  country?: string;  // exact match on account.address1_country
+  region?:  string;  // e.g. "EMEA", "DACH", "Central Europe" — expands to country list
+  top?:     number;
 }
 
 export async function fetchEngagementsGlobal(
@@ -535,7 +597,7 @@ export async function fetchEngagementsGlobal(
   }
 
   const normStatus = filter.status?.toLowerCase();
-  if (normStatus === "open")     filters.push("statecode eq 0");
+  if (normStatus === "open")          filters.push("statecode eq 0");
   else if (normStatus === "complete") filters.push("statecode eq 1");
 
   if (filter.search) {
@@ -543,16 +605,44 @@ export async function fetchEngagementsGlobal(
     filters.push(`contains(sn_name,'${safe}')`);
   }
 
+  // Country filter — OData navigation property path through linked account
+  if (filter.country) {
+    const safe = filter.country.replace(/'/g, "''");
+    filters.push(`sn_accountid/address1_country eq '${safe}'`);
+  } else if (filter.region) {
+    // Resolve region name → country list (case-insensitive key lookup)
+    const key = Object.keys(REGION_COUNTRIES).find(k =>
+      k.toLowerCase() === filter.region!.toLowerCase()
+    );
+    const countries = key ? REGION_COUNTRIES[key] : undefined;
+    if (countries && countries.length > 0) {
+      progress(`🌍 Region "${filter.region}" → ${countries.length} countries`);
+      const countryFilter = countries
+        .map(c => `sn_accountid/address1_country eq '${c.replace(/'/g, "''")}'`)
+        .join(" or ");
+      filters.push(`(${countryFilter})`);
+    } else {
+      progress(`⚠️ Unknown region "${filter.region}" — supported: ${Object.keys(REGION_COUNTRIES).join(", ")}`);
+    }
+  }
+
   const filterClause = filters.length ? `&$filter=${filters.join(" and ")}` : "";
+  const progressLabel = [
+    filter.type   ? `type=${filter.type}`     : null,
+    filter.status ? `status=${filter.status}` : null,
+    filter.country ? `country=${filter.country}` : null,
+    filter.region  ? `region=${filter.region}`   : null,
+  ].filter(Boolean).join(", ") || "all";
+
   const path =
     `/sn_engagements` +
     `?$select=sn_engagementid,sn_engagementnumber,sn_name,sn_description,sn_completeddate,sn_categorycode,sn_salesstagecode,statecode,statuscode,_sn_engagementtypeid_value,_sn_opportunityid_value,_sn_accountid_value,_sn_primaryproductid_value,_ownerid_value,createdon,modifiedon` +
-    `&$expand=sn_engagementtypeid($select=sn_name),sn_accountid($select=name),sn_opportunityid($select=name),sn_primaryproductid($select=sn_name)` +
+    `&$expand=sn_engagementtypeid($select=sn_name),sn_accountid($select=name,address1_country),sn_opportunityid($select=name),sn_primaryproductid($select=sn_name)` +
     filterClause +
     `&$orderby=modifiedon desc` +
     `&$top=${top}`;
 
-  progress(`📡 Searching engagements (type=${filter.type ?? "any"}, status=${filter.status ?? "all"})...`);
+  progress(`📡 Searching engagements (${progressLabel})...`);
   const res = await dynamicsFetch(path, {}, progress);
   const data = await res.json();
   const results = (data.value ?? []).map(mapEngagement);
