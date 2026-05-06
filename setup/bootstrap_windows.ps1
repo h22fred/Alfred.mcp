@@ -42,16 +42,27 @@ if (-not $GitOk) {
     $WingetOk = $false
     try { & winget --version 2>$null | Out-Null; $WingetOk = $true } catch {}
 
+    $GitInstalledViaWinget = $false
     if ($WingetOk) {
         Write-Host "  Installing Git via winget..."
         & winget install --id Git.Git -e --source winget --accept-package-agreements --accept-source-agreements
-    } else {
+        if ($LASTEXITCODE -eq 0) { $GitInstalledViaWinget = $true }
+        else { Write-Host "  Winget failed (code $LASTEXITCODE) - falling back to direct installer..." }
+    }
+
+    if (-not $GitInstalledViaWinget) {
         Write-Host "  Downloading Git installer..."
         $GitInstaller = "$env:TEMP\git-installer.exe"
-        (New-Object Net.WebClient).DownloadFile(
-            "https://github.com/git-for-windows/git/releases/latest/download/Git-2.49.0-64-bit.exe",
-            $GitInstaller
-        )
+        try {
+            (New-Object Net.WebClient).DownloadFile(
+                "https://github.com/git-for-windows/git/releases/latest/download/Git-2.49.0-64-bit.exe",
+                $GitInstaller
+            )
+        } catch {
+            Write-Host "  Download failed: $_"
+            Write-Host "  Please install Git manually from https://git-scm.com/download/win then re-run."
+            Read-Host "  Press Enter to exit"; exit 1
+        }
         if (-not (Test-Path $GitInstaller)) {
             Write-Host "  Download failed. Install Git from https://git-scm.com/download/win then re-run."
             Read-Host "  Press Enter to exit"; exit 1
@@ -68,8 +79,8 @@ if (-not $GitOk) {
     try { & git --version 2>$null | Out-Null; $GitOk = $true } catch {}
     if (-not $GitOk) {
         Write-Host ""
-        Write-Host "  Git installed but not in PATH yet."
-        Write-Host "  Please close this window and re-run Setup_Windows.bat."
+        Write-Host "  Git install completed but not detected in PATH."
+        Write-Host "  Please close this window, open a new one, and re-run Setup_Windows.bat."
         Read-Host "  Press Enter to exit"; exit 1
     }
     Write-Host "  Git installed successfully"
