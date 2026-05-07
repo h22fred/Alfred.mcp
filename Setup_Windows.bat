@@ -1,2 +1,86 @@
 @echo off
-powershell -NoProfile -ExecutionPolicy Bypass -Command "iex ((New-Object Net.WebClient).DownloadString('https://raw.githubusercontent.com/h22fred/Alfred.mcp/main/setup/bootstrap_windows.ps1'))"
+setlocal enabledelayedexpansion
+title AlFred.mcp - Installer
+
+set "REPO_URL=https://github.com/h22fred/Alfred.mcp.git"
+
+echo.
+echo ==================================================
+echo   AlFred.mcp - Installer
+echo ==================================================
+echo.
+echo   PREREQUISITE: Git for Windows must be installed.
+echo   If not installed, download from:
+echo   https://git-scm.com/download/win
+echo   Then close this window and re-run.
+echo.
+echo ==================================================
+echo.
+echo   What is your role?
+echo.
+echo     1) SC / SSC / Manager           - Solution Consulting
+echo     2) Sales / Specialist / Manager - Account Executive
+echo.
+set /p VARIANT_CHOICE="   Enter 1 or 2 (default: 1): "
+
+if "!VARIANT_CHOICE!"=="2" (
+    set "ALFRED_VARIANT=sales"
+    set "INSTALL_DIR=%USERPROFILE%\Documents\alfred.sales"
+    echo     Installing Alfred Sales to %USERPROFILE%\Documents\alfred.sales
+) else (
+    set "ALFRED_VARIANT=sc"
+    set "INSTALL_DIR=%USERPROFILE%\Documents\alfred.sc"
+    echo     Installing Alfred SC to %USERPROFILE%\Documents\alfred.sc
+)
+
+echo.
+
+:: ------------------------------------------------------------
+:: 1. Check Git
+:: ------------------------------------------------------------
+where git >nul 2>&1
+if !ERRORLEVEL! neq 0 (
+    echo   ERROR: Git is not installed or not in PATH.
+    echo.
+    echo   Install Git from: https://git-scm.com/download/win
+    echo   Then re-run this installer.
+    echo.
+    pause
+    exit /b 1
+)
+
+:: ------------------------------------------------------------
+:: 2. Clone or update the repo
+:: ------------------------------------------------------------
+if exist "!INSTALL_DIR!\.git" (
+    echo   Updating existing installation...
+    git -C "!INSTALL_DIR!" fetch origin >nul 2>&1
+    if !ERRORLEVEL! neq 0 (
+        echo   WARNING: Could not fetch updates. Using existing version.
+    ) else (
+        git -C "!INSTALL_DIR!" reset --hard origin/main >nul 2>&1
+        echo   Updated to latest
+    )
+) else (
+    echo   Cloning alfred.mcp...
+    git clone "!REPO_URL!" "!INSTALL_DIR!"
+    if !ERRORLEVEL! neq 0 (
+        echo.
+        echo   ERROR: Failed to clone repository.
+        echo   Check your internet connection and GitHub access.
+        echo.
+        pause
+        exit /b 1
+    )
+    echo   Cloned to !INSTALL_DIR!
+)
+
+:: ------------------------------------------------------------
+:: 3. Run setup
+:: ------------------------------------------------------------
+echo.
+powershell -ExecutionPolicy Bypass -File "!INSTALL_DIR!\setup\setup.ps1"
+
+echo.
+pause
+endlocal
