@@ -783,6 +783,68 @@ export async function createEngagement(input: CreateEngagementInput, progress: P
 }
 
 // ---------------------------------------------------------------------------
+// Account-level engagement creation (no opportunity required)
+// ---------------------------------------------------------------------------
+
+export interface CreateAccountEngagementInput {
+  accountId: string;
+  name: string;
+  type: EngagementType;
+  notes?: string;
+  completedDate?: string;
+}
+
+export async function createAccountEngagement(input: CreateAccountEngagementInput, progress: ProgressFn = () => {}): Promise<Engagement> {
+  auditLog("create_account_engagement", { type: input.type, accountId: input.accountId });
+  requireGuid(input.accountId, "accountId");
+  const typeGuid = ENGAGEMENT_TYPE_GUIDS[input.type];
+  if (!typeGuid) throw new Error(`Unknown engagement type: ${input.type}`);
+
+  const isCompleted = !!input.completedDate && new Date(input.completedDate) <= new Date();
+
+  const payload: Record<string, unknown> = {
+    sn_name: input.name,
+    sn_description: input.notes,
+    sn_completeddate: input.completedDate,
+    "sn_engagementtypeid@odata.bind": `/sn_engagementtypes(${typeGuid})`,
+    "sn_accountid@odata.bind": `/accounts(${input.accountId})`,
+    ...(isCompleted ? { statecode: 1, statuscode: 2 } : {}),
+  };
+
+  progress(`📝 Creating "${input.name}" (${input.type}) account-level engagement...`);
+  const res = await dynamicsFetch("/sn_engagements", {
+    method: "POST",
+    body: JSON.stringify(payload),
+    headers: { Prefer: "return=representation" },
+  }, progress);
+
+  let engagement: Engagement;
+  if (res.status === 201) {
+    engagement = mapEngagement(await res.json() as Record<string, unknown>);
+  } else {
+    const location = res.headers.get("OData-EntityId") ?? res.headers.get("Location");
+    const match = location?.match(/sn_engagements\(([^)]+)\)/);
+    if (!match?.[1]) throw new Error("Engagement created but could not retrieve ID from response");
+    engagement = await fetchEngagementById(match[1], progress);
+  }
+
+  progress("✅ Account engagement created successfully");
+
+  const engId = engagement.sn_engagementid;
+  if (engId) {
+    const today = new Date().toISOString().slice(0, 10);
+    await createTimelineNote(
+      engId,
+      `${input.type} created – ${today}`,
+      input.notes ? `Engagement created.\n\n${input.notes}` : `Engagement created.`,
+      progress
+    );
+  }
+
+  return engagement;
+}
+
+// ---------------------------------------------------------------------------
 // Structured description builder (used for Technical Win and all engagements)
 // ---------------------------------------------------------------------------
 

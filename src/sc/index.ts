@@ -16,6 +16,7 @@ import {
   fetchEngagementsGlobal,
   fetchEngagementById,
   createEngagement,
+  createAccountEngagement,
   updateEngagement,
   searchProducts,
   getProductById,
@@ -427,6 +428,49 @@ Optionally filter by engagement type (e.g. type="POV") to keep the response lean
     }
     const text = engagements.map(engagementListItem).join("\n\n---\n\n");
     return { content: [{ type: "text", text }] };
+  }
+);
+
+// ---------------------------------------------------------------------------
+// Tool: create_account_engagement
+// ---------------------------------------------------------------------------
+server.tool(
+  "create_account_engagement",
+  `Create an engagement linked directly to an account — no opportunity required.
+
+Use this for on-site visits, executive meetings, workshops, or QBRs that are not tied to a specific deal.
+Best-fit types for account-level engagements:
+- EBC — executive on-site visit or briefing
+- Workshop — technical or working session on-site
+- Customer Business Review — QBR or strategic review
+- Discovery — on-site discovery not yet tied to a deal
+- Post Sale Engagement — post-sale on-site activity
+
+BEFORE creating: call list_engagements_by_account to check for existing engagements of the same type.
+
+AFTER EVERY SUCCESSFUL CREATE, show the user a direct CRM link:
+https://${DYNAMICS_HOST}/main.aspx?etn=sn_engagement&id=<sn_engagementid>&pagetype=entityrecord
+Never omit the link.`,
+  {
+    account_id:    z.string().describe("Dynamics account GUID"),
+    type:          z.enum(["EBC", "Workshop", "Customer Business Review", "Discovery", "Post Sale Engagement"] as const).describe("Engagement type"),
+    name:          z.string().describe("Engagement name, e.g. 'On-Site EBC – Givaudan – May 2026'"),
+    notes:         z.string().optional().describe("Notes / description for this engagement"),
+    completed_date: z.string().optional().describe("ISO date if already completed, e.g. '2026-05-08'"),
+  },
+  async ({ account_id, type, name, notes, completed_date }) => {
+    const id = requireGuid(account_id, "account_id");
+    const progress = makeProgress(server);
+    engagementWriteLimiter.check("create_account_engagement");
+    const engagement = await createAccountEngagement({
+      accountId: id,
+      type,
+      name,
+      notes,
+      completedDate: completed_date,
+    }, progress);
+    const link = `https://${DYNAMICS_HOST}/main.aspx?etn=sn_engagement&id=${engagement.sn_engagementid}&pagetype=entityrecord`;
+    return { content: [{ type: "text", text: `✅ Account engagement created: ${engagement.sn_name}\nID: ${engagement.sn_engagementnumber ?? engagement.sn_engagementid}\nLink: ${link}` }] };
   }
 );
 

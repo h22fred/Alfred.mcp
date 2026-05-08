@@ -86,6 +86,7 @@ describe("SC / Sales tool parity", () => {
     "generate_opportunity_summary",
     "update_opportunity_summary",
     "list_quotes",
+    "create_account_engagement",
   ];
 
   for (const tool of REQUIRED_SHARED) {
