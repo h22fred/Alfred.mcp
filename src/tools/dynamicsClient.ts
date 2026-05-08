@@ -356,9 +356,12 @@ export async function fetchOpportunities(filter: OpportunityFilter = {}, progres
         `&$top=200`;
       const collabRes = await dynamicsFetch(collabPath, {}, progress);
       const collabData = await collabRes.json();
+      const GUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
       const oppIds = [...new Set(
-        (collabData.value ?? []).map((r: Record<string, unknown>) => r._sn_opportunity_value as string).filter(Boolean)
-      )] as string[];
+        (collabData.value ?? [])
+          .map((r: Record<string, unknown>) => r._sn_opportunity_value as string)
+          .filter((id: unknown): id is string => typeof id === "string" && GUID_RE.test(id))
+      )];
 
       if (oppIds.length === 0) {
         progress("ℹ️ You are not on any opportunity collaboration teams");

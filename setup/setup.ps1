@@ -183,6 +183,10 @@ if ($ExistingDynamicsUrl) {
     Write-Host "   Dynamics URL already set: $ExistingDynamicsUrl"
     $NewCompany = Read-Host "   Change company name? (press Enter to keep)"
     if ($NewCompany) {
+        if ($NewCompany -notmatch '^[a-zA-Z0-9-]+$') {
+            Write-Host "   ERROR: Company name must contain only letters, numbers, and hyphens."
+            Read-Host "   Press Enter to exit"; exit 1
+        }
         $NewDynamicsUrl = "https://$NewCompany.crm.dynamics.com"
     } else {
         $NewDynamicsUrl = $ExistingDynamicsUrl
@@ -190,6 +194,10 @@ if ($ExistingDynamicsUrl) {
 } else {
     $NewCompany = Read-Host "   What is your company name? (press Enter for 'servicenow')"
     if (-not $NewCompany) { $NewCompany = "servicenow" }
+    if ($NewCompany -notmatch '^[a-zA-Z0-9-]+$') {
+        Write-Host "   ERROR: Company name must contain only letters, numbers, and hyphens."
+        Read-Host "   Press Enter to exit"; exit 1
+    }
     $NewDynamicsUrl = "https://$NewCompany.crm.dynamics.com"
 }
 
