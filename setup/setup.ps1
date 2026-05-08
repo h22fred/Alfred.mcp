@@ -106,52 +106,13 @@ if (-not $NodePath) {
 
 if (-not $NodePath) {
     Write-Host ""
-    Write-Host "   Node.js not found - installing automatically (no admin required)..."
+    Write-Host "   ERROR: Node.js is not installed."
     Write-Host ""
-
-    # Use the portable zip - no admin rights needed, just extract and run
-    $NodeVersion = "v22.15.0"
-    $NodeZipUrl = "https://nodejs.org/dist/$NodeVersion/node-$NodeVersion-win-x64.zip"
-    $NodeInstallDir = Join-Path $env:USERPROFILE ".nodejs"
-    $NodeZip = Join-Path $env:TEMP "node-portable.zip"
-
-    Write-Host "   Downloading Node.js LTS (portable)..."
-    try {
-        [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-        Invoke-WebRequest -Uri $NodeZipUrl -OutFile $NodeZip -UseBasicParsing
-    } catch {
-        Write-Host "   Download failed: $_"
-        Write-Host ""
-        Write-Host "   Please install Node.js LTS manually from: https://nodejs.org"
-        Write-Host "   Then re-run this script."
-        Write-Host ""
-        exit 1
-    }
-
-    Write-Host "   Extracting Node.js..."
-    if (Test-Path $NodeInstallDir) { Remove-Item $NodeInstallDir -Recurse -Force }
-    Expand-Archive -Path $NodeZip -DestinationPath $env:TEMP -Force
-    Rename-Item (Join-Path $env:TEMP "node-$NodeVersion-win-x64") $NodeInstallDir -Force
-    Remove-Item $NodeZip -Force -ErrorAction SilentlyContinue
-
-    $NodePath = Join-Path $NodeInstallDir "node.exe"
-
-    if (-not (Test-Path $NodePath)) {
-        Write-Host ""
-        Write-Host "   Node.js extraction failed."
-        Write-Host "   Please install Node.js LTS manually from: https://nodejs.org"
-        Write-Host "   Then re-run this script."
-        Write-Host ""
-        exit 1
-    }
-
-    # Add to user PATH permanently so future runs find it
-    $UserPath = [Environment]::GetEnvironmentVariable("Path", "User")
-    if ($UserPath -notlike "*$NodeInstallDir*") {
-        [Environment]::SetEnvironmentVariable("Path", "$NodeInstallDir;$UserPath", "User")
-    }
-
-    Write-Host "   Node.js installed to $NodeInstallDir"
+    Write-Host "   Please install Node.js LTS from: https://nodejs.org/en/download"
+    Write-Host "   Then close this window and re-run Setup_Windows.bat."
+    Write-Host ""
+    Read-Host "   Press Enter to exit"
+    exit 1
 }
 
 $NodeDir = Split-Path -Parent $NodePath

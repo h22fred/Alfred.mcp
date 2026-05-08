@@ -9,10 +9,12 @@ echo ==================================================
 echo   AlFred.mcp - Installer
 echo ==================================================
 echo.
-echo   PREREQUISITE: Git for Windows must be installed.
-echo   If not installed, download from:
-echo   https://git-scm.com/download/win
-echo   Then close this window and re-run.
+echo   PREREQUISITES (install both before running):
+echo.
+echo     1. Git  - https://git-scm.com/download/win
+echo     2. Node.js LTS - https://nodejs.org/en/download
+echo.
+echo   Already installed? Continue below.
 echo.
 echo ==================================================
 echo.
