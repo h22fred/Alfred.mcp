@@ -250,7 +250,7 @@ async function acquireTokenViaSilentAuth(
         try {
           const msg = JSON.parse(event.data as string);
           const cookies = msg.result?.cookies as Array<{ name: string; value: string; domain: string }> ?? [];
-          const tid = cookies.find(c => c.name === "tenantId" && c.domain.includes("teams.microsoft.com"));
+          const tid = cookies.find(c => c.name === "tenantId" && (c.domain === "teams.microsoft.com" || c.domain.endsWith(".teams.microsoft.com")));
           resolve(tid?.value ?? null);
         } catch { resolve(null); }
       });
@@ -379,14 +379,16 @@ async function acquireTokenViaSilentAuth(
           if (msg.method === "Page.frameNavigated") {
             const frame = msg.params?.frame as Record<string, unknown> | undefined;
             const url = (frame?.url ?? "") as string;
-            // Check if fragment is in the URL (some browsers include it)
+            // Check if fragment is in the URL (some browsers include it).
+            // Searching for "access_token=" in the URL fragment/query string — not a hostname check.
             if (url.includes("access_token=")) {
               const hashPart = url.includes("#") ? url.split("#")[1]! : url;
               const token = new URLSearchParams(hashPart).get("access_token");
               if (token) { finish(token); return; }
             }
-            // After the capture page loads, read the title
-            if (fetchIntercepted && url.includes("teams.microsoft.com")) {
+            // After the capture page loads, read the title.
+            // urlHostMatches checks the hostname exactly — prevents substring bypass.
+            if (fetchIntercepted && urlHostMatches(url, "teams.microsoft.com")) {
               setTimeout(() => { if (!resolved) send("Runtime.evaluate", { expression: "document.title" }); }, 500);
             }
             return;
@@ -573,7 +575,7 @@ async function acquireSkypeToken(progress: ProgressFn): Promise<{ token: string;
         const msg = JSON.parse(event.data as string);
         const cookies = msg.result?.cookies as Array<{ name: string; value: string; domain: string }> ?? [];
         const skypeCookie = cookies.find(c =>
-          c.name === "skypetoken_asm" && c.domain.includes("teams.microsoft.com")
+          c.name === "skypetoken_asm" && (c.domain === "teams.microsoft.com" || c.domain.endsWith(".teams.microsoft.com"))
         );
         if (!skypeCookie?.value) { resolve(null); return; }
 

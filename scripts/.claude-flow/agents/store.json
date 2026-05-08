@@ -1,0 +1,148 @@
+{
+  "agents": {
+    "agent-1774513874093-6mg8eo": {
+      "agentId": "agent-1774513874093-6mg8eo",
+      "agentType": "reviewer",
+      "status": "terminated",
+      "health": 1,
+      "taskCount": 0,
+      "config": {
+        "model": "sonnet"
+      },
+      "createdAt": "2026-03-26T08:31:14.099Z",
+      "model": "sonnet",
+      "modelRoutedBy": "explicit"
+    },
+    "agent-1774513874156-ecxf3i": {
+      "agentId": "agent-1774513874156-ecxf3i",
+      "agentType": "tester",
+      "status": "terminated",
+      "health": 1,
+      "taskCount": 0,
+      "config": {
+        "model": "sonnet"
+      },
+      "createdAt": "2026-03-26T08:31:14.157Z",
+      "model": "sonnet",
+      "modelRoutedBy": "explicit"
+    },
+    "agent-1774520433707-gtoosp": {
+      "agentId": "agent-1774520433707-gtoosp",
+      "agentType": "reviewer",
+      "status": "terminated",
+      "health": 1,
+      "taskCount": 0,
+      "config": {
+        "model": "sonnet"
+      },
+      "createdAt": "2026-03-26T10:20:33.710Z",
+      "model": "sonnet",
+      "modelRoutedBy": "explicit"
+    },
+    "agent-1774520436140-t0er7v": {
+      "agentId": "agent-1774520436140-t0er7v",
+      "agentType": "security-architect",
+      "status": "terminated",
+      "health": 1,
+      "taskCount": 0,
+      "config": {
+        "model": "sonnet"
+      },
+      "createdAt": "2026-03-26T10:20:36.140Z",
+      "model": "sonnet",
+      "modelRoutedBy": "explicit"
+    },
+    "agent-1774535700429-w54ww4": {
+      "agentId": "agent-1774535700429-w54ww4",
+      "agentType": "security-architect",
+      "status": "terminated",
+      "health": 1,
+      "taskCount": 0,
+      "config": {
+        "model": "sonnet"
+      },
+      "createdAt": "2026-03-26T14:35:00.431Z",
+      "model": "sonnet",
+      "modelRoutedBy": "explicit"
+    },
+    "agent-1774535705471-14b3cr": {
+      "agentId": "agent-1774535705471-14b3cr",
+      "agentType": "reviewer",
+      "status": "terminated",
+      "health": 1,
+      "taskCount": 0,
+      "config": {
+        "model": "sonnet"
+      },
+      "createdAt": "2026-03-26T14:35:05.471Z",
+      "model": "sonnet",
+      "modelRoutedBy": "explicit"
+    },
+    "agent-1774536360653-0ienvr": {
+      "agentId": "agent-1774536360653-0ienvr",
+      "agentType": "security-architect",
+      "status": "terminated",
+      "health": 1,
+      "taskCount": 0,
+      "config": {
+        "model": "sonnet"
+      },
+      "createdAt": "2026-03-26T14:46:00.654Z",
+      "model": "sonnet",
+      "modelRoutedBy": "explicit"
+    },
+    "agent-1774536404433-mu1wy5": {
+      "agentId": "agent-1774536404433-mu1wy5",
+      "agentType": "security-architect",
+      "status": "terminated",
+      "health": 1,
+      "taskCount": 0,
+      "config": {
+        "model": "sonnet"
+      },
+      "createdAt": "2026-03-26T14:46:44.439Z",
+      "model": "sonnet",
+      "modelRoutedBy": "explicit"
+    },
+    "agent-1774537785481-8wvmcz": {
+      "agentId": "agent-1774537785481-8wvmcz",
+      "agentType": "reviewer",
+      "status": "terminated",
+      "health": 1,
+      "taskCount": 0,
+      "config": {
+        "model": "haiku"
+      },
+      "createdAt": "2026-03-26T15:09:45.482Z",
+      "model": "haiku",
+      "modelRoutedBy": "explicit"
+    },
+    "agent-1774950534928-t5xun3": {
+      "agentId": "agent-1774950534928-t5xun3",
+      "agentType": "reviewer",
+      "status": "idle",
+      "health": 1,
+      "taskCount": 0,
+      "config": {
+        "model": "sonnet"
+      },
+      "createdAt": "2026-03-31T09:48:54.931Z",
+      "model": "sonnet",
+      "modelRoutedBy": "explicit"
+    },
+    "agent-1774950537378-oiqn2l": {
+      "agentId": "agent-1774950537378-oiqn2l",
+      "agentType": "security-architect",
+      "status": "idle",
+      "health": 1,
+      "taskCount": 0,
+      "config": {
+        "model": "sonnet"
+      },
+      "createdAt": "2026-03-31T09:48:57.379Z",
+      "model": "sonnet",
+      "modelRoutedBy": "explicit"
+    }
+  },
+  "version": "3.0.0"
+}

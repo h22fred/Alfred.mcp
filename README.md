@@ -49,7 +49,11 @@ Two flavours — one installer:
 - [Claude Desktop](https://claude.ai/download)
 - Google Chrome
 
-> **All other prerequisites (Git, Node.js) are installed automatically** by the setup script on both macOS and Windows.
+**Windows only — install these two first:**
+- [Git for Windows](https://git-scm.com/download/win) — click Next through all defaults
+- [Node.js LTS](https://nodejs.org/en/download) — click Next through all defaults
+
+> macOS: Git and Node.js are installed automatically by the setup script.
 
 ---
 
@@ -75,10 +79,16 @@ curl -fsSL https://raw.githubusercontent.com/h22fred/Alfred.mcp/refs/heads/main/
 
 ## Setup — Windows
 
-1. **[⬇️ Download Setup_Windows.bat](https://raw.githubusercontent.com/h22fred/Alfred.mcp/refs/heads/main/Setup_Windows.bat)**
-2. Double-click the downloaded file (or right-click → Run as administrator if prompted)
+**Step 1 — Install Git** _(if not already installed)_
+Download and run (click Next through all defaults): [git-scm.com/download/win](https://git-scm.com/download/win)
 
-> Git (via winget) and Node.js are **installed automatically** if missing.
+**Step 2 — Install Node.js** _(if not already installed)_
+Download the LTS version and run (click Next through all defaults): [nodejs.org/en/download](https://nodejs.org/en/download)
+
+**Step 3 — Install Alfred**
+1. **[⬇️ Download Setup_Windows.bat](https://raw.githubusercontent.com/h22fred/Alfred.mcp/refs/heads/main/Setup_Windows.bat)**
+2. Double-click the downloaded file
+3. When prompted, enter `1` for SC or `2` for Sales
 
 ## What the installer asks
 
@@ -213,7 +223,7 @@ The webhook URL is stored in `~/.alfred-config.json` on your machine only and is
 | Not logged into Dynamics | Log into Dynamics in the Alfred browser window |
 | 401 from Dynamics | Session expired — re-login in Alfred window |
 | Teams not posting | Re-run setup to reconfigure webhook |
-| Node.js not found | Re-run setup — it installs automatically (macOS) or install from [nodejs.org](https://nodejs.org) (Windows) |
+| Node.js not found | macOS: re-run setup — it installs automatically. Windows: install from [nodejs.org](https://nodejs.org/en/download) then re-run `Setup_Windows.bat` |
 | macOS privacy prompt for Node.js | Normal — click Allow to let Node.js access local project files |
 | No opportunities found (Sales AE) | Make sure your role is set correctly in setup. AE CRM / AE Risk users should select "Sales Specialist" |
 

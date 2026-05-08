@@ -9,6 +9,8 @@ on:
       - '.gitattributes'
   workflow_dispatch:
 
+permissions: read-all
+
 jobs:
   test-windows-installer:
     runs-on: windows-latest
