@@ -183,7 +183,7 @@ async function acquireGraphTokenRawCDP(progress: ProgressFn): Promise<string> {
 
   // Detect if tabs are stuck on login pages
   for (const t of [teamsTarget, outlookTarget]) {
-    if (t?.url && (t.url.includes("login.microsoftonline.com") || t.url.includes("login.live.com") || t.url.includes("/oauth2/"))) {
+    if (t?.url && (urlHostMatches(t.url, "login.microsoftonline.com") || urlHostMatches(t.url, "login.live.com") || t.url.includes("/oauth2/"))) {
       throw new Error(
         "A tab in Alfred is on the Microsoft login page — your session has expired.\n" +
         "Please log back into Teams/Outlook in the Alfred window, then retry."
@@ -465,7 +465,7 @@ async function verifyOutlookConnection(progress: ProgressFn): Promise<void> {
 
   // Step 3: Is the Outlook tab stuck on a login page?
   const tabUrl = outlookTab.url ?? "";
-  if (tabUrl.includes("login.microsoftonline.com") || tabUrl.includes("login.live.com") || tabUrl.includes("/oauth2/")) {
+  if (urlHostMatches(tabUrl, "login.microsoftonline.com") || urlHostMatches(tabUrl, "login.live.com") || tabUrl.includes("/oauth2/")) {
     throw new Error(
       "Outlook session has expired — the Alfred browser is on the Microsoft login page.\n" +
       "Please log back into Outlook in the Alfred window (make sure the inbox loads fully), then retry." +
@@ -531,7 +531,7 @@ async function acquireOutlookRestToken(progress: ProgressFn): Promise<string> {
   // Detect login-page redirect
   if (outlookTarget?.url) {
     const tabUrl = outlookTarget.url;
-    if (tabUrl.includes("login.microsoftonline.com") || tabUrl.includes("login.live.com") || tabUrl.includes("/oauth2/")) {
+    if (urlHostMatches(tabUrl, "login.microsoftonline.com") || urlHostMatches(tabUrl, "login.live.com") || tabUrl.includes("/oauth2/")) {
       throw new Error(
         "Outlook tab is on the Microsoft login page — your session has expired.\n" +
         "Please log back into Outlook in the Alfred window (make sure the inbox is fully loaded), then retry."
@@ -680,6 +680,9 @@ async function acquireOutlookRestToken(progress: ProgressFn): Promise<string> {
 // Resolve the correct mail API base URL based on token audience.
 // New Outlook uses Graph API (graph.microsoft.com), old uses REST v2.0 (outlook.office.com).
 function getOutlookApiBase(): string {
+  // `aud` is the JWT audience claim (e.g. "https://graph.microsoft.com"), NOT a user-supplied URL.
+  // The substring checks below select which Microsoft API base URL to use — not URL validation.
+  // lgtm[js/incomplete-url-substring-sanitization]
   const aud = outlookRestTokenCache?.aud ?? "";
   // Graph API token — new Outlook uses this
   if (aud.includes("graph.microsoft.com")) return "https://graph.microsoft.com/v1.0/me";

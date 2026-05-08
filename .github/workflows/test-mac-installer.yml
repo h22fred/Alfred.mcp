@@ -9,6 +9,8 @@ on:
       - 'setup/assets/**'
   workflow_dispatch:
 
+permissions: read-all
+
 jobs:
   test-mac-installer:
     runs-on: macos-latest
