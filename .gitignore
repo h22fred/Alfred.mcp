@@ -2,3 +2,11 @@ node_modules/
 dist/
 *.log
 .DS_Store
+
+# Local Claude/Ruflo tool artifacts
+.agents/
+.claude-flow/
+.claude/
+.swarm/
+scripts/
+skills-lock.json

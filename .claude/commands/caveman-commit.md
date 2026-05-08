@@ -1,1 +1,0 @@
-/Users/fredrik.holmstrom/Documents/Coding/ClaudeCode/alfred.mcp/.agents/skills/caveman-commit/SKILL.md
