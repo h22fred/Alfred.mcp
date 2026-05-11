@@ -91,7 +91,7 @@ jobs:
       # ------------------------------------------------------------------
       # 4. Run full setup.ps1 end-to-end (sales variant, non-interactive)
       #    Read-Host returns empty string when stdin is at EOF -> hits all defaults:
-      #      company      -> servicenow (built-in default)
+      #      company      -> yourcompany (your CRM subdomain)
       #      webhook      -> skip
       #      role         -> AE (default)
       #      types        -> all

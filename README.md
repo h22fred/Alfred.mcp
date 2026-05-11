@@ -2,7 +2,7 @@
 
 > *Every superhero needs a butler. Yours is called Alfred and handles your CRM.*
 
-Built by **Fred** — Solution Consultant @ ServiceNow
+Built by **Fred** — Solution Consultant
 
 <a href="https://www.buymeacoffee.com/h22fred"><img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me A Coffee" height="60"></a>&nbsp;&nbsp;<a href="https://www.linkedin.com/comm/mynetwork/discovery-see-all?usecase=PEOPLE_FOLLOWS&followMember=fredholmstrom"><img src="setup/assets/btn-linkedin.svg" alt="Follow on LinkedIn" height="60"></a>
 
@@ -93,7 +93,7 @@ Download the LTS version and run (click Next through all defaults): [nodejs.org/
 ## What the installer asks
 
 - **SC or Sales?** — determines which Alfred variant is installed
-- **Dynamics company name** — your CRM URL (e.g. `servicenow`)
+- **Dynamics company name** — your CRM subdomain (e.g. `mycompany` for `mycompany.crm.dynamics.com`)
 - **Teams webhook** — for automated notifications (optional)
 - **Role:**
   - SC variant: **SC** / **SSC** / **Manager**
@@ -129,9 +129,9 @@ Download the LTS version and run (click Next through all defaults): [nodejs.org/
 List my open opportunities over $100K
 Run hygiene sweep and post to Teams
 Which accounts are missing a Technical Win?
-Assess the Tech Win for Acme Corp Brown Field
+Assess the Tech Win for Acme Corp
 Create a Discovery engagement for Contoso from my Tuesday meeting
-Mark the Acme Corp Tech Win as complete
+Mark the Acme Tech Win as complete
 Show my calendar this week
 Get the transcript from my Contoso demo last Thursday
 Detect post-meeting engagements from this week
@@ -142,11 +142,11 @@ Delete the cancelled Demo engagement on Fabrikam
 ```
 Create an opportunity for Contoso — New ITSM, close December 2026
 Find the account ID for Fabrikam
-Search for Fredrik to get his SC GUID and assign him
+Search for John to get his SC GUID and assign him
 Update the Fabrikam opportunity close date to March 2027
 Show my open opportunities
 Show me the full territory pipeline
-Add a note to the Acme Corp opportunity: had intro call, next step is discovery
+Add a note to the Acme opportunity: had intro call, next step is discovery
 ```
 
 ---

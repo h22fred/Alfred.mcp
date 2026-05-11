@@ -11,7 +11,7 @@ Alfred.mcp is a continuously delivered internal tool. Only the current `main` br
 
 ## Reporting a Vulnerability
 
-Alfred.mcp is an internal ServiceNow tool. If you discover a security issue (e.g. credential exposure, privilege escalation, API key leakage), please report it privately:
+Alfred.mcp is an internal enterprise tool. If you discover a security issue (e.g. credential exposure, privilege escalation, API key leakage), please report it privately:
 
 **Contact:** h22fred@mail.com
 
