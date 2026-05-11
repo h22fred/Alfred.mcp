@@ -11,9 +11,7 @@ Alfred.mcp is a continuously delivered internal tool. Only the current `main` br
 
 ## Reporting a Vulnerability
 
-Alfred.mcp is an internal enterprise tool. If you discover a security issue (e.g. credential exposure, privilege escalation, API key leakage), please report it privately:
-
-**Contact:** h22fred@mail.com
+Alfred.mcp is an internal enterprise tool. If you discover a security issue (e.g. credential exposure, privilege escalation, API key leakage), please report it privately via **[GitHub Private Vulnerability Reporting](../../security/advisories/new)**.
 
 Include:
 - Description of the vulnerability
