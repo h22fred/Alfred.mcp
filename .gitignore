@@ -8,5 +8,4 @@ dist/
 .claude-flow/
 .claude/
 .swarm/
-scripts/
 skills-lock.json

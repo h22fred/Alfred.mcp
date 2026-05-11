@@ -624,8 +624,8 @@ describe("post-meeting candidate matching", () => {
       return account.includes(dw) || dw.includes(account.slice(0, Math.max(4, account.length - 2)));
     }
 
-    expect(matchScore("Acme Corp", "sita")).toBe(true);
-    expect(matchScore("Fabrikam International", "pmi")).toBe(true);
+    expect(matchScore("Acme Corp", "acmecorp")).toBe(true);
+    expect(matchScore("Fabrikam International", "fabrikam")).toBe(true);
     expect(matchScore("Acme Corp", "acme")).toBe(true);
     expect(matchScore("ServiceNow", "microsoft")).toBe(false);
     expect(matchScore("Acme Corp", "ab")).toBe(false); // too short
@@ -710,7 +710,7 @@ describe("post-meeting candidate matching", () => {
     const event = {
       subject: "Weekly check-in", // no account name in subject
       attendees: [
-        { name: "Eve", email: "eve@sita.aero" },
+        { name: "Eve", email: "eve@acme.com" },
         { name: "Bob", email: "bob@servicenow.com" },
       ],
     };

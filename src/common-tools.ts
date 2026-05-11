@@ -18,7 +18,7 @@ import { fileURLToPath } from "url";
 import { execFileSync } from "child_process";
 
 import { DYNAMICS_HOST, ALL_ENGAGEMENT_TYPES } from "./config.js";
-import { requireGuid, makeProgress, WriteRateLimiter, regenerateAlfredApp } from "./shared.js";
+import { requireGuid, makeProgress, WriteRateLimiter } from "./shared.js";
 import {
   fetchEngagementsByOpportunity,
   fetchEngagementsByAccount,
@@ -57,8 +57,9 @@ import {
 } from "./tools/dynamicsClient.js";
 import { ensureAlfred, exitAlfred, restartAlfred, clearAuthCache } from "./auth/tokenExtractor.js";
 import { getEmails, listMailFolders, clearGraphTokenCache } from "./tools/outlookClient.js";
-import { postTeamsNotification, getTeamsTranscript, getTeamsChats } from "./tools/teamsClient.js";
+import { postTeamsNotification, getTeamsTranscript, getTeamsChats, setTeamsWebhook } from "./tools/teamsClient.js";
 import { runHygieneSweep, formatHygieneReport } from "./tools/hygieneClient.js";
+import { detectPostMeetingEngagements, notifyPostMeetingCandidates } from "./tools/postMeetingClient.js";
 
 // ---------------------------------------------------------------------------
 // Internal helpers
@@ -618,6 +619,7 @@ Use search_contacts to find the contact ID first, then link them.`,
     async ({ contact_id, opportunity_id, role }) => {
       engagementWriteLimiter.check("add_contact_to_opportunity");
       const progress = makeProgress(server);
+      requireGuid(contact_id, "contact_id");
       const oppId = await resolveOpportunityId(opportunity_id, progress);
       await addContactToOpportunity(contact_id, oppId, role, progress);
       return { content: [{ type: "text", text: `✅ Contact linked to opportunity${role ? ` as **${role}**` : ""}.` }] };
@@ -1223,4 +1225,78 @@ After uninstall, the user must restart Claude Desktop.`,
   // correctly via "dist/sc/index.js → root" and "dist/sales/index.js → root").
   // To avoid duplicating the path comment and keep the logic clear, update_alfred
   // remains registered separately in each entry point.
+
+  // ---------------------------------------------------------------------------
+  // Tool: configure_teams_webhook
+  // ---------------------------------------------------------------------------
+  server.tool(
+    "configure_teams_webhook",
+    "Set the Teams incoming webhook URL for notifications. Create one in Teams: channel → ... → Connectors → Incoming Webhook.",
+    { webhook_url: z.string().describe("Teams incoming webhook URL") },
+    async ({ webhook_url }) => {
+      let parsed: URL;
+      try { parsed = new URL(webhook_url); } catch {
+        return { content: [{ type: "text", text: "❌ Invalid URL." }] };
+      }
+      if (!parsed.hostname.endsWith(".webhook.office.com")) {
+        return { content: [{ type: "text", text: "❌ URL must be a *.webhook.office.com Teams incoming webhook." }] };
+      }
+      setTeamsWebhook(webhook_url);
+      // Persist to config so it's remembered across sessions
+      try {
+        const fs = await import("fs");
+        const os = await import("os");
+        const cfgPath = `${os.default.homedir()}/.alfred-config.json`;
+        const cfg = JSON.parse(fs.default.readFileSync(cfgPath, "utf-8").toString());
+        cfg.teamsWebhook = webhook_url;
+        fs.default.writeFileSync(cfgPath, JSON.stringify(cfg, null, 2));
+      } catch (e) { process.stderr.write(`[alfred:warn] webhook config persist failed: ${e instanceof Error ? e.message : String(e)}\n`); }
+      return { content: [{ type: "text", text: "✅ Teams webhook configured and saved. Notifications will post to that channel." }] };
+    }
+  );
+
+  // ---------------------------------------------------------------------------
+  // Tool: detect_post_meeting_engagements
+  // ---------------------------------------------------------------------------
+  server.tool(
+    "detect_post_meeting_engagements",
+    `Scan recently ended Teams meetings, fetch transcripts where available, and return structured candidates for engagement creation.
+
+After calling this tool, analyse each candidate and:
+1. Determine the engagement type (Discovery / Demo / Tech Win etc.) from the transcript/subject
+2. Extract use_case, key_points, next_actions, risks, stakeholders
+3. Confirm the matched opportunity with the user
+4. Ask for approval before calling create_engagement
+
+If a transcript is available it will be included — use it to pre-fill the engagement description.
+If no transcript, use the meeting subject, attendees and calendar notes for best-effort pre-fill.
+
+CROSS-REFERENCE: For each matched account, use Data_Analytics_Connection account_insights to pull customer health, product subscriptions, and license utilization. This gives context for writing up the engagement — what the customer owns, how much they use it, and any risk signals.`,
+    {
+      hours_back: z.number().optional().describe("How many hours back to scan for ended meetings (default 24)"),
+      search:     z.string().optional().describe("Optional keyword to filter meeting subjects (e.g. 'Fabrikam', 'Acme Corp')"),
+      post_to_teams: z.boolean().optional().describe("Post a summary card per candidate to Teams (requires configure_teams_webhook). Default false."),
+    },
+    async ({ hours_back, search, post_to_teams }) => {
+      const progress = makeProgress(server);
+      const candidates = await detectPostMeetingEngagements({ hoursBack: hours_back, search }, progress);
+
+      if (candidates.length === 0) {
+        return { content: [{ type: "text", text: "No ended online meetings found in the specified window." }] };
+      }
+
+      // Post to Teams if requested
+      if (post_to_teams) {
+        await notifyPostMeetingCandidates(candidates, DYNAMICS_HOST, progress);
+      }
+
+      // Strip raw calendarEvent (large Graph API blob Claude doesn't need) and truncate transcripts
+      const slim = candidates.map(({ calendarEvent: _raw, transcript, ...c }) => ({
+        ...c,
+        ...(transcript ? { transcript: transcript.length > 4000 ? transcript.slice(0, 4000) + "\n…[truncated]" : transcript } : {}),
+      }));
+
+      return { content: [{ type: "text", text: externalData("Teams calendar + transcripts", slim) }] };
+    }
+  );
 }
