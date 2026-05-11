@@ -29,8 +29,10 @@ function extractToolNames(src: string): string[] {
 describe("SC / Sales tool parity", () => {
   const scSrc = readSource("src/sc/index.ts");
   const salesSrc = readSource("src/sales/index.ts");
-  const scTools = extractToolNames(scSrc);
-  const salesTools = extractToolNames(salesSrc);
+  const commonSrc = readSource("src/common-tools.ts");
+  // Each server's effective tool set = its own tools + common tools
+  const scTools = [...extractToolNames(scSrc), ...extractToolNames(commonSrc)];
+  const salesTools = [...extractToolNames(salesSrc), ...extractToolNames(commonSrc)];
 
   // Shared tools that must exist in both servers
   const REQUIRED_SHARED = [
@@ -275,6 +277,7 @@ describe("engagement type consistency", () => {
 describe("tool description safety", () => {
   const scSrc = readSource("src/sc/index.ts");
   const salesSrc = readSource("src/sales/index.ts");
+  const commonSrc = readSource("src/common-tools.ts");
 
   it("destructive tools require confirmation in SC server", () => {
     // delete_engagement, delete_timeline_note, create_engagement should have confirmed param
@@ -298,12 +301,12 @@ describe("tool description safety", () => {
 
   it("external data sources use externalData wrapper", () => {
     // Calendar, email, transcript, chats should all use externalData()
-    for (const src of [scSrc, salesSrc]) {
-      expect(src).toContain('externalData("Outlook calendar"');
-      expect(src).toContain('externalData("Outlook emails"');
-      expect(src).toContain('externalData("Teams transcripts"');
-      expect(src).toContain('externalData("Teams chats"');
-    }
+    // These may live in common-tools.ts, sc/index.ts, or sales/index.ts
+    const allSrc = scSrc + salesSrc + commonSrc;
+    expect(allSrc).toContain('externalData("Outlook calendar"');
+    expect(allSrc).toContain('externalData("Outlook emails"');
+    expect(allSrc).toContain('externalData("Teams transcripts"');
+    expect(allSrc).toContain('externalData("Teams chats"');
   });
 
   it("read-before-write instruction in create_engagement", () => {
@@ -337,13 +340,17 @@ describe("tool description safety", () => {
 // ---------------------------------------------------------------------------
 describe("import consistency", () => {
   it("sales server imports clearAuthCache for open_chrome_debug", () => {
+    // clearAuthCache may live in common-tools.ts (shared) rather than sales/index.ts
     const salesSrc = readSource("src/sales/index.ts");
-    expect(salesSrc).toContain("clearAuthCache");
+    const commonSrc = readSource("src/common-tools.ts");
+    expect(salesSrc + commonSrc).toContain("clearAuthCache");
   });
 
   it("sales server imports clearGraphTokenCache", () => {
+    // clearGraphTokenCache may live in common-tools.ts (shared) rather than sales/index.ts
     const salesSrc = readSource("src/sales/index.ts");
-    expect(salesSrc).toContain("clearGraphTokenCache");
+    const commonSrc = readSource("src/common-tools.ts");
+    expect(salesSrc + commonSrc).toContain("clearGraphTokenCache");
   });
 
   it("both servers import from shared module", () => {
