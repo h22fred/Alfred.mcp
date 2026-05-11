@@ -456,8 +456,8 @@ describe("attendee external/internal classification", () => {
     expect(SN_INTERNAL_DOMAINS.has("servicenow.com")).toBe(true);
   });
 
-  it("now.com is classified as internal", () => {
-    expect(SN_INTERNAL_DOMAINS.has("now.com")).toBe(true);
+  it("SN_INTERNAL_DOMAINS is config-driven (Set instance)", () => {
+    expect(SN_INTERNAL_DOMAINS).toBeInstanceOf(Set);
   });
 
   it("customer domains are NOT in NON_CUSTOMER_DOMAINS", () => {
@@ -474,7 +474,7 @@ describe("attendee external/internal classification", () => {
     // Simulate the exact logic from postMeetingClient.ts notifyPostMeetingCandidates
     const attendees = [
       { name: "Alice", email: "alice@servicenow.com" },
-      { name: "Bob", email: "bob@now.com" },
+      { name: "Bob", email: "bob@servicenow.com" },
       { name: "Charlie", email: "charlie@acme.com" },
       { name: "Diana", email: "diana@customer.org" },
     ];

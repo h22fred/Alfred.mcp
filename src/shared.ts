@@ -2,6 +2,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { existsSync, readFileSync, writeFileSync, copyFileSync } from "fs";
 import { homedir } from "os";
 import { join } from "path";
+import { INTERNAL_DOMAINS } from "./config.js";
 
 const GUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -111,8 +112,8 @@ export function urlHostMatches(url: string, hostname: string): boolean {
   }
 }
 
-/** ServiceNow internal email domains — used to classify attendees as internal vs external. */
-export const SN_INTERNAL_DOMAINS = new Set(["servicenow.com", "now.com"]);
+/** Internal email domains for this company — derived from Dynamics URL or set in ~/.alfred-config.json (internalDomains). */
+export const SN_INTERNAL_DOMAINS = INTERNAL_DOMAINS;
 
 /** Personal/generic email domains to skip when matching attendees to customer accounts. */
 export const PERSONAL_EMAIL_DOMAINS = new Set([
@@ -229,7 +230,7 @@ exec "\$CHROME" \\
 <plist version="1.0">
 <dict>
   <key>CFBundleExecutable</key><string>Alfred</string>
-  <key>CFBundleIdentifier</key><string>com.servicenow.alfred</string>
+  <key>CFBundleIdentifier</key><string>com.alfred.mcp</string>
   <key>CFBundleName</key><string>Alfred</string>
   <key>CFBundleIconFile</key><string>alfred</string>
   <key>CFBundlePackageType</key><string>APPL</string>

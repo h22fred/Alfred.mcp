@@ -641,7 +641,7 @@ Do NOT append internal SC attribution (e.g. "SC: Fredrik Holmstrom") to any text
 
 BEFORE generating any content: call list_engagements on the opportunity to read existing engagement content, and get_opportunity to read the opportunity timeline. Only write what is genuinely NEW — never duplicate what is already logged.
 
-When creating from a calendar event or meeting, always pass the attendees list — they are automatically linked as Active Participants (internal @servicenow.com colleagues) and Active Engagement Contacts (external customers).
+When creating from a calendar event or meeting, always pass the attendees list — they are automatically linked as Active Participants (internal company colleagues) and Active Engagement Contacts (external customers).
 
 AFTER EVERY SUCCESSFUL CREATE: Always present the result to the user as:
 ✅ [Engagement Name] (ENG#) — [Open in Dynamics](link)
@@ -666,7 +666,7 @@ The Dynamics link is in the tool response. This applies to EVERY engagement crea
     attendees: z.array(z.object({
       name:  z.string(),
       email: z.string(),
-    })).optional().describe("Meeting attendees from the calendar event. Always pass these when creating from a meeting — internal (@servicenow.com/@now.com) become Active Participants, external become Active Engagement Contacts."),
+    })).optional().describe("Meeting attendees from the calendar event. Always pass these when creating from a meeting — internal (company email addresses) become Active Participants, external become Active Engagement Contacts."),
     include_self: z.boolean().optional().describe("When true, adds the current logged-in user as an Active Participant on the new engagement."),
     include_collaboration_team: z.boolean().optional().describe("When true, automatically fetches the opportunity's collaboration team and adds all members as Active Participants on the new engagement."),
     confirmed: z.boolean().optional().describe("MUST be true to actually create. Omit or set false to get a dry-run preview first. Always preview before creating."),
@@ -761,7 +761,7 @@ server.tool(
   "add_engagement_attendees",
   `Add meeting attendees to an engagement in Dynamics 365.
 
-- Internal attendees (@servicenow.com / @now.com) are added as Active Participants (sn_engagementassignee → systemuser)
+- Internal attendees (company email addresses) are added as Active Participants (sn_engagementassignee → systemuser)
 - External attendees (customers) are added as Active Engagement Contacts (sn_engagementcontact → contact)
 - Attendees not found in Dynamics are reported but do not cause failure
 

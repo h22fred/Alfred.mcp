@@ -366,9 +366,10 @@ describe("forecast categories", () => {
 // Email domain classification
 // ---------------------------------------------------------------------------
 describe("email domain classification", () => {
-  it("SN_INTERNAL_DOMAINS includes servicenow.com and now.com", () => {
+  it("SN_INTERNAL_DOMAINS is a Set (config-driven)", () => {
+    expect(SN_INTERNAL_DOMAINS).toBeInstanceOf(Set);
+    // Derived from default Dynamics URL: servicenow.crm.dynamics.com → servicenow.com
     expect(SN_INTERNAL_DOMAINS.has("servicenow.com")).toBe(true);
-    expect(SN_INTERNAL_DOMAINS.has("now.com")).toBe(true);
   });
 
   it("PERSONAL_EMAIL_DOMAINS excludes servicenow.com", () => {

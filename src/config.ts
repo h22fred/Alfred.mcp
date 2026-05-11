@@ -8,6 +8,7 @@ interface AlfredConfig {
   role?: "sc" | "ssc" | "manager" | "sales" | "sales_specialist" | "sales_manager";
   engagementTypes?: string[];
   installedVersion?: string;
+  internalDomains?: string[];
 }
 
 const configPath = join(homedir(), ".alfred-config.json");
@@ -50,6 +51,17 @@ if (!/^https?:\/\/[\w.-]+\.crm[\d]*\.dynamics\.com$/i.test(rawDynamicsUrl)) {
 }
 
 export const DYNAMICS_HOST: string = rawDynamicsUrl;
+
+// Derive internal email domain from Dynamics URL (e.g. https://acme.crm.dynamics.com → acme.com)
+const companyMatch = rawDynamicsUrl.match(/^https?:\/\/([\w-]+)\.crm/i);
+const derivedDomain = companyMatch ? `${companyMatch[1]}.com` : null;
+
+/** Internal email domains for this company — attendees on these domains are classified as internal, not customer contacts. */
+export const INTERNAL_DOMAINS: Set<string> = new Set(
+  Array.isArray(raw.internalDomains) && raw.internalDomains.length > 0
+    ? raw.internalDomains
+    : derivedDomain ? [derivedDomain] : []
+);
 
 export const alfredConfig = raw;
 

@@ -48,6 +48,7 @@ describe("dynamicsFetch retry logic (via fetchOpportunities)", () => {
       ENGAGEMENT_TYPE_GUIDS: {},
       ALL_ENGAGEMENT_TYPES: [],
       alfredConfig: {},
+      INTERNAL_DOMAINS: new Set(["test.com"]),
     }));
 
     // Mock os.userInfo to avoid system calls in auditLog
@@ -174,6 +175,7 @@ describe("getCalendarEvents Graph API error handling", () => {
       ENGAGEMENT_TYPE_GUIDS: {},
       ALL_ENGAGEMENT_TYPES: [],
       alfredConfig: {},
+      INTERNAL_DOMAINS: new Set(["test.com"]),
     }));
 
     vi.doMock("os", async (importOriginal) => {
@@ -285,6 +287,7 @@ describe("opportunity mapping via fetchOpportunities", () => {
       ENGAGEMENT_TYPE_GUIDS: {},
       ALL_ENGAGEMENT_TYPES: [],
       alfredConfig: {},
+      INTERNAL_DOMAINS: new Set(["test.com"]),
     }));
 
     vi.doMock("os", async (importOriginal) => {
@@ -405,6 +408,7 @@ describe("sanitizeODataSearch in OData URL context", () => {
       ENGAGEMENT_TYPE_GUIDS: {},
       ALL_ENGAGEMENT_TYPES: [],
       alfredConfig: {},
+      INTERNAL_DOMAINS: new Set(["test.com"]),
     }));
     vi.doMock("os", async (importOriginal) => {
       const actual = await importOriginal() as typeof import("os");
@@ -802,6 +806,7 @@ describe("listMailFolders parallel child folder batching", () => {
       ENGAGEMENT_TYPE_GUIDS: {},
       ALL_ENGAGEMENT_TYPES: [],
       alfredConfig: {},
+      INTERNAL_DOMAINS: new Set(["test.com"]),
     }));
     vi.doMock("os", async (importOriginal) => {
       const actual = await importOriginal() as typeof import("os");
@@ -903,6 +908,7 @@ describe("fetchOpportunities parallel collab validation", () => {
       ENGAGEMENT_TYPE_GUIDS: {},
       ALL_ENGAGEMENT_TYPES: [],
       alfredConfig: {},
+      INTERNAL_DOMAINS: new Set(["test.com"]),
     }));
     vi.doMock("os", async (importOriginal) => {
       const actual = await importOriginal() as typeof import("os");

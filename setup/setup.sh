@@ -166,10 +166,13 @@ else
 fi
 
 ALFRED_DYNAMICS_URL="$NEW_DYNAMICS_URL" python3 -c "
-import json, os
+import json, os, re
 f = os.path.expanduser('~/.alfred-config.json')
 d = json.load(open(f)) if os.path.exists(f) else {}
 d['dynamicsUrl'] = os.environ['ALFRED_DYNAMICS_URL']
+m = re.match(r'^https?://([\w-]+)\.crm', os.environ['ALFRED_DYNAMICS_URL'])
+if m and not d.get('internalDomains'):
+    d['internalDomains'] = [m.group(1) + '.com']
 json.dump(d, open(f, 'w'), indent=2)
 "
 chmod 600 "$HOME/.alfred-config.json"

@@ -203,9 +203,16 @@ if ($ExistingDynamicsUrl) {
 
 $Config = Read-AlfredConfig
 Ensure-Property $Config "dynamicsUrl" ""
+Ensure-Property $Config "internalDomains" @()
 $Config.dynamicsUrl = $NewDynamicsUrl
+# Derive internal email domain from company name (e.g. acme → acme.com)
+$CompanyName = ([regex]::Match($NewDynamicsUrl, '^https?://([\w-]+)\.crm')).Groups[1].Value
+if ($CompanyName -and $Config.internalDomains.Count -eq 0) {
+    $Config.internalDomains = @("$CompanyName.com")
+}
 Write-AlfredConfig $Config
 Write-Host "   Dynamics URL set to: $NewDynamicsUrl"
+Write-Host "   Internal domain: $CompanyName.com"
 
 # ------------------------------------------------------------
 # 4. Configure Claude Desktop
