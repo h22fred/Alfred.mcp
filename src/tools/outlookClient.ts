@@ -1,13 +1,11 @@
 import { execFileSync } from "child_process";
 import { dirname, join } from "path";
 import { fileURLToPath } from "url";
-import { connectWithRetry, getCdpTargets } from "../auth/tokenExtractor.js";
+import { getAlfredPages } from "../auth/tokenExtractor.js";
 import type { ProgressFn } from "../auth/tokenExtractor.js";
 import { loadCachedAuth, saveCachedAuth, clearCachedAuthFile } from "../auth/authFileCache.js";
 import { stripHtml, urlHostMatches } from "../shared.js";
 import { sanitizeODataSearch } from "./dynamicsClient.js";
-
-const CDP_PORT = 9222;
 
 /** All known Outlook web domains — new ones can be added here. */
 const OUTLOOK_DOMAINS = ["outlook.cloud.microsoft", "outlook.cloud.microsoft.com", "outlook.office.com", "outlook.office365.com", "outlook.live.com"] as const;
@@ -80,303 +78,6 @@ export function _seedOutlookRestTokenCache(token: string, ttlMs = TOKEN_CACHE_FA
 }
 
 // ---------------------------------------------------------------------------
-// Acquire a Graph Bearer token via raw CDP WebSocket — no Playwright needed.
-// Enables Network tracking on the Outlook tab, triggers a lightweight OWA
-// service call, and captures the outgoing Authorization header.
-// ---------------------------------------------------------------------------
-
-// JS snippet injected into a browser tab to extract a Bearer token from MSAL cache.
-// Scans sessionStorage + localStorage for ANY AccessToken entry (MSAL v2 format).
-// Also checks for MSAL v2 "accesstoken" key pattern used by outlook.cloud.microsoft.com.
-// Returns { token, expiresAt, debug } for diagnostics.
-const MSAL_EXTRACT_JS = `(function() {
-  const diag = { sessionKeys: 0, localKeys: 0, accessTokens: 0, matched: [], skippedExpired: 0, origin: location.origin };
-  const isJwt = (s) => typeof s === 'string' && s.length > 100 && s.split('.').length === 3;
-  const tryStorage = (s, sName) => {
-    try {
-      const keys = Object.keys(s);
-      if (sName === 'session') diag.sessionKeys = keys.length;
-      else diag.localKeys = keys.length;
-      let bestScoped = null;
-      let bestAny = null;
-      for (const key of keys) {
-        try {
-          const raw = s.getItem(key);
-          if (!raw || raw.length < 50) continue;
-          const val = JSON.parse(raw);
-          if (!val || typeof val !== 'object') continue;
-          // MSAL v2 format: credentialType=AccessToken, secret=<jwt>
-          const secret = val.secret || val.access_token || val.accessToken;
-          const credType = (val.credentialType || val.credential_type || '').toLowerCase();
-          if (credType.includes('accesstoken') && secret && isJwt(secret)) {
-            diag.accessTokens++;
-            const target = (val.target || val.scopes || '').toLowerCase();
-            const exp = Number(val.expiresOn || val.expires_on || val.extended_expires_on || 0);
-            diag.matched.push({ key: key.slice(0, 60), target: target.slice(0, 80), exp, sName });
-            if (exp && exp * 1000 < Date.now()) { diag.skippedExpired++; continue; }
-            const result = { token: secret, expiresAt: exp ? exp * 1000 : 0 };
-            if (target.includes('mail') || target.includes('calendar') || target.includes('outlook')) {
-              if (!bestScoped) bestScoped = result;
-            } else {
-              if (!bestAny) bestAny = result;
-            }
-          }
-          // Also check for plain JWT stored directly (some new Outlook versions)
-          else if (key.toLowerCase().includes('accesstoken') && isJwt(raw)) {
-            diag.accessTokens++;
-            diag.matched.push({ key: key.slice(0, 60), target: 'raw-jwt-key', exp: 0, sName });
-            if (!bestAny) bestAny = { token: raw, expiresAt: 0 };
-          }
-        } catch {}
-      }
-      return bestScoped || bestAny;
-    } catch {}
-    return null;
-  };
-  const token = tryStorage(sessionStorage, 'session') || tryStorage(localStorage, 'local');
-  if (token) {
-    token.debug = diag;
-    return token;
-  }
-  return { token: null, expiresAt: 0, debug: diag };
-})()`;
-
-async function acquireGraphTokenRawCDP(progress: ProgressFn): Promise<string> {
-  if (tokenCache && Date.now() < tokenCache.expiresAt - TOKEN_REFRESH_MARGIN_MS) {
-    const mins = Math.round((tokenCache.expiresAt - Date.now()) / 60_000);
-    progress(`🔑 Using cached Graph token (~${mins} min remaining)`);
-    return tokenCache.token;
-  }
-
-  // Check file cache before hitting CDP — apply refresh margin
-  const fileCached = loadCachedAuth("graphToken");
-  if (fileCached && Date.now() < fileCached.expiresAt - TOKEN_REFRESH_MARGIN_MS) {
-    tokenCache = { token: fileCached.value, expiresAt: fileCached.expiresAt };
-    const mins = Math.round((fileCached.expiresAt - Date.now()) / 60_000);
-    progress(`🔑 Using cached Graph token (~${mins} min remaining)`);
-    return fileCached.value;
-  }
-
-  progress("🔑 Acquiring Graph Bearer token via CDP...");
-
-  const targets = await getCdpTargets();
-
-  // Prefer Teams tab — it actually talks to graph.microsoft.com.
-  // Outlook uses the Outlook REST API (outlook.office.com), so its MSAL cache
-  // rarely has Graph-audience tokens. Try Outlook only as fallback.
-  const teamsTarget   = targets.find(t => t.type === "page" && t.url && urlHostMatches(t.url, "teams.microsoft.com") && t.webSocketDebuggerUrl);
-  const outlookTarget = targets.find(t => t.type === "page" && t.url && isOutlookUrl(t.url) && t.webSocketDebuggerUrl);
-  const anyTarget     = targets.find(t => t.type === "page" && t.webSocketDebuggerUrl);
-  const target        = teamsTarget ?? outlookTarget ?? anyTarget;
-
-  if (!target?.webSocketDebuggerUrl) {
-    throw new Error("No browser tabs found. Launch Alfred from your Desktop and log into Teams or Outlook.");
-  }
-
-  // Log which tab we're using so the user can see what's happening
-  const tabLabel = teamsTarget ? "Teams" : outlookTarget ? "Outlook" : "other";
-  const tabUrl = target.url ?? "unknown";
-  process.stderr.write(`[alfred] CDP: using ${tabLabel} tab (${tabUrl.slice(0, 80)})\n`);
-  if (!teamsTarget) {
-    process.stderr.write(`[alfred] CDP: no Teams tab found — trying ${outlookTarget ? "Outlook" : "other"} tab for MSAL cache\n`);
-  }
-
-  // Detect if tabs are stuck on login pages
-  for (const t of [teamsTarget, outlookTarget]) {
-    if (t?.url && (urlHostMatches(t.url, "login.microsoftonline.com") || urlHostMatches(t.url, "login.live.com") || t.url.includes("/oauth2/"))) {
-      throw new Error(
-        "A tab in Alfred is on the Microsoft login page — your session has expired.\n" +
-        "Please log back into Teams/Outlook in the Alfred window, then retry."
-      );
-    }
-  }
-
-  // Step 1: try reading token directly from MSAL storage — fast, no network interception
-  interface MsalDiag { sessionKeys: number; localKeys: number; accessTokens: number; matched: Array<{ key: string; target: string; exp: number; sName: string }>; skippedExpired: number; origin: string }
-  const msalResult = await new Promise<{ token: string | null; expiresAt: number; debug?: MsalDiag } | null>((resolve) => {
-    const ws = new WebSocket(target.webSocketDebuggerUrl!);
-    const timer = setTimeout(() => {
-      process.stderr.write("[alfred:warn] MSAL extraction timed out (5s) — tab may be unresponsive\n");
-      try { ws.close(); } catch {}
-      resolve(null);
-    }, 5_000);
-
-    ws.addEventListener("open", () => {
-      ws.send(JSON.stringify({ id: 1, method: "Runtime.evaluate", params: { expression: MSAL_EXTRACT_JS, returnByValue: true } }));
-    });
-    ws.addEventListener("message", (event: MessageEvent) => {
-      clearTimeout(timer);
-      try { ws.close(); } catch {}
-      try {
-        const msg = JSON.parse(event.data as string) as { result?: { result?: { value?: { token: string | null; expiresAt: number; debug?: MsalDiag } | null } } };
-        resolve(msg.result?.result?.value ?? null);
-      } catch (e) {
-        process.stderr.write(`[alfred:warn] MSAL extraction parse error: ${e instanceof Error ? e.message : String(e)}\n`);
-        resolve(null);
-      }
-    });
-    ws.addEventListener("error", () => {
-      clearTimeout(timer);
-      process.stderr.write(`[alfred:warn] MSAL extraction WebSocket error on tab\n`);
-      try { ws.close(); } catch {}
-      resolve(null);
-    });
-  });
-
-  // Log diagnostics regardless of outcome — both stderr and user-facing progress
-  if (msalResult?.debug) {
-    const d = msalResult.debug;
-    const diagMsg = `MSAL scan on ${d.origin}: ${d.sessionKeys} session keys, ${d.localKeys} local keys, ${d.accessTokens} AccessTokens, ${d.skippedExpired} expired`;
-    process.stderr.write(`[alfred:diag] ${diagMsg}\n`);
-    progress(`🔍 ${diagMsg}`);
-    for (const m of d.matched.slice(0, 5)) {
-      process.stderr.write(`[alfred:diag]   key="${m.key}" target="${m.target}" exp=${m.exp} storage=${m.sName}\n`);
-    }
-  } else if (!msalResult) {
-    progress("⚠️ MSAL extraction returned no result (timeout or WebSocket error)");
-  }
-
-  if (msalResult?.token) {
-    // Use real MSAL expiry when available, otherwise fall back to 45 min
-    const expiresAt = msalResult.expiresAt > 0 ? msalResult.expiresAt : Date.now() + TOKEN_CACHE_FALLBACK_MS;
-    tokenCache = { token: msalResult.token, expiresAt };
-    saveCachedAuth("graphToken", msalResult.token, expiresAt);
-    const mins = Math.round((expiresAt - Date.now()) / 60_000);
-    progress(`✅ Graph token acquired from MSAL cache (~${mins} min valid)`);
-    return msalResult.token;
-  }
-
-  // Step 2: fallback — enable Network tracking and trigger an OWA API fetch
-  progress("🔑 MSAL cache miss — capturing token via network interception...");
-
-  return new Promise((resolve, reject) => {
-    const ws = new WebSocket(target.webSocketDebuggerUrl!);
-    let capturedToken: string | null = null;
-
-    const timer = setTimeout(() => {
-      try { ws.close(); } catch {}
-      process.stderr.write("[alfred] CDP: Graph token capture timed out from Outlook tab\n");
-      reject(new Error(
-        "Could not capture Graph token from Outlook.\n" +
-        "Make sure you are logged into Outlook in the Alfred window." +
-        checkForAlfredUpdate()
-      ));
-    }, 10_000);
-
-    const done = (token: string) => {
-      clearTimeout(timer);
-      try { ws.close(); } catch {}
-      const expiresAt = Date.now() + TOKEN_CACHE_FALLBACK_MS;
-      tokenCache = { token, expiresAt };
-      saveCachedAuth("graphToken", token, expiresAt);
-      progress("✅ Graph token acquired");
-      resolve(token);
-    };
-
-    let msgId = 0;
-    const send = (method: string, params?: Record<string, unknown>) =>
-      ws.send(JSON.stringify({ id: ++msgId, method, params }));
-
-    ws.addEventListener("open", () => send("Network.enable"));
-
-    ws.addEventListener("message", (event: MessageEvent) => {
-      try {
-        const msg = JSON.parse(event.data as string) as { id?: number; method?: string; params?: Record<string, unknown> };
-        if (msg.id === 1) {
-          // Network enabled — trigger API calls against all known Outlook API domains
-          const now = new Date().toISOString();
-          const tomorrow = new Date(Date.now()+86400000).toISOString();
-          send("Runtime.evaluate", {
-            expression: [
-              `fetch('https://outlook.microsoft.com/api/v2.0/me/messages?$top=1', { credentials: 'include' }).catch(()=>{})`,
-              `fetch('https://outlook.cloud.microsoft.com/api/v2.0/me/messages?$top=1', { credentials: 'include' }).catch(()=>{})`,
-              `fetch('https://outlook.office.com/api/v2.0/me/messages?$top=1', { credentials: 'include' }).catch(()=>{})`,
-              `fetch('/api/v2.0/me/calendarview?$top=1&$select=Id&startDateTime=${now}&endDateTime=${tomorrow}', { credentials: 'include' }).catch(()=>{})`,
-            ].join(';'),
-            awaitPromise: false,
-          });
-          setTimeout(() => { if (!capturedToken) send("Page.reload"); }, 3_000);
-        }
-        if (msg.method === "Network.requestWillBeSent") {
-          const headers = ((msg.params?.request as Record<string, unknown>)?.headers ?? {}) as Record<string, string>;
-          const auth = headers["Authorization"] ?? headers["authorization"] ?? "";
-          if (!capturedToken && auth.startsWith("Bearer ")) {
-            capturedToken = auth.slice(7);
-            done(capturedToken);
-          }
-        }
-      } catch (e) { process.stderr.write(`[alfred:warn] CDP message parse error: ${e instanceof Error ? e.message : String(e)}\n`); }
-    });
-
-    ws.addEventListener("error", () => {
-      clearTimeout(timer);
-      reject(new Error("CDP WebSocket error — is Alfred running?"));
-    });
-  });
-}
-
-// acquireGraphToken — tries raw CDP first (fast), falls back to Playwright page load
-async function acquireGraphToken(progress: ProgressFn): Promise<string> {
-  try {
-    return await acquireGraphTokenRawCDP(progress);
-  } catch (e) {
-    process.stderr.write(`[alfred:warn] raw CDP token acquisition failed, falling back to Playwright: ${e instanceof Error ? e.message : String(e)}\n`);
-    // Raw CDP failed — use Playwright to capture a Graph API token.
-    // Prefer Teams tab (it talks to graph.microsoft.com), fall back to Outlook.
-    progress("📡 Falling back to Playwright token capture via Teams...");
-    const browser = await connectWithRetry();
-    try {
-      const ctx = browser.contexts()[0];
-      if (!ctx) throw new Error("No browser context found in Alfred");
-
-      const existingPages = ctx.pages();
-      // Prefer Teams — it actually uses Graph API. Outlook uses its own REST API.
-      let page = existingPages.find(p => urlHostMatches(p.url(), "teams.microsoft.com"))
-              ?? existingPages.find(p => isOutlookUrl(p.url()));
-
-      let isNewPage = false;
-      if (!page) {
-        page = existingPages.find(p => p.url().startsWith("http")) ?? await ctx.newPage();
-        isNewPage = !existingPages.includes(page);
-      }
-
-      let capturedToken: string | null = null;
-      // Only capture Bearer tokens destined for Graph API
-      await page.route("**/graph.microsoft.com/**", async (route) => {
-        const auth = route.request().headers()["authorization"] ?? "";
-        if (!capturedToken && auth.startsWith("Bearer ")) capturedToken = auth.slice(7);
-        await route.continue();
-      });
-
-      // Navigate/reload to trigger Graph API calls
-      if (urlHostMatches(page.url(), "teams.microsoft.com")) {
-        await page.reload({ waitUntil: "domcontentloaded", timeout: 20_000 }).catch((e) => { process.stderr.write(`[alfred:warn] Teams page.reload failed: ${e instanceof Error ? e.message : String(e)}\n`); });
-      } else if (!urlHostMatches(page.url(), "teams.microsoft.com")) {
-        await page.goto("https://teams.microsoft.com/v2/", { waitUntil: "domcontentloaded", timeout: 20_000 }).catch((e) => { process.stderr.write(`[alfred:warn] Teams page.goto failed: ${e instanceof Error ? e.message : String(e)}\n`); });
-      }
-
-      const deadline = Date.now() + 10_000;
-      while (!capturedToken && Date.now() < deadline) await page.waitForTimeout(500);
-
-      // Clean up route interceptor
-      await page.unroute("**/graph.microsoft.com/**").catch((e) => { process.stderr.write(`[alfred:warn] unroute failed: ${e instanceof Error ? e.message : String(e)}\n`); });
-      // Only close pages we created
-      if (isNewPage) await page.close();
-
-      if (!capturedToken) throw new Error("Could not capture Graph token from Outlook.\nMake sure you are logged into Outlook in the Alfred window." + checkForAlfredUpdate());
-      const expiresAt = Date.now() + TOKEN_CACHE_FALLBACK_MS;
-      tokenCache = { token: capturedToken, expiresAt };
-      saveCachedAuth("graphToken", capturedToken, expiresAt);
-      progress("✅ Graph token acquired via Playwright");
-      return capturedToken;
-    } finally {
-      // Do NOT call browser.close() — it kills the user's actual Alfred Chrome process.
-      // The CDP connection wrapper is GC'd; Alfred Chrome keeps running.
-    }
-  }
-}
-
-// ---------------------------------------------------------------------------
 // Outlook REST token — for email/folder operations against outlook.office.com
 // Separate from Graph token (which is for calendar via graph.microsoft.com)
 // ---------------------------------------------------------------------------
@@ -427,49 +128,37 @@ const OUTLOOK_REST_MSAL_JS = `(function() {
  * Throws a clear, actionable error if the connection is not healthy.
  */
 async function verifyOutlookConnection(progress: ProgressFn): Promise<void> {
-  // Skip check if we have a valid cached token (connection was recently verified)
-  if (outlookRestTokenCache && Date.now() < outlookRestTokenCache.expiresAt - TOKEN_REFRESH_MARGIN_MS) {
-    return;
-  }
+  if (outlookRestTokenCache && Date.now() < outlookRestTokenCache.expiresAt - TOKEN_REFRESH_MARGIN_MS) return;
 
   const updateHint = checkForAlfredUpdate();
 
-  // Step 1: Can we reach the Alfred browser (CDP)?
-  let targets: Array<{ type?: string; url?: string; webSocketDebuggerUrl?: string }>;
+  let pages: Awaited<ReturnType<typeof getAlfredPages>>;
   try {
-    targets = await getCdpTargets();
+    pages = await getAlfredPages();
   } catch {
     throw new Error(
-      "Cannot connect to Alfred — the Alfred browser window is not running or CDP is not reachable.\n" +
-      "Please launch Alfred from your Desktop and make sure it's running." +
-      updateHint
+      "Cannot connect to Alfred — the Alfred browser is not running.\n" +
+      "Please launch Alfred from your Desktop and make sure it's running." + updateHint
     );
   }
 
-  // Step 2: Is there an Outlook tab open?
-  // Log all targets for diagnostics — helps debug when matching fails
-  const targetSummary = targets.map(t => `${t.type ?? "?"}|${t.url?.slice(0, 80) ?? "no-url"}`).join("; ");
-  process.stderr.write(`[alfred:cdp] Targets (${targets.length}): ${targetSummary}\n`);
+  const pageSummary = pages.map(p => p.url().slice(0, 80)).join("; ");
+  process.stderr.write(`[alfred] Pages (${pages.length}): ${pageSummary}\n`);
 
-  // Try page first, then any target type (service_worker, iframe, etc.)
-  const outlookTab = targets.find(t => t.type === "page" && t.url && isOutlookUrl(t.url))
-    ?? targets.find(t => t.url && isOutlookUrl(t.url));
-  if (!outlookTab) {
+  const outlookPage = pages.find(p => isOutlookUrl(p.url()));
+  if (!outlookPage) {
     throw new Error(
       "Alfred is running but no Outlook tab was found.\n" +
-      `CDP returned ${targets.length} target(s): ${targetSummary}\n` +
-      "Please open Outlook (outlook.cloud.microsoft.com) in the Alfred window and log in." +
-      updateHint
+      `Pages: ${pageSummary || "(none)"}\n` +
+      "Please open Outlook (outlook.cloud.microsoft.com) in the Alfred window and log in." + updateHint
     );
   }
 
-  // Step 3: Is the Outlook tab stuck on a login page?
-  const tabUrl = outlookTab.url ?? "";
+  const tabUrl = outlookPage.url();
   if (urlHostMatches(tabUrl, "login.microsoftonline.com") || urlHostMatches(tabUrl, "login.live.com") || tabUrl.includes("/oauth2/")) {
     throw new Error(
       "Outlook session has expired — the Alfred browser is on the Microsoft login page.\n" +
-      "Please log back into Outlook in the Alfred window (make sure the inbox loads fully), then retry." +
-      updateHint
+      "Please log back into Outlook in the Alfred window (make sure the inbox loads fully), then retry." + updateHint
     );
   }
 
@@ -477,14 +166,12 @@ async function verifyOutlookConnection(progress: ProgressFn): Promise<void> {
 }
 
 async function acquireOutlookRestToken(progress: ProgressFn): Promise<string> {
-  // Check in-memory cache (fast path — no CDP call needed)
+  // Cache checks (unchanged from original — keep exactly)
   if (outlookRestTokenCache && Date.now() < outlookRestTokenCache.expiresAt - TOKEN_REFRESH_MARGIN_MS) {
     const mins = Math.round((outlookRestTokenCache.expiresAt - Date.now()) / 60_000);
     progress(`🔑 Using cached Outlook REST token (~${mins} min remaining)`);
     return outlookRestTokenCache.token;
   }
-
-  // Check file cache
   const fileCached = loadCachedAuth("outlookRestToken");
   if (fileCached && Date.now() < fileCached.expiresAt - TOKEN_REFRESH_MARGIN_MS) {
     const aud = decodeJwtAudience(fileCached.value);
@@ -494,83 +181,48 @@ async function acquireOutlookRestToken(progress: ProgressFn): Promise<string> {
     return fileCached.value;
   }
 
-  progress("🔑 Acquiring Outlook REST token via CDP...");
+  progress("🔑 Acquiring Outlook REST token via Playwright...");
 
-  const targets = await getCdpTargets();
+  const pages = await getAlfredPages();
 
-  // Detect which Outlook domain is open — sets detectedOutlookOrigin for API URL resolution
+  // Detect which Outlook domain is open
   if (!detectedOutlookOrigin) {
-    const outlookTabUrl = (targets.find(t => t.type === "page" && t.url && isOutlookUrl(t.url))
-      ?? targets.find(t => t.url && isOutlookUrl(t.url)))?.url;
-    if (outlookTabUrl) {
+    const outlookPageUrl = pages.find(p => isOutlookUrl(p.url()))?.url();
+    if (outlookPageUrl) {
       try {
-        detectedOutlookOrigin = new URL(outlookTabUrl).origin;
+        detectedOutlookOrigin = new URL(outlookPageUrl).origin;
         process.stderr.write(`[alfred] Detected Outlook origin: ${detectedOutlookOrigin}\n`);
       } catch (e) {
-        process.stderr.write(`[alfred:warn] Could not parse Outlook tab URL "${outlookTabUrl}": ${e instanceof Error ? e.message : String(e)}\n`);
+        process.stderr.write(`[alfred:warn] Could not parse Outlook page URL: ${e instanceof Error ? e.message : String(e)}\n`);
       }
     }
   }
 
-  // Outlook REST tokens live in the Outlook tab's MSAL cache
-  // Try page first, then any target type (service_worker, iframe, etc.)
-  const outlookTarget = targets.find(t => t.type === "page" && t.url && isOutlookUrl(t.url) && t.webSocketDebuggerUrl)
-    ?? targets.find(t => t.url && isOutlookUrl(t.url) && t.webSocketDebuggerUrl);
-  const anyTarget = targets.find(t => t.type === "page" && t.webSocketDebuggerUrl)
-    ?? targets.find(t => t.webSocketDebuggerUrl);
-  const target = outlookTarget ?? anyTarget;
+  const outlookPage = pages.find(p => isOutlookUrl(p.url()) && !urlHostMatches(p.url(), "login.microsoftonline.com"))
+    ?? pages.find(p => !p.url().startsWith("about:"));
 
-  if (!target?.webSocketDebuggerUrl) {
+  if (!outlookPage) {
     throw new Error("No browser tabs found. Launch Alfred from your Desktop and log into Outlook.");
   }
 
-  if (!outlookTarget) {
-    process.stderr.write("[alfred] CDP: no Outlook tab found — trying other tab for Outlook REST MSAL token\n");
+  // Login page check
+  const tabUrl = outlookPage.url();
+  if (urlHostMatches(tabUrl, "login.microsoftonline.com") || urlHostMatches(tabUrl, "login.live.com") || tabUrl.includes("/oauth2/")) {
+    throw new Error(
+      "Outlook tab is on the Microsoft login page — your session has expired.\n" +
+      "Please log back into Outlook in the Alfred window (make sure the inbox is fully loaded), then retry."
+    );
   }
 
-  // Detect login-page redirect
-  if (outlookTarget?.url) {
-    const tabUrl = outlookTarget.url;
-    if (urlHostMatches(tabUrl, "login.microsoftonline.com") || urlHostMatches(tabUrl, "login.live.com") || tabUrl.includes("/oauth2/")) {
-      throw new Error(
-        "Outlook tab is on the Microsoft login page — your session has expired.\n" +
-        "Please log back into Outlook in the Alfred window (make sure the inbox is fully loaded), then retry."
-      );
-    }
-  }
-
-  // Extract Outlook REST token from MSAL cache
-  const msalResult = await new Promise<{ token: string; expiresAt: number; aud?: string } | null>((resolve) => {
-    const ws = new WebSocket(target.webSocketDebuggerUrl!);
-    const timer = setTimeout(() => {
-      process.stderr.write("[alfred:warn] Outlook REST MSAL extraction timed out (5s)\n");
-      try { ws.close(); } catch {}
-      resolve(null);
-    }, 5_000);
-
-    ws.addEventListener("open", () => {
-      ws.send(JSON.stringify({ id: 1, method: "Runtime.evaluate", params: { expression: OUTLOOK_REST_MSAL_JS, returnByValue: true } }));
+  // Strategy 1: MSAL cache extraction via page.evaluate()
+  const msalResult = await outlookPage.evaluate(OUTLOOK_REST_MSAL_JS)
+    .then(v => v as { token: string; expiresAt: number; aud?: string } | null)
+    .catch((e) => {
+      process.stderr.write(`[alfred:warn] Outlook REST MSAL extraction failed: ${e instanceof Error ? e.message : String(e)}\n`);
+      return null;
     });
-    ws.addEventListener("message", (event: MessageEvent) => {
-      clearTimeout(timer);
-      try { ws.close(); } catch {}
-      try {
-        const msg = JSON.parse(event.data as string) as { result?: { result?: { value?: { token: string; expiresAt: number; aud?: string } | null } } };
-        resolve(msg.result?.result?.value ?? null);
-      } catch (e) {
-        process.stderr.write(`[alfred:warn] Outlook REST MSAL parse error: ${e instanceof Error ? e.message : String(e)}\n`);
-        resolve(null);
-      }
-    });
-    ws.addEventListener("error", () => {
-      clearTimeout(timer);
-      process.stderr.write("[alfred:warn] Outlook REST MSAL extraction WebSocket error\n");
-      try { ws.close(); } catch {};
-      resolve(null);
-    });
-  });
 
-  if (msalResult) {
+  if (msalResult?.token) {
     const expiresAt = msalResult.expiresAt > 0 ? msalResult.expiresAt : Date.now() + TOKEN_CACHE_FALLBACK_MS;
     outlookRestTokenCache = { token: msalResult.token, expiresAt, aud: msalResult.aud };
     saveCachedAuth("outlookRestToken", msalResult.token, expiresAt);
@@ -579,101 +231,73 @@ async function acquireOutlookRestToken(progress: ProgressFn): Promise<string> {
     return msalResult.token;
   }
 
-  // MSAL cache may be encrypted (outlook.cloud.microsoft.com uses AES-GCM).
-  // Fallback: capture Bearer token from the Outlook tab's own API requests.
+  // Strategy 2: network interception — reload page and capture Bearer token
   progress("🔑 MSAL cache unreadable — capturing token via network interception...");
 
-  const capturedResult = await new Promise<{ token: string; requestUrl: string } | null>((resolve) => {
-    const ws = new WebSocket(target.webSocketDebuggerUrl!);
-    let found = false;
+  // Use a ref object — TypeScript 5.9 narrows local variables assigned in async closures
+  // to `never` at the outer scope; object properties escape that narrowing.
+  const capture: { result: { token: string; requestUrl: string } | null } = { result: null };
+  let found = false;
 
-    const timer = setTimeout(() => {
-      process.stderr.write("[alfred:warn] Outlook REST network interception timed out (10s)\n");
-      try { ws.close(); } catch {}
-      resolve(null);
-    }, 10_000);
-
-    let msgId = 0;
-    const send = (method: string, params?: Record<string, unknown>) =>
-      ws.send(JSON.stringify({ id: ++msgId, method, params }));
-
-    ws.addEventListener("open", () => send("Network.enable"));
-
-    ws.addEventListener("message", (event: MessageEvent) => {
-      try {
-        const msg = JSON.parse(event.data as string) as { id?: number; method?: string; params?: Record<string, unknown> };
-        if (msg.id === 1) {
-          // Network enabled — reload the page (ignoring cache) to trigger fresh authenticated requests.
-          // This forces OWA to re-acquire tokens and call startupdata.ashx with a full-scope Bearer token.
-          send("Page.reload", { ignoreCache: true });
-          // Backup: if reload doesn't generate captures in 3s, try explicit fetches
-          setTimeout(() => {
-            if (!found) {
-              const now = new Date().toISOString();
-              const tomorrow = new Date(Date.now()+86400000).toISOString();
-              send("Runtime.evaluate", {
-                expression: [
-                  `fetch('/owa/service.svc?action=GetFolder', {method:'POST', credentials:'include', headers:{'Content-Type':'application/json'}}).catch(()=>{})`,
-                  `fetch('/api/v2.0/me/calendarview?$top=1&$select=Id&startDateTime=${now}&endDateTime=${tomorrow}', { credentials: 'include' }).catch(()=>{})`,
-                  `fetch('https://graph.microsoft.com/v1.0/me/messages?$top=1', { credentials: 'include' }).catch(()=>{})`,
-                ].join(';'),
-                awaitPromise: false,
-              });
-            }
-          }, 3_000);
-        }
-        if (msg.method === "Network.requestWillBeSent") {
-          const reqUrl = ((msg.params?.request as Record<string, unknown>)?.url ?? "") as string;
-          const headers = ((msg.params?.request as Record<string, unknown>)?.headers ?? {}) as Record<string, string>;
-          const auth = headers["Authorization"] ?? headers["authorization"] ?? "";
-          if (!found && auth.startsWith("Bearer ")) {
-            const candidateToken = auth.slice(7);
-            // Decode JWT — only accept tokens with Outlook audience AND mail/calendar scopes.
-            // The notification channel token has audience outlook.office.com but only Owa.Notifications.All scope → 403 on REST API.
-            const candidateAud = decodeJwtAudience(candidateToken);
-            if (candidateAud.includes("outlook.office") || candidateAud.includes("outlook.cloud.microsoft") || candidateAud.includes("outlook.microsoft")) {
-              // Verify the token has mail/calendar scopes (not just notification scopes)
-              let scp = "";
-              try { scp = JSON.parse(Buffer.from(candidateToken.split(".")[1]!, "base64url").toString()).scp ?? ""; } catch {}
-              if (scp.includes("Mail") || scp.includes("Calendar")) {
-                found = true;
-                clearTimeout(timer);
-                try { ws.close(); } catch {}
-                resolve({ token: candidateToken, requestUrl: reqUrl });
-              } else {
-                process.stderr.write(`[alfred:cdp] Skipping Outlook token with limited scopes "${scp.slice(0, 40)}" from ${reqUrl.slice(0, 60)}\n`);
-              }
+  const routeHandler = async (route: import("playwright").Route) => {
+    try {
+      if (!found) {
+        const auth = route.request().headers()["authorization"] ?? "";
+        const reqUrl = route.request().url();
+        if (auth.startsWith("Bearer ")) {
+          const candidateToken = auth.slice(7);
+          const candidateAud = decodeJwtAudience(candidateToken);
+          if (candidateAud.includes("outlook.office") || candidateAud.includes("outlook.cloud.microsoft") || candidateAud.includes("outlook.microsoft")) {
+            let scp = "";
+            try { scp = JSON.parse(Buffer.from(candidateToken.split(".")[1]!, "base64url").toString()).scp ?? ""; } catch {}
+            if (scp.includes("Mail") || scp.includes("Calendar")) {
+              found = true;
+              capture.result = { token: candidateToken, requestUrl: reqUrl };
             } else {
-              process.stderr.write(`[alfred:cdp] Skipping token with audience "${candidateAud}" (not Outlook) from ${reqUrl.slice(0, 60)}\n`);
+              process.stderr.write(`[alfred:cdp] Skipping Outlook token with limited scopes "${scp.slice(0, 40)}" from ${reqUrl.slice(0, 60)}\n`);
             }
+          } else {
+            process.stderr.write(`[alfred:cdp] Skipping token with audience "${candidateAud}" (not Outlook) from ${reqUrl.slice(0, 60)}\n`);
           }
         }
-      } catch (e) { process.stderr.write(`[alfred:warn] CDP network interception error: ${e instanceof Error ? e.message : String(e)}\n`); }
-    });
+      }
+    } catch { /* swallow */ }
+    await route.continue().catch(() => {});
+  };
 
-    ws.addEventListener("error", () => {
-      clearTimeout(timer);
-      process.stderr.write("[alfred:warn] Outlook REST network interception WebSocket error\n");
-      try { ws.close(); } catch {}
-      resolve(null);
-    });
-  });
+  await outlookPage.route("**", routeHandler);
 
-  if (capturedResult) {
-    const expiresAt = Date.now() + TOKEN_CACHE_FALLBACK_MS;
-    // Derive audience from the JWT itself (more reliable than request URL)
-    const capturedAud = decodeJwtAudience(capturedResult.token) || (() => { try { return new URL(capturedResult.requestUrl).origin.toLowerCase(); } catch { return ""; } })();
-    outlookRestTokenCache = { token: capturedResult.token, expiresAt, aud: capturedAud };
-    saveCachedAuth("outlookRestToken", capturedResult.token, expiresAt);
-    progress(`✅ Outlook REST token captured via network interception (${capturedAud || "unknown origin"})`);
-    return capturedResult.token;
+  await outlookPage.reload({ waitUntil: "domcontentloaded", timeout: 15_000 }).catch(() => {});
+
+  if (!found) {
+    const now = new Date().toISOString();
+    const tomorrow = new Date(Date.now() + 86400000).toISOString();
+    await outlookPage.evaluate(
+      `fetch('/owa/service.svc?action=GetFolder',{method:'POST',credentials:'include',headers:{'Content-Type':'application/json'}}).catch(()=>{});` +
+      `fetch('/api/v2.0/me/calendarview?$top=1&$select=Id&startDateTime=${now}&endDateTime=${tomorrow}',{credentials:'include'}).catch(()=>{});` +
+      `fetch('https://graph.microsoft.com/v1.0/me/messages?$top=1',{credentials:'include'}).catch(()=>{});`
+    ).catch(() => {});
   }
 
-  const updateHint = checkForAlfredUpdate();
+  const deadline = Date.now() + 7_000;
+  while (!capture.result && Date.now() < deadline) {
+    await new Promise(r => setTimeout(r, 300));
+  }
+
+  await outlookPage.unroute("**", routeHandler).catch(() => {});
+
+  if (capture.result) {
+    const expiresAt = Date.now() + TOKEN_CACHE_FALLBACK_MS;
+    const capturedAud = decodeJwtAudience(capture.result.token) || (() => { try { return new URL(capture.result!.requestUrl).origin.toLowerCase(); } catch { return ""; } })();
+    outlookRestTokenCache = { token: capture.result.token, expiresAt, aud: capturedAud };
+    saveCachedAuth("outlookRestToken", capture.result.token, expiresAt);
+    progress(`✅ Outlook REST token captured via network interception (${capturedAud || "unknown origin"})`);
+    return capture.result.token;
+  }
+
   throw new Error(
     "Could not capture Outlook token.\n" +
-    "Make sure Outlook is fully loaded (inbox visible) in the Alfred window, then retry." +
-    updateHint
+    "Make sure Outlook is fully loaded (inbox visible) in the Alfred window, then retry." + checkForAlfredUpdate()
   );
 }
 

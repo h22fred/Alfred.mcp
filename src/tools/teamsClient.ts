@@ -1,9 +1,8 @@
 import type { ProgressFn } from "../auth/tokenExtractor.js";
-import { isAlfredgable, getCdpTargets } from "../auth/tokenExtractor.js";
+import { isAlfredgable, getAlfredContext, getAlfredPages } from "../auth/tokenExtractor.js";
+import type { Page } from "playwright";
 import { loadCachedAuth, saveCachedAuth, clearCachedAuthFile } from "../auth/authFileCache.js";
 import { stripHtml, urlHostMatches } from "../shared.js";
-
-const CDP_PORT = 9222;
 
 /** Match all known Outlook domains (legacy + new). */
 function isOutlookUrl(url: string): boolean {
@@ -181,36 +180,13 @@ const GRAPH_MSAL_EXTRACT_JS = `(function() {
   return tryStorage(sessionStorage) || tryStorage(localStorage);
 })()`;
 
-// Try to extract Graph token from an existing CDP tab via raw WebSocket
-async function extractGraphTokenFromTab(wsUrl: string): Promise<string | null> {
-  return new Promise((resolve) => {
-    const ws = new WebSocket(wsUrl);
-    const timer = setTimeout(() => {
-      process.stderr.write("[alfred:warn] Teams MSAL extraction timed out (5s) — tab may be unresponsive\n");
-      try { ws.close(); } catch {}
-      resolve(null);
-    }, 5_000);
-    ws.addEventListener("open", () => {
-      ws.send(JSON.stringify({ id: 1, method: "Runtime.evaluate", params: { expression: GRAPH_MSAL_EXTRACT_JS, returnByValue: true } }));
+async function extractGraphTokenFromPage(page: Page): Promise<string | null> {
+  return page.evaluate(GRAPH_MSAL_EXTRACT_JS)
+    .then(v => v as string | null)
+    .catch((e) => {
+      process.stderr.write(`[alfred:warn] Teams MSAL extraction failed: ${e instanceof Error ? e.message : String(e)}\n`);
+      return null;
     });
-    ws.addEventListener("message", (event: MessageEvent) => {
-      clearTimeout(timer);
-      try { ws.close(); } catch {}
-      try {
-        const msg = JSON.parse(event.data as string) as { result?: { result?: { value?: string } } };
-        resolve(msg.result?.result?.value ?? null);
-      } catch (e) {
-        process.stderr.write(`[alfred:warn] Teams MSAL parse error: ${e instanceof Error ? e.message : String(e)}\n`);
-        resolve(null);
-      }
-    });
-    ws.addEventListener("error", () => {
-      clearTimeout(timer);
-      process.stderr.write("[alfred:warn] Teams MSAL extraction WebSocket error\n");
-      try { ws.close(); } catch {}
-      resolve(null);
-    });
-  });
 }
 
 interface TokenCache { token: string; expiresAt: number; }
@@ -224,39 +200,16 @@ let skypeTokenCache: SkypeTokenCache | null = null;
 const TEAMS_CLIENT_ID = "5e3ce6c0-2b1f-4285-8d4b-75ee78787346";
 const TEAMS_REDIRECT_URI = "https://teams.microsoft.com/go";
 
-/**
- * Acquire a Graph token via silent Azure AD auth in a temporary CDP tab.
- * Uses the existing ESTSAUTH session cookie for prompt=none (no user interaction).
- * Opens a new tab → navigates to Azure AD authorize → captures token from redirect
- * fragment → closes tab. Returns null on failure.
- */
-async function acquireTokenViaSilentAuth(
-  progress: ProgressFn,
-  targets: Array<{ webSocketDebuggerUrl?: string; type?: string; url?: string }>
-): Promise<string | null> {
-  // Extract tenant ID from Teams cookies (tenantId cookie on teams.microsoft.com)
-  let tenantId: string | null = null;
-  const anyPage = targets.find(t => t.type === "page" && t.webSocketDebuggerUrl);
-  if (anyPage?.webSocketDebuggerUrl) {
-    tenantId = await new Promise<string | null>((resolve) => {
-      const ws = new WebSocket(anyPage.webSocketDebuggerUrl!);
-      const timer = setTimeout(() => { try { ws.close(); } catch {} resolve(null); }, 5_000);
-      ws.addEventListener("open", () => {
-        ws.send(JSON.stringify({ id: 1, method: "Network.getAllCookies" }));
-      });
-      ws.addEventListener("message", (event: MessageEvent) => {
-        clearTimeout(timer);
-        try { ws.close(); } catch {}
-        try {
-          const msg = JSON.parse(event.data as string);
-          const cookies = msg.result?.cookies as Array<{ name: string; value: string; domain: string }> ?? [];
-          const tid = cookies.find(c => c.name === "tenantId" && (c.domain === "teams.microsoft.com" || c.domain.endsWith(".teams.microsoft.com")));
-          resolve(tid?.value ?? null);
-        } catch { resolve(null); }
-      });
-      ws.addEventListener("error", () => { clearTimeout(timer); resolve(null); });
-    });
-  }
+async function acquireTokenViaSilentAuth(progress: ProgressFn): Promise<string | null> {
+  const ctx = await getAlfredContext().catch(() => null);
+  if (!ctx) return null;
+
+  // Get tenant ID from Teams cookies (replaces raw CDP Network.getAllCookies)
+  const allCookies = await ctx.cookies();
+  const tenantCookie = allCookies.find(c =>
+    c.name === "tenantId" && (c.domain === "teams.microsoft.com" || c.domain.endsWith(".teams.microsoft.com"))
+  );
+  const tenantId = tenantCookie?.value ?? null;
 
   if (!tenantId) {
     process.stderr.write("[alfred:warn] Could not extract tenant ID from Teams cookies — silent auth unavailable\n");
@@ -265,7 +218,6 @@ async function acquireTokenViaSilentAuth(
 
   progress("🔐 Opening silent Azure AD auth flow...");
 
-  // Build the authorize URL — .default returns all scopes the Teams app is configured for
   const authUrl = `https://login.microsoftonline.com/${tenantId}/oauth2/v2.0/authorize?` +
     `client_id=${TEAMS_CLIENT_ID}` +
     `&response_type=token` +
@@ -274,158 +226,47 @@ async function acquireTokenViaSilentAuth(
     `&prompt=none` +
     `&response_mode=fragment`;
 
-  // Create a new tab via CDP HTTP API
-  let tabId: string | null = null;
-  let tabWsUrl: string | null = null;
+  const CAPTURE_HTML = `<html><body><script>var h=window.location.hash;document.title=h.includes("access_token=")?"TOKEN:"+h:"ERROR:"+h;</script></body></html>`;
+
+  const page = await ctx.newPage();
   try {
-    const newTabRes = await fetch(`http://localhost:${CDP_PORT}/json/new?about:blank`, { method: "PUT" });
-    if (!newTabRes.ok) throw new Error(`CDP /json/new: ${newTabRes.status}`);
-    const tabInfo = await newTabRes.json() as { id: string; webSocketDebuggerUrl: string };
-    tabId = tabInfo.id;
-    tabWsUrl = tabInfo.webSocketDebuggerUrl;
-  } catch (e) {
-    process.stderr.write(`[alfred:warn] Silent auth: could not create CDP tab: ${e instanceof Error ? e.message : String(e)}\n`);
-    return null;
-  }
-
-  const closeTab = () => {
-    if (tabId) {
-      fetch(`http://localhost:${CDP_PORT}/json/close/${tabId}`, { method: "PUT" }).catch(() => {});
-      tabId = null;
-    }
-  };
-
-  // Intercept the redirect to teams.microsoft.com/go and serve a minimal page
-  // that captures the hash fragment (which contains the access_token).
-  // Teams' own JS would consume and redirect the hash before we can read it,
-  // so we replace the response with our own page.
-  const CAPTURE_PAGE = Buffer.from(
-    `<html><body><script>` +
-    `var h=window.location.hash;` +
-    `document.title=h.includes("access_token=")?"TOKEN:"+h:"ERROR:"+h;` +
-    `</script></body></html>`
-  ).toString("base64");
-
-  try {
-    return await new Promise<string | null>((resolve) => {
-      const ws = new WebSocket(tabWsUrl!);
-      let resolved = false;
-      const finish = (token: string | null) => {
-        if (resolved) return;
-        resolved = true;
-        clearTimeout(timer);
-        try { ws.close(); } catch {}
-        closeTab();
-        resolve(token);
-      };
-
-      const timer = setTimeout(() => {
-        process.stderr.write("[alfred:warn] Silent Azure AD auth timed out (15s)\n");
-        finish(null);
-      }, 15_000);
-
-      let msgId = 0;
-      const evalIds = new Set<number>();
-      const send = (method: string, params?: Record<string, unknown>) => {
-        const id = ++msgId;
-        ws.send(JSON.stringify({ id, method, params }));
-        if (method === "Runtime.evaluate") evalIds.add(id);
-        return id;
-      };
-
-      ws.addEventListener("open", () => {
-        // Intercept the redirect request to teams.microsoft.com/go at Request stage
-        // so we can serve our capture page BEFORE Teams' JS runs
-        send("Fetch.enable", {
-          patterns: [{ urlPattern: "https://teams.microsoft.com/go*", requestStage: "Request" }],
-        });
-        send("Page.enable");
-      });
-
-      let setupDone = 0;
-      let navigated = false;
-      let fetchIntercepted = false;
-      let titleReadAttempts = 0;
-
-      ws.addEventListener("message", (event: MessageEvent) => {
-        try {
-          const msg = JSON.parse(event.data as string) as { id?: number; method?: string; params?: Record<string, unknown>; result?: Record<string, unknown> };
-
-          // Wait for Fetch.enable + Page.enable, then navigate to auth URL
-          if (msg.id && msg.id <= 2 && !msg.method) {
-            setupDone++;
-            if (setupDone >= 2 && !navigated) {
-              navigated = true;
-              send("Page.navigate", { url: authUrl });
-            }
-            return;
-          }
-
-          // Intercept the redirect to teams.microsoft.com/go —
-          // replace with our minimal page that captures the hash in document.title
-          if (msg.method === "Fetch.requestPaused") {
-            const requestId = msg.params?.requestId as string;
-            fetchIntercepted = true;
-            send("Fetch.fulfillRequest", {
-              requestId,
-              responseCode: 200,
-              responseHeaders: [{ name: "Content-Type", value: "text/html" }],
-              body: CAPTURE_PAGE,
-            });
-            return;
-          }
-
-          // Page.frameNavigated — read title after our capture page loads
-          if (msg.method === "Page.frameNavigated") {
-            const frame = msg.params?.frame as Record<string, unknown> | undefined;
-            const url = (frame?.url ?? "") as string;
-            // Check if fragment is in the URL (some browsers include it).
-            // Searching for "access_token=" in the URL fragment/query string — not a hostname check.
-            if (url.includes("access_token=")) {
-              const hashPart = url.includes("#") ? url.split("#")[1]! : url;
-              const token = new URLSearchParams(hashPart).get("access_token");
-              if (token) { finish(token); return; }
-            }
-            // After the capture page loads, read the title.
-            // urlHostMatches checks the hostname exactly — prevents substring bypass.
-            if (fetchIntercepted && urlHostMatches(url, "teams.microsoft.com")) {
-              setTimeout(() => { if (!resolved) send("Runtime.evaluate", { expression: "document.title" }); }, 500);
-            }
-            return;
-          }
-
-          // Check Runtime.evaluate results — only for IDs we sent
-          if (msg.id && evalIds.has(msg.id)) {
-            evalIds.delete(msg.id);
-            const value = (msg.result?.result as Record<string, unknown> | undefined)?.value as string ?? "";
-            if (value.startsWith("TOKEN:")) {
-              const hashPart = value.replace(/^TOKEN:#?/, "");
-              const token = new URLSearchParams(hashPart).get("access_token");
-              if (token) { finish(token); return; }
-            }
-            // Empty title might mean page hasn't rendered yet — retry up to 3 times
-            titleReadAttempts++;
-            if (titleReadAttempts < 3 && !value.startsWith("ERROR:")) {
-              setTimeout(() => { if (!resolved) send("Runtime.evaluate", { expression: "document.title" }); }, 500);
-            } else {
-              process.stderr.write(`[alfred:warn] Silent auth: no token in redirect (title=${value.slice(0, 200)})\n`);
-              finish(null);
-            }
-          }
-        } catch (e) {
-          process.stderr.write(`[alfred:warn] Silent auth CDP error: ${e instanceof Error ? e.message : String(e)}\n`);
-        }
-      });
-
-      ws.addEventListener("error", () => {
-        process.stderr.write("[alfred:warn] Silent auth WebSocket error\n");
-        finish(null);
-      });
+    await page.route("https://teams.microsoft.com/go**", async (route) => {
+      await route.fulfill({ status: 200, contentType: "text/html", body: CAPTURE_HTML });
     });
+
+    await page.goto(authUrl, { waitUntil: "domcontentloaded", timeout: 15_000 }).catch(() => {});
+
+    await page.waitForFunction(
+      () => document.title.startsWith("TOKEN:") || document.title.startsWith("ERROR:"),
+      { timeout: 5_000 }
+    ).catch(() => {});
+
+    let token: string | null = null;
+
+    const currentUrl = page.url();
+    if (currentUrl.includes("access_token=")) {
+      const hashPart = currentUrl.includes("#") ? currentUrl.split("#")[1]! : "";
+      token = new URLSearchParams(hashPart).get("access_token");
+    }
+
+    if (!token) {
+      const title = await page.title();
+      if (title.startsWith("TOKEN:")) {
+        const hashPart = title.replace(/^TOKEN:#?/, "");
+        token = new URLSearchParams(hashPart).get("access_token");
+      } else if (title.startsWith("ERROR:")) {
+        process.stderr.write(`[alfred:warn] Silent auth: error in redirect: ${title.slice(0, 100)}\n`);
+      } else {
+        process.stderr.write(`[alfred:warn] Silent auth: no token (title=${title.slice(0, 100)}, url=${currentUrl.slice(0, 100)})\n`);
+      }
+    }
+
+    return token;
   } catch (e) {
     process.stderr.write(`[alfred:warn] Silent auth failed: ${e instanceof Error ? e.message : String(e)}\n`);
-    closeTab();
     return null;
+  } finally {
+    await page.close().catch(() => {});
   }
 }
 
@@ -452,23 +293,21 @@ export async function acquireTeamsGraphToken(progress: ProgressFn): Promise<stri
   progress("🔐 Acquiring Graph token via Teams/Outlook in Alfred...");
 
   // Step 1: try to read Graph token directly from MSAL cache in open tabs (fast, no new page)
-  const targets = await getCdpTargets();
+  const pages = await getAlfredPages();
 
   // Prefer Teams tab — it has broader Graph scopes (Chat.Read etc.)
-  const teamsTarget = targets.find(t => t.type === "page" && t.webSocketDebuggerUrl &&
-    t.url && urlHostMatches(t.url, "teams.microsoft.com"));
-  const outlookTarget = targets.find(t => t.type === "page" && t.webSocketDebuggerUrl &&
-    t.url && isOutlookUrl(t.url));
-  const candidates = [teamsTarget, outlookTarget].filter(Boolean) as typeof targets;
+  const teamsPage = pages.find(p => urlHostMatches(p.url(), "teams.microsoft.com"));
+  const outlookPage = pages.find(p => isOutlookUrl(p.url()));
+  const candidates = [teamsPage, outlookPage].filter(Boolean) as Page[];
 
-  if (!teamsTarget) {
+  if (!teamsPage) {
     process.stderr.write("[alfred] No Teams tab found in Alfred — Graph token capture may fail. Open teams.microsoft.com/v2/ in Alfred.\n");
   }
 
   // Try MSAL extraction from all candidate tabs in parallel — first success wins
   for (let attempt = 0; attempt < 2; attempt++) {
     const results = await Promise.allSettled(
-      candidates.map(t => extractGraphTokenFromTab(t.webSocketDebuggerUrl!))
+      candidates.map(p => extractGraphTokenFromPage(p))
     );
     const token = results
       .filter((r): r is PromiseFulfilledResult<string | null> => r.status === "fulfilled")
@@ -484,12 +323,12 @@ export async function acquireTeamsGraphToken(progress: ProgressFn): Promise<stri
     if (attempt < 1) await new Promise(r => setTimeout(r, 1_000));
   }
 
-  // Step 2: Silent Azure AD auth — open a temporary CDP tab, navigate to the
+  // Step 2: Silent Azure AD auth — open a temporary Playwright page, navigate to the
   // Azure AD authorize endpoint with prompt=none (uses existing ESTSAUTH session
   // cookie), and capture the Graph token from the redirect URL fragment.
   // This works even when Teams v2 encrypts its MSAL cache.
   progress("🔑 MSAL cache miss — acquiring Graph token via silent Azure AD auth...");
-  const silentToken = await acquireTokenViaSilentAuth(progress, targets);
+  const silentToken = await acquireTokenViaSilentAuth(progress);
   if (silentToken) {
     // Decode JWT to get real expiry
     let expiresAt = Date.now() + TOKEN_CACHE_FALLBACK_MS;
@@ -550,82 +389,40 @@ async function acquireSkypeToken(progress: ProgressFn): Promise<{ token: string;
 
   progress("🔑 Extracting Teams chat token from browser cookies...");
 
-  const targets = await getCdpTargets();
+  const ctx = await getAlfredContext();
+  const allCookies = await ctx.cookies();
+  const skypeCookie = allCookies.find(c =>
+    c.name === "skypetoken_asm" && (c.domain === "teams.microsoft.com" || c.domain.endsWith(".teams.microsoft.com"))
+  );
 
-  const anyPage = targets.find(t => t.type === "page" && t.webSocketDebuggerUrl);
-  if (!anyPage?.webSocketDebuggerUrl) {
-    throw new Error("No browser tabs found. Make sure Alfred is running with Teams open.");
-  }
-
-  const result = await new Promise<{ token: string; region: string } | null>((resolve) => {
-    const ws = new WebSocket(anyPage.webSocketDebuggerUrl!);
-    const timer = setTimeout(() => {
-      try { ws.close(); } catch {}
-      resolve(null);
-    }, 5_000);
-
-    ws.addEventListener("open", () => {
-      ws.send(JSON.stringify({ id: 1, method: "Network.getAllCookies" }));
-    });
-
-    ws.addEventListener("message", (event: MessageEvent) => {
-      clearTimeout(timer);
-      try { ws.close(); } catch {}
-      try {
-        const msg = JSON.parse(event.data as string);
-        const cookies = msg.result?.cookies as Array<{ name: string; value: string; domain: string }> ?? [];
-        const skypeCookie = cookies.find(c =>
-          c.name === "skypetoken_asm" && (c.domain === "teams.microsoft.com" || c.domain.endsWith(".teams.microsoft.com"))
-        );
-        if (!skypeCookie?.value) { resolve(null); return; }
-
-        // Decode JWT to get region and expiry
-        let region = "amer";
-        let expiresAt = Date.now() + TOKEN_CACHE_FALLBACK_MS;
-        try {
-          const payload = JSON.parse(Buffer.from(skypeCookie.value.split(".")[1]!, "base64url").toString());
-          if (payload.rgn) region = payload.rgn;
-          if (payload.exp) expiresAt = payload.exp * 1000;
-        } catch (e) {
-          process.stderr.write(`[alfred:warn] Skype cookie JWT decode failed: ${e instanceof Error ? e.message : String(e)}\n`);
-        }
-
-        // Reject expired tokens
-        if (Date.now() >= expiresAt) { resolve(null); return; }
-
-        resolve({ token: skypeCookie.value, region });
-      } catch (e) {
-        process.stderr.write(`[alfred:warn] Skype cookie extraction failed: ${e instanceof Error ? e.message : String(e)}\n`);
-        resolve(null);
-      }
-    });
-
-    ws.addEventListener("error", () => {
-      clearTimeout(timer);
-      resolve(null);
-    });
-  });
-
-  if (!result) {
+  if (!skypeCookie?.value) {
     throw new Error(
       "Could not extract Teams chat token from browser cookies.\n" +
       "Make sure you are logged into Teams (teams.microsoft.com/v2/) in the Alfred browser."
     );
   }
 
-  // Cache the token
+  let region = "amer";
   let expiresAt = Date.now() + TOKEN_CACHE_FALLBACK_MS;
   try {
-    const payload = JSON.parse(Buffer.from(result.token.split(".")[1]!, "base64url").toString());
+    const payload = JSON.parse(Buffer.from(skypeCookie.value.split(".")[1]!, "base64url").toString());
+    if (payload.rgn) region = payload.rgn;
     if (payload.exp) expiresAt = payload.exp * 1000;
   } catch (e) {
-    process.stderr.write(`[alfred:warn] Skype token exp decode failed, using fallback expiry: ${e instanceof Error ? e.message : String(e)}\n`);
+    process.stderr.write(`[alfred:warn] Skype cookie JWT decode failed: ${e instanceof Error ? e.message : String(e)}\n`);
   }
-  skypeTokenCache = { token: result.token, region: result.region, expiresAt };
-  saveCachedAuth("teamsSkypeToken", result.token, expiresAt);
 
-  progress(`✅ Teams chat token acquired (region: ${result.region})`);
-  return result;
+  if (Date.now() >= expiresAt) {
+    throw new Error(
+      "Could not extract Teams chat token from browser cookies.\n" +
+      "Make sure you are logged into Teams (teams.microsoft.com/v2/) in the Alfred browser."
+    );
+  }
+
+  skypeTokenCache = { token: skypeCookie.value, region, expiresAt };
+  saveCachedAuth("teamsSkypeToken", skypeCookie.value, expiresAt);
+  progress(`✅ Teams chat token acquired (region: ${region})`);
+  return { token: skypeCookie.value, region };
 }
 
 /** Known Teams Skype messaging API regions, ordered by likelihood. */

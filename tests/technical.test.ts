@@ -49,13 +49,12 @@ describe("token management", () => {
   });
 
   it("Outlook Playwright fallback reuses existing tabs", () => {
-    expect(outlookSrc).toContain("existingPages");
+    expect(outlookSrc).toContain("getAlfredPages");
     expect(outlookSrc).not.toMatch(/const page = await ctx\.newPage\(\);[\s]*let captured/);
   });
 
-  it("Teams silent auth cleans up temporary CDP tab", () => {
-    expect(teamsSrc).toContain("closeTab");
-    expect(teamsSrc).toContain("json/close");
+  it("Teams silent auth cleans up temporary tab", () => {
+    expect(teamsSrc).toContain("page.close()");
   });
 
   it("Teams chats use Skype messaging API (not Graph Chat.Read)", () => {
@@ -91,7 +90,7 @@ describe("auth resilience", () => {
   it("ensureAlfred uses soft cache clear (memory only, preserves file cache)", () => {
     expect(tokenExtSrc).toContain("clearMemoryAuthCache");
     // ensureAlfred must NOT call clearAuthCache (which wipes file cache)
-    const ensureBlock = tokenExtSrc.slice(tokenExtSrc.indexOf("async function ensureAlfred"), tokenExtSrc.indexOf("export async function freshCdpEndpoint"));
+    const ensureBlock = tokenExtSrc.slice(tokenExtSrc.indexOf("export async function ensureAlfred"), tokenExtSrc.indexOf("export async function getAuthCookies"));
     expect(ensureBlock).toContain("clearMemoryAuthCache()");
     expect(ensureBlock).not.toContain("clearAuthCache()");
   });
@@ -113,9 +112,9 @@ describe("auth resilience", () => {
     expect(fullClearBody).toContain("clearCachedAuthFile");
   });
 
-  it("isAlfredgable uses 3s timeout to avoid false negatives", () => {
-    expect(tokenExtSrc).toContain("AbortSignal.timeout(3_000)");
-    expect(tokenExtSrc).toContain("/json/version");
+  it("isAlfredgable checks Playwright context health to avoid false negatives", () => {
+    expect(tokenExtSrc).toContain("isContextAlive");
+    expect(tokenExtSrc).toContain("_context.cookies");
   });
 
   it("Outlook detects login-page redirect and surfaces clear error", () => {
@@ -130,8 +129,8 @@ describe("auth resilience", () => {
     expect(outlookSrc).toContain("isJwt");
   });
 
-  it("Outlook Graph token cache uses refresh margin before expiry", () => {
-    expect(outlookSrc).toContain("tokenCache.expiresAt - TOKEN_REFRESH_MARGIN_MS");
+  it("Outlook REST token cache uses refresh margin before expiry", () => {
+    expect(outlookSrc).toContain("outlookRestTokenCache.expiresAt - TOKEN_REFRESH_MARGIN_MS");
     expect(outlookSrc).toContain("fileCached.expiresAt - TOKEN_REFRESH_MARGIN_MS");
   });
 
@@ -145,19 +144,16 @@ describe("auth resilience", () => {
     expect(teamsSrc).toContain("await isAlfredgable()");
   });
 
-  it("Playwright fallbacks do NOT call browser.close() to preserve Alfred Chrome", () => {
-    // The comment warns against browser.close(), but no actual await browser.close() call should exist
+  it("Playwright fallbacks do NOT call browser.close() to preserve Alfred browser", () => {
+    // Context lifecycle is managed by exitAlfred/restartAlfred only
     expect(outlookSrc).not.toContain("await browser.close()");
-    expect(outlookSrc).toContain("Do NOT call browser.close()");
-    // Teams uses silent auth (no Playwright) — just verify no browser.close()
+    expect(outlookSrc).not.toContain("browser.close()");
     expect(teamsSrc).not.toContain("await browser.close()");
   });
 
-  it("MSAL extraction logs timeout and parse errors for diagnostics", () => {
-    expect(outlookSrc).toContain("MSAL extraction timed out");
-    expect(outlookSrc).toContain("MSAL extraction parse error");
-    expect(teamsSrc).toContain("Teams MSAL extraction timed out");
-    expect(teamsSrc).toContain("Teams MSAL parse error");
+  it("MSAL extraction logs errors for diagnostics", () => {
+    expect(outlookSrc).toContain("MSAL extraction failed");
+    expect(teamsSrc).toContain("Teams MSAL extraction failed");
   });
 });
 
@@ -462,9 +458,9 @@ describe("token extraction fallbacks", () => {
     expect(teamsSrc).toContain("hasScope");
   });
 
-  it("Playwright fallback handles case where no existing tabs match", () => {
-    // Should fall back to newPage() when no existing tab works
-    expect(outlookSrc).toContain("await ctx.newPage()");
+  it("Teams silent auth creates a fresh page when needed", () => {
+    // Teams silent auth opens a new Playwright page for token acquisition
+    expect(teamsSrc).toContain("await ctx.newPage()");
   });
 });
 
@@ -474,22 +470,18 @@ describe("token extraction fallbacks", () => {
 describe("exitAlfred and restartAlfred lifecycle", () => {
   const tokenSrc = readSource("src/auth/tokenExtractor.ts");
 
-  it("exitAlfred uses CDP Browser.close before platform kill", () => {
-    expect(tokenSrc).toContain("Browser.close");
-    // CDP close should come before pkill/taskkill fallback
-    const cdpIdx = tokenSrc.indexOf("Browser.close");
-    const pkillIdx = tokenSrc.indexOf("pkill");
-    expect(cdpIdx).toBeLessThan(pkillIdx);
+  it("exitAlfred closes the Playwright context", () => {
+    expect(tokenSrc).toContain("_context!.close()");
   });
 
   it("exitAlfred clears auth cache after shutdown", () => {
-    // clearAuthCache must be called inside exitAlfred, after the kill logic
+    // clearAuthCache must be called inside exitAlfred, after the context close
     const fnBody = tokenSrc.slice(
       tokenSrc.indexOf("export async function exitAlfred"),
       tokenSrc.indexOf("export async function restartAlfred")
     );
     expect(fnBody).toContain("clearAuthCache()");
-    const closeIdx = fnBody.indexOf("Browser.close");
+    const closeIdx = fnBody.indexOf("_context!.close()");
     const clearIdx = fnBody.indexOf("clearAuthCache()");
     expect(clearIdx).toBeGreaterThan(closeIdx);
   });
@@ -504,39 +496,33 @@ describe("exitAlfred and restartAlfred lifecycle", () => {
     expect(fnBody).toContain("return false");
   });
 
-  it("exitAlfred has platform-specific fallback kill", () => {
-    expect(tokenSrc).toContain("win32");
-    expect(tokenSrc).toContain("taskkill");
-    expect(tokenSrc).toContain("pkill");
+  it("exitAlfred delegates process lifecycle to Playwright context", () => {
+    // Playwright manages the Chromium process — no platform-specific kill needed
+    expect(tokenSrc).toContain("_context!.close()");
+    expect(tokenSrc).not.toContain("taskkill");
   });
 
   it("restartAlfred calls exitAlfred before relaunching", () => {
-    const fnBody = tokenSrc.slice(
-      tokenSrc.indexOf("export async function restartAlfred")
-    );
+    const fnBody = tokenSrc.slice(tokenSrc.indexOf("export async function restartAlfred"));
     const exitIdx = fnBody.indexOf("exitAlfred(");
-    const launchIdx = Math.min(
-      fnBody.indexOf("Alfred.app") === -1 ? Infinity : fnBody.indexOf("Alfred.app"),
-      fnBody.indexOf("launchAlfred") === -1 ? Infinity : fnBody.indexOf("launchAlfred")
-    );
-    expect(exitIdx).toBeLessThan(launchIdx);
+    const launchIdx = fnBody.indexOf("launchContext");
+    expect(exitIdx).toBeGreaterThanOrEqual(0);
+    expect(launchIdx).toBeGreaterThan(exitIdx);
   });
 
   it("restartAlfred opens Dynamics, Outlook and Teams tabs", () => {
-    const fnBody = tokenSrc.slice(
-      tokenSrc.indexOf("export async function restartAlfred")
-    );
-    expect(fnBody).toContain("DYNAMICS_URL");
-    expect(fnBody).toContain("OUTLOOK_URLS");
-    expect(fnBody).toContain("teams.microsoft.com");
+    // openDefaultTabs (called by restartAlfred) navigates to all 3 services
+    expect(tokenSrc).toContain("DYNAMICS_URL");
+    expect(tokenSrc).toContain("OUTLOOK_URLS");
+    expect(tokenSrc).toContain("teams.microsoft.com");
+    const fnBody = tokenSrc.slice(tokenSrc.indexOf("export async function restartAlfred"));
+    expect(fnBody).toContain("openDefaultTabs");
   });
 
-  it("restartAlfred supports macOS .app and Windows .bat shortcuts", () => {
-    const fnBody = tokenSrc.slice(
-      tokenSrc.indexOf("export async function restartAlfred")
-    );
-    expect(fnBody).toContain("Alfred.app");
-    expect(fnBody).toContain("Alfred.bat");
+  it("restartAlfred relaunches the Playwright context directly", () => {
+    const fnBody = tokenSrc.slice(tokenSrc.indexOf("export async function restartAlfred"));
+    expect(fnBody).toContain("launchContext");
+    expect(fnBody).toContain("openDefaultTabs");
   });
 });
 

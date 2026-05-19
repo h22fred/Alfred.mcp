@@ -1,46 +1,12 @@
-import { execFileSync, execFile } from "child_process";
-import { existsSync } from "fs";
+import { chromium, type BrowserContext } from "playwright";
 import { DYNAMICS_HOST } from "../config.js";
 import { loadCachedAuth, saveCachedAuth, clearCachedAuthFile } from "./authFileCache.js";
 
 const DYNAMICS_URL = DYNAMICS_HOST;
 const OUTLOOK_URLS = ["https://outlook.cloud.microsoft", "https://outlook.cloud.microsoft.com", "https://outlook.office.com", "https://outlook.office365.com"];
-const CDP_PORT = 9222;
 const COOKIE_REFRESH_MARGIN_MS = 5 * 60 * 1000;
 
-// ---------------------------------------------------------------------------
-// CDP connection helpers — cached to avoid redundant HTTP calls
-// ---------------------------------------------------------------------------
-
-/** Fast async health check — replaces the old execFileSync("curl") which spawned a process. */
-export async function isAlfredgable(): Promise<boolean> {
-  try {
-    const res = await fetch(`http://localhost:${CDP_PORT}/json/version`, { signal: AbortSignal.timeout(3_000) });
-    return res.ok;
-  } catch {
-    return false;
-  }
-}
-
-/** CDP target list with short TTL cache — avoids repeated /json/list calls within a burst. */
-interface CdpTarget { webSocketDebuggerUrl?: string; type?: string; url?: string; }
-let _cdpTargetsCache: { targets: CdpTarget[]; ts: number } | null = null;
-const CDP_TARGETS_TTL_MS = 10_000; // 10 seconds
-
-export async function getCdpTargets(): Promise<CdpTarget[]> {
-  if (_cdpTargetsCache && Date.now() - _cdpTargetsCache.ts < CDP_TARGETS_TTL_MS) {
-    return _cdpTargetsCache.targets;
-  }
-  const res = await fetch(`http://localhost:${CDP_PORT}/json/list`, { signal: AbortSignal.timeout(5_000) });
-  const targets = await res.json() as CdpTarget[];
-  _cdpTargetsCache = { targets, ts: Date.now() };
-  return targets;
-}
-
-/** Invalidate the target list cache (call after opening/closing tabs). */
-export function invalidateCdpTargetsCache(): void {
-  _cdpTargetsCache = null;
-}
+const PROFILE_DIR = `${process.env.HOME}/.alfred-pw`;
 
 // Cookie names that authenticate Dynamics requests
 const AUTH_COOKIE_NAMES = ["CrmOwinAuthC1", "CrmOwinAuthC2", "CrmOwinAuth"];
@@ -59,43 +25,8 @@ let inflightOutlook: Promise<string> | null = null;
 
 export type ProgressFn = (msg: string) => void;
 
-const CHROME_PROFILE_DIR = `${process.env.HOME}/.alfred-profile`;
-
-function isChromeProcessRunning(): boolean {
-  try {
-    execFileSync("pgrep", ["-f", CHROME_PROFILE_DIR], { timeout: 2_000 });
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-function launchAlfred(): void {
-  if (isChromeProcessRunning()) {
-    console.error("[auth] Alfred process already running — waiting for port to become ready...");
-    return;
-  }
-  console.error("[auth] Launching Alfred...");
-  execFile("/bin/sh", ["-c",
-    `mkdir -p "${CHROME_PROFILE_DIR}" && \
-    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
-      --remote-debugging-port=${CDP_PORT} \
-      --remote-debugging-address=127.0.0.1 \
-      --user-data-dir="${CHROME_PROFILE_DIR}" \
-      --no-first-run \
-      --no-default-browser-check \
-      > /dev/null 2>&1 &`
-  ]);
-}
-
-async function waitForChrome(timeoutMs = 15_000): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    if (await isAlfredgable()) return;
-    await new Promise(r => setTimeout(r, 500));
-  }
-  throw new Error("Alfred browser did not start in time. Double-click Alfred on your Desktop to launch manually.");
-}
+// Module-level Playwright context
+let _context: BrowserContext | null = null;
 
 /** Clear in-memory auth state only (file cache survives for cross-restart resilience). */
 export function clearMemoryAuthCache(): void {
@@ -112,105 +43,111 @@ export function clearAuthCache(): void {
   clearCachedAuthFile("outlook");
 }
 
-/** Stop the Alfred Chrome process gracefully via CDP Browser.close — cross-platform. */
+/** Health check — tries to call cookies on context; nulls it out on any error. */
+async function isContextAlive(): Promise<boolean> {
+  if (!_context) return false;
+  try {
+    await _context.cookies([]);
+    return true;
+  } catch {
+    _context = null;
+    clearMemoryAuthCache();
+    return false;
+  }
+}
+
+/** Fast async health check — checks whether the Playwright context is alive. */
+export async function isAlfredgable(): Promise<boolean> {
+  return isContextAlive();
+}
+
+/** Launch a persistent Playwright context and register lifecycle handlers. */
+async function launchContext(): Promise<BrowserContext> {
+  const ctx = await chromium.launchPersistentContext(PROFILE_DIR, {
+    headless: false,
+    args: ["--no-first-run", "--no-default-browser-check", "--disable-features=mDnsResponder"],
+  });
+  ctx.on("close", () => {
+    _context = null;
+    clearMemoryAuthCache();
+  });
+  return ctx;
+}
+
+/** Open default tabs: reuse page[0] for Dynamics, create 2 more for Outlook + Teams. */
+async function openDefaultTabs(ctx: BrowserContext): Promise<void> {
+  const pages = ctx.pages();
+  const dynPage = pages[0] ?? await ctx.newPage();
+  if (!dynPage.url().startsWith(DYNAMICS_URL)) {
+    await dynPage.goto(DYNAMICS_URL, { waitUntil: "domcontentloaded", timeout: 30_000 }).catch((e) => {
+      process.stderr.write(`[alfred:warn] failed to navigate to Dynamics: ${e instanceof Error ? e.message : String(e)}\n`);
+    });
+  }
+  for (const url of [OUTLOOK_URLS[0]!, "https://teams.microsoft.com/v2/"]) {
+    await ctx.newPage().then(p => p.goto(url, { waitUntil: "domcontentloaded", timeout: 30_000 })).catch((e) => {
+      process.stderr.write(`[alfred:warn] failed to open tab ${url}: ${e instanceof Error ? e.message : String(e)}\n`);
+    });
+  }
+}
+
+/**
+ * Returns the live Playwright BrowserContext.
+ * Throws if Alfred is not running.
+ */
+export async function getAlfredContext(): Promise<BrowserContext> {
+  if (_context && await isContextAlive()) return _context;
+  throw new Error("Alfred browser is not running. Launch Alfred from your Desktop first.");
+}
+
+/** Returns all open pages from the live context. Throws if not running. */
+export async function getAlfredPages() {
+  const ctx = await getAlfredContext();
+  return ctx.pages();
+}
+
+/** Stop the Alfred browser gracefully. */
 export async function exitAlfred(progress: ProgressFn = () => {}): Promise<boolean> {
   if (!await isAlfredgable()) {
     progress("ℹ️ Alfred is not running");
     return false;
   }
-  progress("🛑 Closing Alfred (only the Alfred Chrome — your regular Chrome is untouched)...");
+  progress("🛑 Closing Alfred...");
   try {
-    // Use CDP Browser.close — works on macOS and Windows, targets only the debug-port Chrome
-    const verRes = await fetch(`http://localhost:${CDP_PORT}/json/version`);
-    const verInfo = await verRes.json() as { webSocketDebuggerUrl?: string };
-    const wsUrl = verInfo.webSocketDebuggerUrl;
-    if (wsUrl) {
-      await new Promise<void>((resolve) => {
-        const ws = new WebSocket(wsUrl);
-        ws.addEventListener("open", () => {
-          ws.send(JSON.stringify({ id: 1, method: "Browser.close" }));
-          // Don't wait for response — Chrome closes immediately
-          setTimeout(resolve, 500);
-        });
-        ws.addEventListener("error", () => resolve());
-        setTimeout(resolve, 3_000); // safety timeout
-      });
-    }
-  } catch { /* Chrome may have already closed */ }
-
-  // Fallback: if CDP close didn't work, try platform-specific kill
-  await new Promise(r => setTimeout(r, 500));
-  if (await isAlfredgable()) {
-    try {
-      if (process.platform === "win32") {
-        execFileSync("taskkill", ["/F", "/IM", "chrome.exe", "/FI", `WINDOWTITLE eq *alfred*`], { timeout: 5_000 });
-      } else {
-        execFileSync("pkill", ["-f", CHROME_PROFILE_DIR], { timeout: 5_000 });
-      }
-    } catch { /* already gone */ }
-  }
+    await _context!.close();
+  } catch { /* already closed */ }
 
   clearAuthCache();
   progress("✅ Alfred closed — all auth tokens cleared");
   return true;
 }
 
-/** Restart Alfred: exit, then relaunch via Desktop shortcut (preserves Dock icon on macOS). */
+/** Restart Alfred: exit, then relaunch. */
 export async function restartAlfred(progress: ProgressFn = () => {}): Promise<void> {
   await exitAlfred(progress);
-  // Wait for the process to fully terminate
   await new Promise(r => setTimeout(r, 1_500));
   progress("🚀 Restarting Alfred...");
-
-  // Relaunch via Desktop shortcut (preserves icon) before falling back to direct launch
-  const home = process.env.HOME ?? process.env.USERPROFILE ?? "";
-  const alfredApp = `${home}/Desktop/Alfred.app`;
-  const alfredBat = `${home}\\Desktop\\Alfred.bat`;
-
-  if (process.platform === "darwin" && existsSync(alfredApp)) {
-    execFile("open", [alfredApp]);
-  } else if (process.platform === "win32" && existsSync(alfredBat)) {
-    execFile("cmd", ["/c", "start", "", alfredBat]);
-  } else {
-    launchAlfred();
-  }
-
-  await waitForChrome(20_000);
-  invalidateCdpTargetsCache();
-  // Open standard tabs
-  // Open one Outlook URL — Microsoft auto-redirects to the right domain for the tenant
-  for (const url of [DYNAMICS_URL, OUTLOOK_URLS[0]!, "https://teams.microsoft.com/v2/"]) {
-    await fetch(`http://localhost:${CDP_PORT}/json/new?${url}`).catch((e) => { process.stderr.write(`[alfred:warn] failed to open tab ${url}: ${e instanceof Error ? e.message : String(e)}\n`); });
-  }
-  invalidateCdpTargetsCache();
+  _context = await launchContext();
+  await openDefaultTabs(_context);
   progress("✅ Alfred restarted — please log into Dynamics, Outlook and Teams if needed");
 }
 
 export async function ensureAlfred(progress: ProgressFn = () => {}): Promise<void> {
   if (await isAlfredgable()) {
-    // Alfred is running — verify sessions are still alive
     await verifySessionHealth(progress);
     return;
   }
-  // Chrome is not running — clear in-memory state only; file cache survives
-  // so persisted tokens can still be used if they haven't expired.
   clearMemoryAuthCache();
   progress("🚀 Launching Alfred automatically...");
-  launchAlfred();
-  await waitForChrome();
-  invalidateCdpTargetsCache();
-  // Open one Outlook URL — Microsoft auto-redirects to the right domain for the tenant
-  for (const url of [DYNAMICS_URL, OUTLOOK_URLS[0]!, "https://teams.microsoft.com/v2/"]) {
-    await fetch(`http://localhost:${CDP_PORT}/json/new?${url}`).catch((e) => { process.stderr.write(`[alfred:warn] failed to open tab ${url}: ${e instanceof Error ? e.message : String(e)}\n`); });
-  }
-  invalidateCdpTargetsCache();
+  _context = await launchContext();
+  await openDefaultTabs(_context);
   progress("✅ Alfred ready — please log into Dynamics, Outlook and Teams in the new window");
 }
 
 /** Probe Dynamics and Outlook cookies to warn if sessions are expired or missing. */
 async function verifySessionHealth(progress: ProgressFn): Promise<void> {
   try {
-    const cookies = await getCookiesViaRawCDP([DYNAMICS_URL, ...OUTLOOK_URLS]);
+    const ctx = await getAlfredContext();
+    const cookies = await ctx.cookies([DYNAMICS_URL, ...OUTLOOK_URLS]);
     const hasDynamics = cookies.some(c => AUTH_COOKIE_NAMES.includes(c.name));
     const hasOutlook = cookies.some(c => c.domain?.includes("outlook") || c.domain?.includes("office"));
 
@@ -222,115 +159,8 @@ async function verifySessionHealth(progress: ProgressFn): Promise<void> {
       progress(`⚠️ Alfred is running but missing sessions: ${warnings.join(", ")}. Please log in.`);
     }
   } catch {
-    // Non-fatal — CDP might be temporarily busy
+    // Non-fatal
   }
-}
-
-export async function freshCdpEndpoint(): Promise<string> {
-  // Always use the browser-level WebSocket URL (re-fetched every call — never stale)
-  const res = await fetch(`http://localhost:${CDP_PORT}/json/version`);
-  const info = await res.json() as { webSocketDebuggerUrl?: string };
-  if (info.webSocketDebuggerUrl) return info.webSocketDebuggerUrl;
-  throw new Error("Could not resolve CDP WebSocket URL from Alfred.");
-}
-
-export async function connectWithRetry(retries = 3) {
-  const { chromium } = await import("playwright");
-  let lastError: Error = new Error("Unknown error");
-  for (let i = 0; i < retries; i++) {
-    try {
-      const wsUrl = await freshCdpEndpoint();
-      return await chromium.connectOverCDP(wsUrl, { timeout: 10_000 });
-    } catch (e) {
-      lastError = e as Error;
-      if (i < retries - 1) await new Promise(r => setTimeout(r, 1_000));
-    }
-  }
-  throw new Error(
-    "Could not connect to Alfred. Please close and reopen Alfred from your Desktop, then retry.\n" +
-    `(${lastError.message})`
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Raw CDP WebSocket helper — avoids Playwright entirely (no Browser.close risk)
-// ---------------------------------------------------------------------------
-
-interface RawCookie { name: string; value: string; expires: number; domain: string; }
-
-async function getCookiesViaRawCDPTarget(wsUrl: string, urls: string[]): Promise<RawCookie[]> {
-  return new Promise((resolve, reject) => {
-    const ws = new WebSocket(wsUrl);
-    const timer = setTimeout(() => {
-      try { ws.close(); } catch { /* ignore */ }
-      reject(new Error("CDP cookie fetch timed out"));
-    }, 8_000);
-
-    ws.addEventListener("open", () => {
-      ws.send(JSON.stringify({ id: 1, method: "Network.getCookies", params: { urls } }));
-    });
-
-    ws.addEventListener("message", (event: MessageEvent) => {
-      clearTimeout(timer);
-      try { ws.close(); } catch { /* ignore */ }
-      try {
-        const msg = JSON.parse(event.data as string) as { id: number; result?: { cookies: RawCookie[] }; error?: { message: string } };
-        if (msg.error) reject(new Error(`CDP: ${msg.error.message}`));
-        else resolve(msg.result?.cookies ?? []);
-      } catch (e) { reject(e); }
-    });
-
-    ws.addEventListener("error", () => {
-      clearTimeout(timer);
-      reject(new Error("CDP WebSocket error — stale target"));
-    });
-  });
-}
-
-async function getCookiesViaRawCDP(urls: string[]): Promise<RawCookie[]> {
-  // Use any available page target — Network.getCookies works across all domains.
-  // If the cached target is stale (tab closed/navigated), invalidate and retry once.
-  for (let attempt = 0; attempt < 2; attempt++) {
-    if (attempt === 1) invalidateCdpTargetsCache();
-    const targets = await getCdpTargets();
-    const target = targets.find(t => t.type === "page" && t.webSocketDebuggerUrl);
-    if (!target?.webSocketDebuggerUrl) {
-      throw new Error("No browser tabs found. Make sure the Alfred browser is running.");
-    }
-    try {
-      return await getCookiesViaRawCDPTarget(target.webSocketDebuggerUrl, urls);
-    } catch (e) {
-      if (attempt === 0 && e instanceof Error && e.message.includes("stale target")) {
-        // Target went away — retry with a fresh list
-        continue;
-      }
-      throw e;
-    }
-  }
-  throw new Error("CDP WebSocket error — is Alfred running?");
-}
-
-async function getAuthCookiesViaCDP(progress: ProgressFn): Promise<CachedAuth> {
-  progress("🍪 Extracting Dynamics session cookies via CDP...");
-  const allCookies = await getCookiesViaRawCDP([DYNAMICS_URL]);
-
-  const authCookies = allCookies.filter(c => AUTH_COOKIE_NAMES.includes(c.name));
-  if (authCookies.length === 0) {
-    process.stderr.write("[alfred] CDP auth: no Dynamics cookies found — user not logged in\n");
-    throw new Error(
-      "Alfred is open but you are not logged into Dynamics yet.\n" +
-      "Please log into Dynamics in the Alfred window, then retry."
-    );
-  }
-
-  progress(`✅ Found ${authCookies.length} auth cookie(s): ${authCookies.map(c => c.name).join(", ")}`);
-
-  const cookieHeader = authCookies.map(c => `${c.name}=${c.value}`).join("; ");
-  // CDP Network.getCookies returns expires as Unix timestamp in seconds; convert to ms
-  const expiresAt = Math.min(
-    ...authCookies.map(c => c.expires > 0 ? c.expires * 1000 : Date.now() + 8 * 60 * 60 * 1000)
-  );
-  return { cookieHeader, expiresAt };
 }
 
 export async function getAuthCookies(progress: ProgressFn = () => {}): Promise<string> {
@@ -340,7 +170,7 @@ export async function getAuthCookies(progress: ProgressFn = () => {}): Promise<s
     return cachedAuth.cookieHeader;
   }
 
-  // Check file cache before hitting CDP
+  // Check file cache before hitting Playwright
   const fileCached = loadCachedAuth("dynamics");
   if (fileCached && Date.now() < fileCached.expiresAt - COOKIE_REFRESH_MARGIN_MS) {
     cachedAuth = { cookieHeader: fileCached.value, expiresAt: fileCached.expiresAt };
@@ -355,28 +185,37 @@ export async function getAuthCookies(progress: ProgressFn = () => {}): Promise<s
   const promise = (async () => {
     try {
       progress("🔐 Acquiring Dynamics session cookies...");
-      // Only launch Chrome if it's not already running — skip the verifySessionHealth
-      // round-trip here since getAuthCookiesViaCDP immediately fetches cookies anyway.
       if (!await isAlfredgable()) {
         clearMemoryAuthCache();
         progress("🚀 Launching Alfred automatically...");
-        launchAlfred();
-        await waitForChrome();
-        invalidateCdpTargetsCache();
-        for (const url of [DYNAMICS_URL, OUTLOOK_URLS[0]!, "https://teams.microsoft.com/v2/"]) {
-          await fetch(`http://localhost:${CDP_PORT}/json/new?${url}`).catch((e) => { process.stderr.write(`[alfred:warn] failed to open tab ${url}: ${e instanceof Error ? e.message : String(e)}\n`); });
-        }
-        invalidateCdpTargetsCache();
+        _context = await launchContext();
+        await openDefaultTabs(_context);
         progress("✅ Alfred ready — please log into Dynamics in the new window");
       }
 
-      const auth = await getAuthCookiesViaCDP(progress);
-      cachedAuth = auth;
-      saveCachedAuth("dynamics", auth.cookieHeader, auth.expiresAt);
+      const ctx = await getAlfredContext();
+      progress("🍪 Extracting Dynamics session cookies via Playwright...");
+      const allCookies = await ctx.cookies([DYNAMICS_URL]);
+      const authCookies = allCookies.filter(c => AUTH_COOKIE_NAMES.includes(c.name));
+      if (authCookies.length === 0) {
+        process.stderr.write("[alfred] Playwright auth: no Dynamics cookies found — user not logged in\n");
+        throw new Error(
+          "Alfred is open but you are not logged into Dynamics yet.\n" +
+          "Please log into Dynamics in the Alfred window, then retry."
+        );
+      }
 
-      const expiresIn = Math.round((auth.expiresAt - Date.now()) / 60000);
+      progress(`✅ Found ${authCookies.length} auth cookie(s): ${authCookies.map(c => c.name).join(", ")}`);
+      const cookieHeader = authCookies.map(c => `${c.name}=${c.value}`).join("; ");
+      // Playwright cookie expires is Unix timestamp in seconds; convert to ms
+      const expiresAt = Math.min(
+        ...authCookies.map(c => (c.expires ?? 0) > 0 ? c.expires! * 1000 : Date.now() + 8 * 60 * 60 * 1000)
+      );
+      cachedAuth = { cookieHeader, expiresAt };
+      saveCachedAuth("dynamics", cookieHeader, expiresAt);
+      const expiresIn = Math.round((expiresAt - Date.now()) / 60000);
       progress(`✅ Session cookies acquired — valid for ~${expiresIn} minutes`);
-      return auth.cookieHeader;
+      return cookieHeader;
     } catch (e) {
       inflightDynamics = null;
       throw e;
@@ -399,7 +238,7 @@ export async function getOutlookCookies(progress: ProgressFn = () => {}): Promis
     return cachedOutlookAuth.cookieHeader;
   }
 
-  // Check file cache before hitting CDP
+  // Check file cache before hitting Playwright
   const fileCached = loadCachedAuth("outlook");
   if (fileCached && Date.now() < fileCached.expiresAt - COOKIE_REFRESH_MARGIN_MS) {
     cachedOutlookAuth = { cookieHeader: fileCached.value, expiresAt: fileCached.expiresAt };
@@ -413,24 +252,25 @@ export async function getOutlookCookies(progress: ProgressFn = () => {}): Promis
 
   const promise = (async () => {
     try {
-      progress("🔐 Extracting Outlook cookies via CDP...");
+      progress("🔐 Extracting Outlook cookies via Playwright...");
 
       if (!await isAlfredgable()) {
-        throw new Error("Chrome debug port not available. Launch Alfred from your Desktop first.");
+        throw new Error("Alfred browser not available. Launch Alfred from your Desktop first.");
       }
 
-      const allCookies = await getCookiesViaRawCDP(OUTLOOK_URLS);
+      const ctx = await getAlfredContext();
+      const allCookies = await ctx.cookies(OUTLOOK_URLS);
       if (allCookies.length === 0) {
-        process.stderr.write("[alfred] CDP auth: no Outlook cookies found — user not logged in\n");
+        process.stderr.write("[alfred] Playwright auth: no Outlook cookies found — user not logged in\n");
         throw new Error(
           "Not logged into Outlook in the Alfred window.\n" +
-          "Log into Outlook in the Alfred Chrome window, then retry."
+          "Log into Outlook in the Alfred window, then retry."
         );
       }
 
       const cookieHeader = allCookies.map(c => `${c.name}=${c.value}`).join("; ");
       const expiresAt = Math.min(
-        ...allCookies.map(c => c.expires > 0 ? c.expires * 1000 : Date.now() + 8 * 60 * 60 * 1000)
+        ...allCookies.map(c => (c.expires ?? 0) > 0 ? c.expires! * 1000 : Date.now() + 8 * 60 * 60 * 1000)
       );
 
       cachedOutlookAuth = { cookieHeader, expiresAt };
@@ -459,4 +299,3 @@ export function setManualCookies(cookieHeader: string): void {
   saveCachedAuth("dynamics", cookieHeader, expiresAt);
   console.error(`[auth] Manual cookies set`);
 }
-
