@@ -5,12 +5,11 @@ set -e
 # SC Engagement MCP — Setup Script
 # ============================================================
 # Run this once to install everything and configure Claude Desktop.
-# Requirements: macOS, Google Chrome, Claude Desktop
+# Requirements: macOS, Claude Desktop, Node.js (auto-installed if missing)
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_DIR="$(dirname "$SCRIPT_DIR")"
 CLAUDE_CONFIG="$HOME/Library/Application Support/Claude/claude_desktop_config.json"
-CHROMELINK_APP="$HOME/Desktop/Alfred.app"
 
 # Non-interactive / CI mode
 CI_MODE="${ALFRED_CI:-0}"
@@ -105,7 +104,7 @@ json.dump(d, open(f, 'w'), indent=2)
 fi
 
 # ------------------------------------------------------------
-# 3. Dynamics URL (must be set before Alfred.app is created)
+# 3. Dynamics URL
 # ------------------------------------------------------------
 echo ""
 echo "▶ Dynamics 365 instance..."
@@ -227,102 +226,33 @@ PYEOF
 fi
 
 # ------------------------------------------------------------
-# 5. Create Alfred.app on Desktop (plain shell bundle — no AppleScript)
+# 5. Install Playwright browser + remove old Chrome launcher
 # ------------------------------------------------------------
 echo ""
-echo "▶ Creating Alfred.app on Desktop..."
-
-# Remove old versions
-[ -d "$CHROMELINK_APP" ] && rm -rf "$CHROMELINK_APP"
-[ -f "$HOME/Desktop/Alfred.command" ] && rm -f "$HOME/Desktop/Alfred.command"
-
-mkdir -p "$CHROMELINK_APP/Contents/MacOS"
-mkdir -p "$CHROMELINK_APP/Contents/Resources"
-
-cat > "$CHROMELINK_APP/Contents/MacOS/Alfred" << SHELLEOF
-#!/bin/bash
-notify() { osascript -e "display notification \"\$1\" with title \"Alfred\"" 2>/dev/null; }
-
-# Already running?
-if pgrep -f "alfred-profile" > /dev/null 2>&1; then
-  notify "Already running — you're good to use Claude!"
-  open -a "Claude" 2>/dev/null || true
-  exit 0
-fi
-
-CHROME="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
-if [ ! -x "\$CHROME" ]; then
-  osascript -e 'display alert "Alfred" message "Google Chrome not found. Please install Chrome first." as critical' 2>/dev/null
-  exit 1
-fi
-
-mkdir -p "\$HOME/.alfred-profile"
-
-# Pre-launch notification
-PROFILE_SIZE=\$(du -sk "\$HOME/.alfred-profile" 2>/dev/null | cut -f1)
-if [ -z "\$PROFILE_SIZE" ] || [ "\$PROFILE_SIZE" -lt 500 ]; then
-  notify "First time setup: log into Dynamics, Outlook and Teams in this window. You only do this once!"
+echo "▶ Installing Playwright Chromium browser..."
+if PATH="$NODE_DIR:$PATH" "$REPO_DIR/node_modules/.bin/playwright" install chromium 2>&1; then
+  echo "   ✅ Playwright Chromium installed"
 else
-  notify "Launching — ready for Claude!"
+  echo "   ⚠️  Playwright install had warnings — Alfred will attempt to use system Chromium"
 fi
 
-# Open Claude after a short delay (runs in background before exec)
-(sleep 2 && open -a "Claude" 2>/dev/null) &
-
-# Background update check — runs silently, never blocks startup
-(
-  ALFRED_DIR="\$(cd "\$(dirname "\$0")/../.." && pwd)"
-  INSTALLED=\$(git -C "\$ALFRED_DIR" rev-parse --short HEAD 2>/dev/null)
-  if [ -z "\$INSTALLED" ]; then exit 0; fi
-  git -C "\$ALFRED_DIR" fetch --quiet 2>/dev/null || exit 0
-  REMOTE=\$(git -C "\$ALFRED_DIR" rev-parse --short origin/main 2>/dev/null)
-  if [ -n "\$REMOTE" ] && [ "\$INSTALLED" != "\$REMOTE" ]; then
-    osascript -e "display notification \"A new version of Alfred is available. Ask Claude: update Alfred\" with title \"Alfred Update Available 🆕\" sound name \"Ping\"" 2>/dev/null
-  fi
-) &
-
-# Become Chrome — Alfred.app's Dock icon persists on the process
-exec "\$CHROME" \
-  --remote-debugging-port=9222 \
-  --remote-debugging-address=127.0.0.1 \
-  --user-data-dir="\$HOME/.alfred-profile" \
-  --no-first-run \
-  --no-default-browser-check \
-  --disable-extensions \
-  --disable-sync \
-  --disable-default-apps \
-  --disable-translate \
-  --disable-component-update \
-  --disable-domain-reliability \
-  --disable-client-side-phishing-detection \
-  "$NEW_DYNAMICS_URL" \
-  "https://outlook.cloud.microsoft" \
-  "https://teams.microsoft.com/v2/"
-SHELLEOF
-
-chmod +x "$CHROMELINK_APP/Contents/MacOS/Alfred"
-
-# Copy icon
-cp "$SCRIPT_DIR/assets/alfred.icns" "$CHROMELINK_APP/Contents/Resources/alfred.icns"
-
-cat > "$CHROMELINK_APP/Contents/Info.plist" << 'PLISTEOF'
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-  <key>CFBundleExecutable</key><string>Alfred</string>
-  <key>CFBundleIdentifier</key><string>com.servicenow.alfred</string>
-  <key>CFBundleName</key><string>Alfred</string>
-  <key>CFBundleIconFile</key><string>alfred</string>
-  <key>CFBundlePackageType</key><string>APPL</string>
-  <key>CFBundleVersion</key><string>1.0</string>
-  <key>NSHighResolutionCapable</key><true/>
-</dict>
-</plist>
-PLISTEOF
-
-echo "   ✅ Alfred.app created on Desktop"
-echo "   ℹ️  First launch: right-click → Open (one-time macOS approval)"
+echo ""
+echo "▶ Removing old Alfred Chrome launcher (no longer needed)..."
+REMOVED_LAUNCHER=0
+if [ -d "$HOME/Desktop/Alfred.app" ]; then
+  rm -rf "$HOME/Desktop/Alfred.app"
+  echo "   ✅ Deleted Alfred.app from Desktop"
+  REMOVED_LAUNCHER=1
+fi
+if [ -f "$HOME/Desktop/Alfred.command" ]; then
+  rm -f "$HOME/Desktop/Alfred.command"
+  echo "   ✅ Deleted Alfred.command from Desktop"
+  REMOVED_LAUNCHER=1
+fi
+if [ "$REMOVED_LAUNCHER" = "0" ]; then
+  echo "   ✅ No old launcher found — nothing to remove"
+fi
+echo "   ℹ️  Alfred now launches its own browser automatically — no launcher needed"
 
 # ------------------------------------------------------------
 # 6. Teams webhook config
@@ -676,10 +606,10 @@ echo "╚═══════════════════════�
 echo ""
 echo "  Get started:"
 echo "  ─────────────"
-echo "  1. Double-click Alfred on your Desktop to launch the browser"
-echo "  2. Log into Dynamics, Outlook and Teams (first time only)"
-echo "  3. Restart Claude Desktop"
-echo "  4. Ask Claude anything — opportunities, calendar, hygiene sweep!"
+echo "  1. Restart Claude Desktop"
+echo "  2. Ask Claude anything — Alfred will open a browser window automatically"
+echo "  3. Log into Dynamics, Outlook and Teams the first time (never again after that)"
+echo "  4. Done — ask Claude about opportunities, calendar, hygiene sweep!"
 echo ""
 if [ -n "$HYGIENE_SCHEDULE_DESC" ] || [ -n "$MEETING_SCHEDULE_DESC" ]; then
   echo "  Automated jobs:"
