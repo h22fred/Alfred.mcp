@@ -1105,11 +1105,11 @@ server.tool(
       }
     } catch (e) { process.stderr.write(`[alfred:warn] cron migration failed: ${e instanceof Error ? e.message : String(e)}\n`); }
 
-    // Regenerate Alfred.app shell script (picks up update-check fixes, new Chrome flags, etc.)
+    // Post-update migration: install Playwright Chromium + remove old Chrome launcher
     try {
       const appMsg = regenerateAlfredApp(installDir);
       if (appMsg) progress(appMsg);
-    } catch (e) { process.stderr.write(`[alfred:warn] Alfred.app regeneration failed: ${e instanceof Error ? e.message : String(e)}\n`); }
+    } catch (e) { process.stderr.write(`[alfred:warn] post-update migration failed: ${e instanceof Error ? e.message : String(e)}\n`); }
 
     progress("✅ Done — restart Claude Desktop to load the new version.");
     return { content: [{ type: "text", text:

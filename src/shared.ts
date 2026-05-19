@@ -1,5 +1,6 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { existsSync, readFileSync, writeFileSync, copyFileSync } from "fs";
+import { existsSync, readFileSync, rmSync } from "fs";
+import { execFileSync } from "child_process";
 import { homedir } from "os";
 import { join } from "path";
 import { INTERNAL_DOMAINS } from "./config.js";
@@ -132,113 +133,51 @@ export const FORECAST_NAMES: Record<number, string> = {
 };
 
 /**
- * Regenerate the Alfred.app shell script on macOS.
- * Called by update_alfred so the .app bundle stays in sync with the repo
- * (e.g. update-check logic, Chrome flags, notification text).
- * No-op on Windows or if Alfred.app doesn't exist.
+ * Post-update migration: install Playwright Chromium and remove the old
+ * Chrome-based launcher (Alfred.app on macOS, Alfred.bat on Windows).
+ * Called by update_alfred after every successful git pull + rebuild.
  */
 export function regenerateAlfredApp(installDir: string): string | null {
-  if (process.platform !== "darwin") return null;
-
   const home = homedir();
-  const appScript = join(home, "Desktop", "Alfred.app", "Contents", "MacOS", "Alfred");
-  if (!existsSync(appScript)) return null;
+  const messages: string[] = [];
 
-  const configPath = join(home, ".alfred-config.json");
-  const cfg = existsSync(configPath) ? JSON.parse(readFileSync(configPath, "utf8")) : {};
-  // Extract company name from the full dynamicsUrl (e.g. "https://servicenow.crm.dynamics.com" → "servicenow")
-  const urlMatch = (cfg.dynamicsUrl as string | undefined)?.match(/^https?:\/\/([^.]+)\.crm/);
-  const company = urlMatch?.[1] ?? "servicenow";
-  if (!/^[a-zA-Z0-9-]+$/.test(company)) {
-    throw new Error(
-      `[alfred] Invalid dynamicsCompany "${company}" in ~/.alfred-config.json: must contain only alphanumeric characters and hyphens.`
-    );
+  // Delete old launcher
+  if (process.platform === "darwin") {
+    const alfredApp = join(home, "Desktop", "Alfred.app");
+    if (existsSync(alfredApp)) {
+      rmSync(alfredApp, { recursive: true, force: true });
+      messages.push("🗑️ Removed Alfred.app from Desktop (no longer needed)");
+    }
+  } else if (process.platform === "win32") {
+    const desktopPaths = [
+      join(home, "Desktop", "Alfred.bat"),
+      join(home, "OneDrive", "Desktop", "Alfred.bat"),
+    ];
+    for (const p of desktopPaths) {
+      if (existsSync(p)) {
+        rmSync(p, { force: true });
+        messages.push("🗑️ Removed Alfred.bat from Desktop (no longer needed)");
+        break;
+      }
+    }
   }
-  const dynamicsUrl = `https://${company}.crm.dynamics.com`;
 
-  const script = `#!/bin/bash
-notify() { osascript -e "display notification \\"\$1\\" with title \\"Alfred\\"" 2>/dev/null; }
+  // Install Playwright Chromium
+  const pwBin = join(
+    installDir, "node_modules", ".bin",
+    process.platform === "win32" ? "playwright.cmd" : "playwright"
+  );
+  if (existsSync(pwBin)) {
+    try {
+      execFileSync(pwBin, ["install", "chromium"], {
+        timeout: 120_000,
+        env: { ...process.env },
+      });
+      messages.push("🎭 Playwright Chromium updated");
+    } catch (e) {
+      process.stderr.write(`[alfred:warn] playwright install failed: ${e instanceof Error ? e.message : String(e)}\n`);
+    }
+  }
 
-# Already running?
-if pgrep -f "alfred-profile" > /dev/null 2>&1; then
-  notify "Already running — you're good to use Claude!"
-  open -a "Claude" 2>/dev/null || true
-  exit 0
-fi
-
-CHROME="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
-if [ ! -x "\$CHROME" ]; then
-  osascript -e 'display alert "Alfred" message "Google Chrome not found. Please install Chrome first." as critical' 2>/dev/null
-  exit 1
-fi
-
-mkdir -p "\$HOME/.alfred-profile"
-
-# Pre-launch notification
-PROFILE_SIZE=\$(du -sk "\$HOME/.alfred-profile" 2>/dev/null | cut -f1)
-if [ -z "\$PROFILE_SIZE" ] || [ "\$PROFILE_SIZE" -lt 500 ]; then
-  notify "First time setup: log into Dynamics, Outlook and Teams in this window. You only do this once!"
-else
-  notify "Launching — ready for Claude!"
-fi
-
-# Open Claude after a short delay (runs in background before exec)
-(sleep 2 && open -a "Claude" 2>/dev/null) &
-
-# Background update check — uses git directly, never blocks startup
-(
-  ALFRED_DIR="\$(cd "\$(dirname "\$0")/../.." && pwd)"
-  INSTALLED=\$(git -C "\$ALFRED_DIR" rev-parse --short HEAD 2>/dev/null)
-  if [ -z "\$INSTALLED" ]; then exit 0; fi
-  git -C "\$ALFRED_DIR" fetch --quiet 2>/dev/null || exit 0
-  REMOTE=\$(git -C "\$ALFRED_DIR" rev-parse --short origin/main 2>/dev/null)
-  if [ -n "\$REMOTE" ] && [ "\$INSTALLED" != "\$REMOTE" ]; then
-    osascript -e "display notification \\"A new version of Alfred is available. Ask Claude: update Alfred\\" with title \\"Alfred Update Available 🆕\\" sound name \\"Ping\\"" 2>/dev/null
-  fi
-) &
-
-# Become Chrome — Alfred.app's Dock icon persists on the process
-exec "\$CHROME" \\
-  --remote-debugging-port=9222 \\
-  --remote-debugging-address=127.0.0.1 \\
-  --user-data-dir="\$HOME/.alfred-profile" \\
-  --no-first-run \\
-  --no-default-browser-check \\
-  --disable-extensions \\
-  --disable-sync \\
-  --disable-default-apps \\
-  --disable-translate \\
-  --disable-component-update \\
-  --disable-domain-reliability \\
-  --disable-client-side-phishing-detection \\
-  "${dynamicsUrl}" \\
-  "https://outlook.cloud.microsoft" \\
-  "https://teams.microsoft.com/v2/"
-`;
-
-  writeFileSync(appScript, script, { mode: 0o755 });
-
-  // Refresh icon in case it changed
-  const iconSrc = join(installDir, "setup", "assets", "alfred.icns");
-  const iconDst = join(home, "Desktop", "Alfred.app", "Contents", "Resources", "alfred.icns");
-  if (existsSync(iconSrc)) copyFileSync(iconSrc, iconDst);
-
-  // Regenerate Info.plist (removes LSUIElement so Alfred shows in Dock with its icon)
-  const plistPath = join(home, "Desktop", "Alfred.app", "Contents", "Info.plist");
-  writeFileSync(plistPath, `<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-  <key>CFBundleExecutable</key><string>Alfred</string>
-  <key>CFBundleIdentifier</key><string>com.alfred.mcp</string>
-  <key>CFBundleName</key><string>Alfred</string>
-  <key>CFBundleIconFile</key><string>alfred</string>
-  <key>CFBundlePackageType</key><string>APPL</string>
-  <key>CFBundleVersion</key><string>1.0</string>
-  <key>NSHighResolutionCapable</key><true/>
-</dict>
-</plist>
-`);
-
-  return "🔄 Regenerated Alfred.app with latest updates";
+  return messages.length > 0 ? messages.join("\n") : null;
 }
