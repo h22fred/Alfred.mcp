@@ -193,6 +193,9 @@ async function dynamicsFetch(path: string, options: RequestInit = {}, progress: 
       const engMatch = rawDetail.match(/(ENG\d+)/);
       msg = `❌ This engagement type already exists on this opportunity. Collaborate on the existing one${engMatch ? ` (${engMatch[1]})` : ""} instead.`;
     }
+    if (response.status === 400 && (rawDetail.toLowerCase().includes("no transaction allowed") || rawDetail.toLowerCase().includes("global/domestic parent"))) {
+      msg = `❌ This is a Global/Domestic Parent account — Dynamics does not allow engagements to be created directly on parent accounts. Use search_accounts to find the transactional child account (same company name, without "Global" or "Parent" in the account type), then create the engagement there.`;
+    }
     throw new Error(msg);
   }
 
@@ -272,8 +275,10 @@ export interface OpportunityFilter {
   includeClosed?: boolean; // include won/lost/closed opps — default false (open only)
   excludeStale?: boolean; // exclude opps with close date > 6 months past — default true
   ownerSearch?: string; // filter by owner (AE) name — resolves to user IDs
+  colleagueSearch?: string; // filter by colleague name across both AE owner + SC fields — for coverage/backup views
   territoryCode?: string; // filter by territory code (e.g. "CHLPC-TER-6")
   excludeAppStoreRenewals?: boolean; // exclude $0 "App Store Renewal" opps — default false (set true for pipeline views)
+  skipCollabValidation?: boolean; // skip cross-checking results against the collaboration team table
 }
 
 export async function fetchCurrentUserId(progress: ProgressFn = () => {}): Promise<string> {
@@ -291,8 +296,19 @@ export async function fetchOpportunities(filter: OpportunityFilter = {}, progres
 
   let filterClause = filter.includeClosed ? "statecode ge 0" : "statecode eq 0";
   if (filter.search) {
-    const safe = sanitizeODataSearch(filter.search);
-    filterClause += ` and (contains(name,'${safe}') or contains(sn_number,'${safe}') or contains(parentaccountid/name,'${safe}'))`;
+    const words = filter.search.trim().split(/\s+/).filter(Boolean);
+    if (words.length === 1) {
+      const safe = sanitizeODataSearch(words[0]!);
+      filterClause += ` and (contains(name,'${safe}') or contains(sn_number,'${safe}') or contains(parentaccountid/name,'${safe}'))`;
+    } else {
+      // Multi-word: each word must appear in name OR account name (cross-field AND)
+      // e.g. "SITA Risk" → opp named "Risk Mngt" on account "SITA" → matches
+      const wordClauses = words.map(w => {
+        const safe = sanitizeODataSearch(w);
+        return `(contains(name,'${safe}') or contains(parentaccountid/name,'${safe}'))`;
+      });
+      filterClause += ` and (${wordClauses.join(" and ")})`;
+    }
   }
   if (!filter.includeZeroValue && filter.minNnacv !== 0) {
     filterClause += ` and sn_netnewacv ne 0`;
@@ -387,6 +403,20 @@ export async function fetchOpportunities(filter: OpportunityFilter = {}, progres
       progress(`👥 Filtering by ${users.length} owner(s): ${users.map(u => u.fullname).join(", ")}`);
     }
   }
+  if (filter.colleagueSearch) {
+    const users = await searchSystemUsers(filter.colleagueSearch, progress);
+    if (users.length === 0) {
+      progress(`⚠️ No users found matching "${filter.colleagueSearch}"`);
+    } else {
+      // Match if colleague appears as either AE owner OR SC on the opportunity
+      const conditions = users.map(u => {
+        requireGuid(u.systemuserid, "colleagueUserId");
+        return `(_ownerid_value eq '${u.systemuserid}' or _sn_solutionconsultant_value eq '${u.systemuserid}')`;
+      }).join(" or ");
+      filterClause += ` and (${conditions})`;
+      progress(`👥 Filtering by colleague: ${users.map(u => u.fullname).join(", ")}`);
+    }
+  }
 
   const selectFields = "opportunityid,sn_number,name,_accountid_value,_ownerid_value,_sn_solutionconsultant_value,_sn_fieldsalesrep_value,_sn_fieldterritory_value,statuscode,estimatedclosedate,createdon,modifiedon,totalamount,sn_netnewacv,sn_forecastcategory,msdyn_forecastcategory,stepname,sn_salesstage,closeprobability,sn_opportunitytype,sn_opportunitybusinessunitlist,sn_currencycode,sn_closequarter,sn_probabilitytocloseinquarter";
 
@@ -398,7 +428,7 @@ export async function fetchOpportunities(filter: OpportunityFilter = {}, progres
     `&$orderby=estimatedclosedate asc` +
     `&$top=${top}`;
 
-  const needsCollabValidation = filter.myOpportunitiesOnly && !filteredByCollab && filter.myOppsFilterField !== "owner";
+  const needsCollabValidation = filter.myOpportunitiesOnly && !filteredByCollab && filter.myOppsFilterField !== "owner" && !filter.skipCollabValidation;
 
   const mainFetch = dynamicsFetch(path, {}, progress).then(res => res.json());
   const collabFetch = needsCollabValidation
@@ -707,6 +737,7 @@ export interface CreateEngagementInput {
   type: EngagementType;
   notes?: string;
   completedDate?: string;
+  ownerId?: string; // systemuser GUID — set when creating on behalf of another SC
 }
 
 export async function createEngagement(input: CreateEngagementInput, progress: ProgressFn = () => {}): Promise<Engagement> {
@@ -732,17 +763,21 @@ export async function createEngagement(input: CreateEngagementInput, progress: P
     );
   }
 
-  // Auto-complete if a completed date is provided and it's today or in the past
-  const isCompleted = !!input.completedDate && new Date(input.completedDate) <= new Date();
+  // Auto-complete if event-type OR if a past/today completedDate is provided
+  const todayStr = new Date().toISOString().slice(0, 10);
+  const isEventType = EVENT_TYPE_ENGAGEMENTS.has(input.type);
+  const isCompleted = isEventType || (!!input.completedDate && input.completedDate <= todayStr);
+  const effectiveCompletedDate = input.completedDate ?? (isEventType ? todayStr : undefined);
 
   const payload: Record<string, unknown> = {
     sn_name: input.name,
     sn_description: input.notes,
-    sn_completeddate: input.completedDate,
+    sn_completeddate: effectiveCompletedDate,
     "sn_engagementtypeid@odata.bind": `/sn_engagementtypes(${typeGuid})`,
     "sn_opportunityid@odata.bind": `/opportunities(${input.opportunityId})`,
     "sn_accountid@odata.bind": `/accounts(${input.accountId})`,
     "sn_primaryproductid@odata.bind": `/sn_productfamilies(${input.primaryProductId})`,
+    ...(input.ownerId ? { "ownerid@odata.bind": `/systemusers(${requireGuid(input.ownerId, "ownerId")})` } : {}),
     ...(isCompleted ? { statecode: 1, statuscode: 2 } : {}),
   };
 
@@ -763,15 +798,25 @@ export async function createEngagement(input: CreateEngagementInput, progress: P
     engagement = await fetchEngagementById(match[1], progress);
   }
 
+  // Belt-and-suspenders: if Dynamics silently ignored the statecode in the POST, PATCH it now
+  const engId = engagement.sn_engagementid;
+  if (isCompleted && engId && engagement.statecode !== 1) {
+    progress("🔄 Patching engagement to Complete status...");
+    await dynamicsFetch(`/sn_engagements(${engId})`, {
+      method: "PATCH",
+      body: JSON.stringify({ statecode: 1, statuscode: 2 }),
+      headers: { "If-Match": "*" },
+    }, progress).catch(() => {});
+  }
+
   progress("✅ Engagement created successfully");
 
-  // Auto-generate a timeline note on creation
-  const engId = engagement.sn_engagementid;
+  // Auto-generate a timeline note using the actual event date, not today
   if (engId) {
-    const today = new Date().toISOString().slice(0, 10);
+    const noteDate = effectiveCompletedDate ?? todayStr;
     await createTimelineNote(
       engId,
-      `${input.type} created – ${today}`,
+      `${input.type} – ${noteDate}`,
       input.notes
         ? `Engagement created.\n\n${input.notes}`
         : `Engagement created.`,
@@ -792,7 +837,20 @@ export interface CreateAccountEngagementInput {
   type: EngagementType;
   notes?: string;
   completedDate?: string;
+  primaryProductId?: string;
+  category?: "Pre Sale" | "Post Sale"; // sn_categorycode — defaults based on type if omitted
+  description?: string; // pre-built structured description (from buildDescription)
+  ownerId?: string; // systemuser GUID — set when creating on behalf of another SC
 }
+
+// Option set values for sn_categorycode
+const ENGAGEMENT_CATEGORY_CODES: Record<"Pre Sale" | "Post Sale", number> = {
+  "Pre Sale": 1,
+  "Post Sale": 2,
+};
+
+// Event-type engagements: point-in-time events that auto-complete even without a completedDate
+const EVENT_TYPE_ENGAGEMENTS = new Set<EngagementType>(["Workshop", "EBC", "Customer Business Review"]);
 
 export async function createAccountEngagement(input: CreateAccountEngagementInput, progress: ProgressFn = () => {}): Promise<Engagement> {
   auditLog("create_account_engagement", { type: input.type, accountId: input.accountId });
@@ -800,14 +858,23 @@ export async function createAccountEngagement(input: CreateAccountEngagementInpu
   const typeGuid = ENGAGEMENT_TYPE_GUIDS[input.type];
   if (!typeGuid) throw new Error(`Unknown engagement type: ${input.type}`);
 
-  const isCompleted = !!input.completedDate && new Date(input.completedDate) <= new Date();
+  const todayStrAE = new Date().toISOString().slice(0, 10);
+  const isEventTypeAE = EVENT_TYPE_ENGAGEMENTS.has(input.type);
+  const isCompleted = isEventTypeAE || (!!input.completedDate && input.completedDate <= todayStrAE);
+  const effectiveCompletedDateAE = input.completedDate ?? (isEventTypeAE ? todayStrAE : undefined);
+
+  // Default Pre/Post Sale based on type when not explicitly provided
+  const category = input.category ?? (input.type === "Post Sale Engagement" ? "Post Sale" : "Pre Sale");
 
   const payload: Record<string, unknown> = {
     sn_name: input.name,
-    sn_description: input.notes,
-    sn_completeddate: input.completedDate,
+    sn_description: input.description ?? input.notes,
+    sn_completeddate: effectiveCompletedDateAE,
+    sn_categorycode: ENGAGEMENT_CATEGORY_CODES[category],
     "sn_engagementtypeid@odata.bind": `/sn_engagementtypes(${typeGuid})`,
     "sn_accountid@odata.bind": `/accounts(${input.accountId})`,
+    ...(input.primaryProductId ? { "sn_primaryproductid@odata.bind": `/sn_productfamilies(${input.primaryProductId})` } : {}),
+    ...(input.ownerId ? { "ownerid@odata.bind": `/systemusers(${requireGuid(input.ownerId, "ownerId")})` } : {}),
     ...(isCompleted ? { statecode: 1, statuscode: 2 } : {}),
   };
 
@@ -828,14 +895,24 @@ export async function createAccountEngagement(input: CreateAccountEngagementInpu
     engagement = await fetchEngagementById(match[1], progress);
   }
 
+  // Belt-and-suspenders: patch status if Dynamics silently ignored it in POST
+  const engIdAE = engagement.sn_engagementid;
+  if (isCompleted && engIdAE && engagement.statecode !== 1) {
+    progress("🔄 Patching engagement to Complete status...");
+    await dynamicsFetch(`/sn_engagements(${engIdAE})`, {
+      method: "PATCH",
+      body: JSON.stringify({ statecode: 1, statuscode: 2 }),
+      headers: { "If-Match": "*" },
+    }, progress).catch(() => {});
+  }
+
   progress("✅ Account engagement created successfully");
 
-  const engId = engagement.sn_engagementid;
-  if (engId) {
-    const today = new Date().toISOString().slice(0, 10);
+  if (engIdAE) {
+    const noteDate = effectiveCompletedDateAE ?? todayStrAE;
     await createTimelineNote(
-      engId,
-      `${input.type} created – ${today}`,
+      engIdAE,
+      `${input.type} – ${noteDate}`,
       input.notes ? `Engagement created.\n\n${input.notes}` : `Engagement created.`,
       progress
     );
@@ -973,6 +1050,15 @@ export async function updateEngagement(
 
   const payload: Record<string, unknown> = {};
   if (patch.name) payload.sn_name = patch.name;
+
+  // Bug 14: when marking complete without a new completedDate, preserve existing one
+  if (patch.markComplete === true && !patch.completedDate) {
+    try {
+      const existing = await fetchEngagementById(id, () => {});
+      if (existing.sn_completeddate) payload.sn_completeddate = existing.sn_completeddate;
+    } catch { /* non-fatal — Dynamics will set its own default */ }
+  }
+
   if (patch.completedDate) payload.sn_completeddate = patch.completedDate;
   if (patch.markComplete === true)  { payload.statecode = 1; payload.statuscode = 2; }
   if (patch.markComplete === false) { payload.statecode = 0; payload.statuscode = 1; }

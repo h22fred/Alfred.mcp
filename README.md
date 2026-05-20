@@ -14,8 +14,8 @@ Two flavours — one installer:
 
 | Variant | Who | Install folder |
 |---------|-----|----------------|
-| **Alfred SC** | SC / SSC / Manager | `~/Documents/alfred.sc` |
-| **Alfred Sales** | AE / Sales Specialist / Manager | `~/Documents/alfred.sales` |
+| **Alfred SC** | SC / SSC / Manager | `~/Documents/Alfred` |
+| **Alfred Sales** | AE / Sales Specialist / Manager | `~/Documents/Alfred` |
 
 ---
 
@@ -25,7 +25,7 @@ Two flavours — one installer:
 
 | Source | Capabilities |
 |--------|-------------|
-| **Dynamics 365** | List opportunities, create/update/complete engagements, hygiene sweep, Tech Win assessment, delete cancelled engagements |
+| **Dynamics 365** | List opportunities (incl. colleague pipeline), create/update/complete engagements, create on behalf of colleague, hygiene sweep, Tech Win assessment, delete cancelled engagements |
 | **Outlook Calendar** | Show calendar by date range, search meetings |
 | **Outlook Email** | Search emails, list inbox/sent/subfolders, full body, filter unread |
 | **Teams** | Get meeting transcripts, post to channels, read chats |
@@ -47,7 +47,6 @@ Two flavours — one installer:
 
 - macOS or Windows 10+
 - [Claude Desktop](https://claude.ai/download)
-- Google Chrome
 
 **Windows only — install these two first:**
 - [Git for Windows](https://git-scm.com/download/win) — click Next through all defaults
@@ -88,7 +87,10 @@ Download the LTS version and run (click Next through all defaults): [nodejs.org/
 **Step 3 — Install Alfred**
 1. **[⬇️ Download Setup_Windows.bat](https://raw.githubusercontent.com/h22fred/Alfred.mcp/refs/heads/main/Setup_Windows.bat)**
 2. Double-click the downloaded file
-3. When prompted, enter `1` for SC or `2` for Sales
+3. If Windows SmartScreen appears ("Windows protected your PC"), click **More info → Run anyway** — this is expected for unsigned scripts downloaded from the internet
+4. When prompted, enter `1` for SC or `2` for Sales
+
+> **Enterprise / managed machines:** IT policy may block `-ExecutionPolicy Bypass`. If setup fails silently, ask your IT team to allow unsigned PowerShell scripts for local scripts, or run the setup from an unmanaged machine.
 
 ## What the installer asks
 
@@ -116,9 +118,8 @@ Download the LTS version and run (click Next through all defaults): [nodejs.org/
 
 ## Every session
 
-1. Double-click **Alfred** on your Desktop (macOS: `.app`, Windows: `.bat`)
-2. **First time only:** log into Dynamics, Outlook and Teams (SSO) — Alfred remembers you after that
-3. Alfred automatically opens Claude Desktop — you're ready
+1. Open Claude Desktop — Alfred's browser launches automatically in the background
+2. **First time only:** log into Dynamics, Outlook and Teams (SSO) in the Alfred browser window — Alfred remembers you after that
 
 ---
 
@@ -136,6 +137,8 @@ Show my calendar this week
 Get the transcript from my Contoso demo last Thursday
 Detect post-meeting engagements from this week
 Delete the cancelled Demo engagement on Fabrikam
+Show me Stéphane's open pipeline
+Create a Discovery placeholder on behalf of Stéphane for the Acme opp
 ```
 
 ### Sales AE / Specialist / Manager
@@ -153,12 +156,13 @@ Add a note to the Acme opportunity: had intro call, next step is discovery
 
 ## How it works
 
-Alfred launches Chrome with `--remote-debugging-port=9222` using a dedicated profile (`~/.alfred-profile`). The MCP server extracts session cookies and Bearer tokens via CDP WebSocket — no credentials stored, no Azure registration needed.
+Alfred launches a private Chromium browser (named "Alfred") via Playwright with a dedicated profile (`~/.alfred-pw`). The MCP server reads session cookies directly from the live browser — no credentials stored, no Azure registration needed.
 
 Auth flow:
-1. **Dynamics:** reads `CrmOwinAuthC1/C2` cookies via `Network.getCookies`
-2. **Outlook/Graph:** reads Bearer token from MSAL cache in page storage, falls back to network interception via `Fetch.enable` (catches Teams v2 service worker requests)
-3. All tokens cached in-memory for the session duration
+1. **Dynamics:** reads `CrmOwinAuthC1/C2` cookies from the live session
+2. **Outlook/Graph:** reads session cookies from the Outlook tab in the Alfred browser
+3. Tokens cached to disk — survive Claude Desktop restarts without re-login
+4. Browser closes automatically after 90 seconds of inactivity — reopens silently when next needed
 
 ---
 
@@ -176,8 +180,8 @@ Both jobs run silently in the background. If Alfred isn't running or your Dynami
 To run manually at any time:
 ```bash
 # macOS
-node ~/Documents/alfred.sc/setup/hygiene-sweep.mjs
-node ~/Documents/alfred.sc/setup/post-meeting-sweep.mjs
+node ~/Documents/Alfred/setup/hygiene-sweep.mjs
+node ~/Documents/Alfred/setup/post-meeting-sweep.mjs
 ```
 
 To change the schedule:
@@ -219,7 +223,7 @@ The webhook URL is stored in `~/.alfred-config.json` on your machine only and is
 
 | Error | Fix |
 |-------|-----|
-| Alfred not running | Double-click Alfred on Desktop |
+| Alfred not running | Restart Claude Desktop — Alfred launches automatically |
 | Not logged into Dynamics | Log into Dynamics in the Alfred browser window |
 | 401 from Dynamics | Session expired — re-login in Alfred window |
 | Teams not posting | Re-run setup to reconfigure webhook |
@@ -255,7 +259,7 @@ Automated audit run via [Ruflo](https://github.com/h22fred/ruflo) on 2026-03-25:
 
 | What | How |
 |------|-----|
-| **Credentials** | Never stored. Alfred reads your existing Chrome session via the local debug port — no passwords, no API keys |
+| **Credentials** | Never stored. Alfred reads your existing browser session via Playwright — no passwords, no API keys |
 | **Tokens** | Cached in memory only, cleared when Alfred restarts |
 | **Config file** | `~/.alfred-config.json` — your machine only, permissions 600 |
 | **External calls** | Only to your own Dynamics 365, Microsoft Graph (Outlook/Teams), and your Teams webhook |

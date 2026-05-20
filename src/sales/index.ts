@@ -213,19 +213,21 @@ CROSS-REFERENCE: After presenting pipeline results, compare with the Data_Analyt
         ? "Manager mode — default false (team-wide). Set true for your personal pipeline only."
         : "Filter to your owned opportunities — default true."
     ),
+    colleague_name: z.string().optional().describe("Filter by a colleague's name (partial match) — returns all opportunities where they appear as either AE (owner) or SC. Use for coverage/backup scenarios, e.g. 'show me Stéphane's pipeline'."),
   },
-  async ({ search, min_nnacv, top, include_closed, include_zero_value, my_opportunities_only }) => {
+  async ({ search, min_nnacv, top, include_closed, include_zero_value, my_opportunities_only, colleague_name }) => {
     const progress = makeProgress(server);
     const myOpps = my_opportunities_only ?? (isSalesSpecialist || isSalesManager ? false : true);
     const opps = await fetchOpportunities({
       search,
       minNnacv: min_nnacv,
-      myOpportunitiesOnly: myOpps,
+      myOpportunitiesOnly: colleague_name ? false : myOpps,
       // Sales Specialist: filter by collaboration team; AE/Manager: filter by owner
-      myOppsFilterField: isSalesSpecialist && myOpps ? "collab" : "owner",
+      myOppsFilterField: isSalesSpecialist && myOpps && !colleague_name ? "collab" : "owner",
       includeClosed: include_closed ?? false,
       includeZeroValue: include_zero_value ?? false,
       top: top ?? 50,
+      colleagueSearch: colleague_name,
     }, progress);
     return { content: [{ type: "text", text: JSON.stringify(opps, null, 2) }] };
   }
@@ -1028,14 +1030,15 @@ IMPORTANT: Before calling this tool, ask the user:
 1. "Which date range? (e.g. 'this week', 'next 2 weeks', specific dates)"
 2. "Any keyword to filter by? (e.g. 'Fabrikam', 'ICW', 'standup' — or leave blank for all)"`,
   {
-    start_date: z.string().describe("Start date in ISO format, e.g. 2026-03-16"),
-    end_date:   z.string().describe("End date in ISO format, e.g. 2026-03-20"),
-    search:     z.string().optional().describe("Optional keyword to filter event subjects, organizer, or attendee names."),
-    top:        z.number().optional().describe("Max events to fetch (default 100)."),
+    start_date:  z.string().describe("Start date in ISO format, e.g. 2026-03-16"),
+    end_date:    z.string().describe("End date in ISO format, e.g. 2026-03-20"),
+    search:      z.string().optional().describe("Optional keyword to filter event subjects, organizer, or attendee names."),
+    top:         z.number().optional().describe("Max events to fetch (default 100)."),
+    categories:  z.array(z.string()).optional().describe("Filter to events matching these Outlook categories (e.g. ['on-site meeting']). Applied client-side after fetch."),
   },
-  async ({ start_date, end_date, search, top }) => {
+  async ({ start_date, end_date, search, top, categories }) => {
     const progress = makeProgress(server);
-    const events = await getCalendarEvents(start_date, end_date, search, progress, top ?? 100);
+    const events = await getCalendarEvents(start_date, end_date, search, progress, top ?? 100, categories);
     return {
       content: [{ type: "text", text: externalData("Outlook calendar", events) }],
     };

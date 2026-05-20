@@ -1,4 +1,7 @@
 import { chromium, type BrowserContext } from "playwright";
+import { existsSync, readdirSync, readFileSync, writeFileSync } from "fs";
+import { homedir } from "os";
+import { join } from "path";
 import { DYNAMICS_HOST } from "../config.js";
 import { loadCachedAuth, saveCachedAuth, clearCachedAuthFile } from "./authFileCache.js";
 
@@ -28,6 +31,46 @@ export type ProgressFn = (msg: string) => void;
 // Module-level Playwright context
 let _context: BrowserContext | null = null;
 
+// Auto-close the browser after 90s of inactivity (session persists via ~/.alfred-pw profile)
+const IDLE_CLOSE_MS = 90_000;
+let _idleTimer: ReturnType<typeof setTimeout> | null = null;
+
+function scheduleIdleClose(): void {
+  if (_idleTimer) clearTimeout(_idleTimer);
+  _idleTimer = setTimeout(() => {
+    _idleTimer = null;
+    if (_context) {
+      process.stderr.write("[alfred:info] Auto-closing idle Alfred browser (90s inactivity)\n");
+      _context.close().catch(() => {});
+    }
+  }, IDLE_CLOSE_MS);
+}
+
+function cancelIdleClose(): void {
+  if (_idleTimer) { clearTimeout(_idleTimer); _idleTimer = null; }
+}
+
+// Patch Chromium app display name to "Alfred" via Info.plist (macOS only, non-fatal)
+function patchChromiumName(): void {
+  if (process.platform !== "darwin") return;
+  try {
+    const pwCache = join(homedir(), "Library", "Caches", "ms-playwright");
+    if (!existsSync(pwCache)) return;
+    const dirs = readdirSync(pwCache).filter(d => d.startsWith("chromium-"));
+    for (const dir of dirs) {
+      const plist = join(pwCache, dir, "chrome-mac", "Chromium.app", "Contents", "Info.plist");
+      if (!existsSync(plist)) continue;
+      let content = readFileSync(plist, "utf8");
+      if (content.includes("<string>Alfred</string>")) break; // already patched
+      content = content
+        .replace(/(<key>CFBundleName<\/key>\s*<string>)[^<]*(<\/string>)/, "$1Alfred$2")
+        .replace(/(<key>CFBundleDisplayName<\/key>\s*<string>)[^<]*(<\/string>)/, "$1Alfred$2");
+      writeFileSync(plist, content, "utf8");
+      break;
+    }
+  } catch { /* non-fatal */ }
+}
+
 /** Clear in-memory auth state only (file cache survives for cross-restart resilience). */
 export function clearMemoryAuthCache(): void {
   cachedAuth = null;
@@ -48,9 +91,11 @@ async function isContextAlive(): Promise<boolean> {
   if (!_context) return false;
   try {
     await _context.cookies([]);
+    scheduleIdleClose(); // reset idle timer on every use
     return true;
   } catch {
     _context = null;
+    cancelIdleClose();
     clearMemoryAuthCache();
     return false;
   }
@@ -63,11 +108,13 @@ export async function isAlfredgable(): Promise<boolean> {
 
 /** Launch a persistent Playwright context and register lifecycle handlers. */
 async function launchContext(): Promise<BrowserContext> {
+  patchChromiumName();
   const ctx = await chromium.launchPersistentContext(PROFILE_DIR, {
     headless: false,
     args: ["--no-first-run", "--no-default-browser-check", "--disable-features=mDnsResponder"],
   });
   ctx.on("close", () => {
+    cancelIdleClose();
     _context = null;
     clearMemoryAuthCache();
   });
@@ -107,6 +154,7 @@ export async function getAlfredPages() {
 
 /** Stop the Alfred browser gracefully. */
 export async function exitAlfred(progress: ProgressFn = () => {}): Promise<boolean> {
+  cancelIdleClose();
   if (!await isAlfredgable()) {
     progress("ℹ️ Alfred is not running");
     return false;

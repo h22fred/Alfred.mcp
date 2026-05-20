@@ -254,6 +254,26 @@ if [ "$REMOVED_LAUNCHER" = "0" ]; then
 fi
 echo "   ℹ️  Alfred now launches its own browser automatically — no launcher needed"
 
+echo ""
+echo "▶ Applying Alfred icon to Playwright Chromium..."
+ICNS_SRC="$REPO_DIR/setup/assets/alfred.icns"
+PATCHED=0
+if [ -f "$ICNS_SRC" ]; then
+  for CHROMIUM_BUNDLE in "$HOME/Library/Caches/ms-playwright"/chromium-*/chrome-mac/Chromium.app; do
+    ICNS_DEST="$CHROMIUM_BUNDLE/Contents/Resources/app.icns"
+    if [ -f "$ICNS_DEST" ]; then
+      cp "$ICNS_SRC" "$ICNS_DEST"
+      touch "$CHROMIUM_BUNDLE"
+      echo "   ✅ Alfred icon applied"
+      PATCHED=1
+      break
+    fi
+  done
+fi
+if [ "$PATCHED" = "0" ]; then
+  echo "   ℹ️  Chromium bundle not found — icon will be applied on first Alfred update"
+fi
+
 # ------------------------------------------------------------
 # 6. Teams webhook config
 # ------------------------------------------------------------

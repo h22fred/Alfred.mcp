@@ -27,6 +27,8 @@ import {
   fetchOpportunityById,
   fetchCollaborationTeam,
   createAccountEngagement,
+  addAttendeesToEngagement,
+  searchSystemUsers,
   searchProducts,
   getProductById,
   buildDescription,
@@ -274,31 +276,84 @@ Best-fit types for account-level engagements:
 - Discovery — on-site discovery not yet tied to a deal
 - Post Sale Engagement — post-sale on-site activity
 
+CONTENT GUIDELINES BY TYPE:
+- Workshop / EBC / Customer Business Review: these are point-in-time events — keep description minimal. List topics covered and any key outcomes. 3–5 bullets max. Always auto-complete (will be marked Complete automatically).
+- Discovery: capture the customer's current state, key pain points, and goals. 5–8 bullets.
+- Post Sale Engagement: focus on what was delivered and any open follow-ups.
+
+ATTENDEES: if attendees are provided (names or email addresses), add them as participants after creation.
+
+⚠️ OWNER OVERRIDE: if owner_name is set, always resolve and show the full matched name to the user and get explicit approval BEFORE setting owner_confirmed=true. Creating under the wrong person's name cannot be undone from Alfred.
+
 BEFORE creating: call list_engagements_by_account to check for existing engagements of the same type.
 
 AFTER EVERY SUCCESSFUL CREATE, show the user a direct CRM link:
-https://${DYNAMICS_HOST}/main.aspx?etn=sn_engagement&id=<sn_engagementid>&pagetype=entityrecord
+${DYNAMICS_HOST}/main.aspx?etn=sn_engagement&id=<sn_engagementid>&pagetype=entityrecord
 Never omit the link.`,
     {
-      account_id:    z.string().describe("Dynamics account GUID"),
-      type:          z.enum(["EBC", "Workshop", "Customer Business Review", "Discovery", "Post Sale Engagement"] as const).describe("Engagement type"),
-      name:          z.string().describe("Engagement name, e.g. 'On-Site EBC – Contoso – May 2026'"),
-      notes:         z.string().optional().describe("Notes / description for this engagement"),
-      completed_date: z.string().optional().describe("ISO date if already completed, e.g. '2026-05-08'"),
+      account_id:         z.string().describe("Dynamics account GUID"),
+      type:               z.enum(["EBC", "Workshop", "Customer Business Review", "Discovery", "Post Sale Engagement"] as const).describe("Engagement type"),
+      name:               z.string().describe("Engagement name, e.g. 'On-Site EBC – Contoso – May 2026'"),
+      primary_product_id: z.string().optional().describe("Product family GUID — required by Dynamics. Use get_product or list_products to look up the GUID."),
+      pre_post_sale:      z.enum(["Pre Sale", "Post Sale"]).optional().describe("Pre or Post Sale — defaults to 'Post Sale' for Post Sale Engagement, 'Pre Sale' for all others."),
+      key_points:         z.array(z.string()).optional().describe("Main topics covered / outcomes. Each item becomes a bullet point."),
+      next_actions:       z.array(z.string()).optional().describe("Follow-up actions. Each item becomes a bullet point."),
+      risks:              z.string().optional().describe("Risks or help required (free text)."),
+      stakeholders:       z.string().optional().describe("Key stakeholders present (free text)."),
+      notes:              z.string().optional().describe("Free-text notes (used when structured fields not provided)."),
+      completed_date:     z.string().optional().describe("ISO date if already completed, e.g. '2026-05-08'"),
+      attendees:          z.array(z.object({ name: z.string(), email: z.string() })).optional().describe("Attendees to add as participants after creation — provide name + email for each person."),
+      owner_name:         z.string().optional().describe("Name of the SC who should own this engagement (partial match). Use ONLY when explicitly asked to create on behalf of a colleague."),
+      owner_confirmed:    z.boolean().optional().describe("REQUIRED when owner_name is set. Must be explicitly true AFTER showing the user the resolved full name and getting their explicit approval."),
     },
-    async ({ account_id, type, name, notes, completed_date }) => {
+    async ({ account_id, type, name, primary_product_id, pre_post_sale, key_points, next_actions, risks, stakeholders, notes, completed_date, attendees, owner_name, owner_confirmed }) => {
       const id = requireGuid(account_id, "account_id");
       const progress = makeProgress(server);
       engagementWriteLimiter.check("create_account_engagement");
+
+      const ownerUsers = owner_name ? await searchSystemUsers(owner_name, progress) : [];
+      const resolvedOwner = ownerUsers[0];
+      const ownerId = resolvedOwner?.systemuserid;
+
+      // Safety gate: block creation under another user's name until owner_confirmed is explicitly true
+      if (owner_name && resolvedOwner && !owner_confirmed) {
+        return { content: [{ type: "text", text:
+          `🛑 **Owner confirmation required.**\n\n` +
+          `This engagement will be created under **${resolvedOwner.fullname}** (${resolvedOwner.internalemailaddress ?? resolvedOwner.systemuserid})'s name.\n\n` +
+          `⚠️ This cannot be undone from Alfred — ${resolvedOwner.fullname} would need to manually reassign it in Dynamics if incorrect.\n\n` +
+          `Please confirm with the user: "Create this engagement under ${resolvedOwner.fullname}'s name?" — then retry with \`owner_confirmed: true\`.`
+        }] };
+      }
+
+      if (owner_name && !ownerId) progress(`⚠️ No user found for "${owner_name}" — creating under your own name`);
+      else if (ownerId) progress(`👤 Owner: ${resolvedOwner!.fullname}`);
+
+      const hasStructured = key_points?.length || next_actions?.length || risks || stakeholders;
+      const description = hasStructured
+        ? buildDescription({ engagementType: type as EngagementType, keyPoints: key_points, nextActions: next_actions, risks, stakeholders })
+        : undefined;
+
       const engagement = await createAccountEngagement({
         accountId: id,
         type,
         name,
-        notes,
+        primaryProductId: primary_product_id,
+        category: pre_post_sale,
+        description,
+        notes: description ? undefined : notes,
         completedDate: completed_date,
+        ownerId,
       }, progress);
-      const link = `https://${DYNAMICS_HOST}/main.aspx?etn=sn_engagement&id=${engagement.sn_engagementid}&pagetype=entityrecord`;
-      return { content: [{ type: "text", text: `✅ Account engagement created: ${engagement.sn_name}\nID: ${engagement.sn_engagementnumber ?? engagement.sn_engagementid}\nLink: ${link}` }] };
+
+      const engId = engagement.sn_engagementid;
+      if (engId && attendees?.length) {
+        await addAttendeesToEngagement(engId, attendees, progress).catch(e => {
+          process.stderr.write(`[alfred:warn] addAttendeesToEngagement failed: ${e instanceof Error ? e.message : String(e)}\n`);
+        });
+      }
+
+      const link = `${DYNAMICS_HOST}/main.aspx?etn=sn_engagement&id=${engId}&pagetype=entityrecord`;
+      return { content: [{ type: "text", text: `✅ Account engagement created: ${engagement.sn_name}\nID: ${engagement.sn_engagementnumber ?? engId}\nLink: ${link}` }] };
     }
   );
 

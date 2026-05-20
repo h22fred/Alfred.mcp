@@ -1,5 +1,5 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { existsSync, readFileSync, rmSync } from "fs";
+import { copyFileSync, existsSync, readFileSync, readdirSync, rmSync, writeFileSync } from "fs";
 import { execFileSync } from "child_process";
 import { homedir } from "os";
 import { join } from "path";
@@ -176,6 +176,44 @@ export function regenerateAlfredApp(installDir: string): string | null {
       messages.push("🎭 Playwright Chromium updated");
     } catch (e) {
       process.stderr.write(`[alfred:warn] playwright install failed: ${e instanceof Error ? e.message : String(e)}\n`);
+    }
+  }
+
+  // Patch Alfred icon + display name onto Playwright Chromium (macOS only)
+  if (process.platform === "darwin") {
+    const icnsSrc = join(installDir, "setup", "assets", "alfred.icns");
+    const pwCache = join(home, "Library", "Caches", "ms-playwright");
+    if (existsSync(pwCache)) {
+      try {
+        const dirs = readdirSync(pwCache).filter(d => d.startsWith("chromium-"));
+        for (const dir of dirs) {
+          const bundle = join(pwCache, dir, "chrome-mac", "Chromium.app");
+          const icnsDest = join(bundle, "Contents", "Resources", "app.icns");
+          const plist   = join(bundle, "Contents", "Info.plist");
+          let patched = false;
+          if (existsSync(icnsSrc) && existsSync(icnsDest)) {
+            copyFileSync(icnsSrc, icnsDest);
+            patched = true;
+          }
+          if (existsSync(plist)) {
+            let content = readFileSync(plist, "utf8");
+            if (!content.includes("<string>Alfred</string>")) {
+              content = content
+                .replace(/(<key>CFBundleName<\/key>\s*<string>)[^<]*(<\/string>)/, "$1Alfred$2")
+                .replace(/(<key>CFBundleDisplayName<\/key>\s*<string>)[^<]*(<\/string>)/, "$1Alfred$2");
+              writeFileSync(plist, content, "utf8");
+              patched = true;
+            }
+          }
+          if (patched) {
+            execFileSync("touch", [bundle]);
+            messages.push("🎨 Alfred icon + name applied to Chromium");
+          }
+          break;
+        }
+      } catch (e) {
+        process.stderr.write(`[alfred:warn] browser patch failed: ${e instanceof Error ? e.message : String(e)}\n`);
+      }
     }
   }
 

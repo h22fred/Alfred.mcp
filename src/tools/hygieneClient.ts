@@ -64,6 +64,7 @@ export async function runHygieneSweep(opts: {
     fetchOpportunities({
       myOpportunitiesOnly: true,
       myOppsFilterField: "sc",
+      skipCollabValidation: true,  // hygiene does its own union — don't discard SC-field opps missing from collab table
       includeClosed: false,
       includeZeroValue: true,
       excludeStale: false,

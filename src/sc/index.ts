@@ -28,6 +28,7 @@ import {
   searchContacts,
   resolveOpportunityId,
   getForecastSummary,
+  searchSystemUsers,
   type EngagementType,
   type OpportunityFilter,
   type EngagementDescription,
@@ -177,19 +178,21 @@ CROSS-REFERENCE: After presenting pipeline results, compare with the Data_Analyt
     ),
     include_closed: z.boolean().optional().describe("Include won/lost/closed opportunities — default false (open only). Set true when user asks about a specific opp by OPTY number or explicitly wants closed deals."),
     include_zero_value: z.boolean().optional().describe("Include $0 NNACV opportunities — default false (excluded as noise). Set true only if user explicitly asks for $0 deals."),
+    colleague_name: z.string().optional().describe("Filter by a colleague's name (partial match) — returns all opportunities where they appear as either AE (owner) or SC. Use for coverage/backup scenarios, e.g. 'show me Stéphane's pipeline'."),
   },
-  async ({ top, search, min_nnacv, my_opportunities_only, include_closed, include_zero_value }) => {
+  async ({ top, search, min_nnacv, my_opportunities_only, include_closed, include_zero_value, colleague_name }) => {
     const progress = makeProgress(server);
     const myOpps = my_opportunities_only ?? (isSSC || isManager ? false : true);
     const filter: OpportunityFilter = {
       top,
       search,
       minNnacv: min_nnacv ?? 100000,
-      myOpportunitiesOnly: myOpps,
+      myOpportunitiesOnly: colleague_name ? false : myOpps,
       // SSC: filter by collaboration team membership (not SC field which they don't have)
-      ...(isSSC && myOpps ? { myOppsFilterField: "collab" as const } : {}),
+      ...(isSSC && myOpps && !colleague_name ? { myOppsFilterField: "collab" as const } : {}),
       includeClosed: include_closed ?? false,
       includeZeroValue: include_zero_value ?? false,
+      colleagueSearch: colleague_name,
     };
     const opportunities = await fetchOpportunities(filter, progress);
     return {
@@ -358,6 +361,8 @@ BEFORE generating any content: call list_engagements on the opportunity to read 
 
 When creating from a calendar event or meeting, always pass the attendees list — they are automatically linked as Active Participants (internal company colleagues) and Active Engagement Contacts (external customers).
 
+⚠️ OWNER OVERRIDE (owner_name): if set, resolve the name first and show the user the EXACT full name matched. Ask "Create this under [full name]'s name?" and wait for explicit yes before setting owner_confirmed=true. Wrong ownership cannot be undone from Alfred.
+
 AFTER EVERY SUCCESSFUL CREATE: Always present the result to the user as:
 ✅ [Engagement Name] (ENG#) — [Open in Dynamics](link)
 The Dynamics link is in the tool response. This applies to EVERY engagement created, including bulk runs. Never omit the link.`,
@@ -384,17 +389,28 @@ The Dynamics link is in the tool response. This applies to EVERY engagement crea
     })).optional().describe("Meeting attendees from the calendar event. Always pass these when creating from a meeting — internal (company email addresses) become Active Participants, external become Active Engagement Contacts."),
     include_self: z.boolean().optional().describe("When true, adds the current logged-in user as an Active Participant on the new engagement."),
     include_collaboration_team: z.boolean().optional().describe("When true, automatically fetches the opportunity's collaboration team and adds all members as Active Participants on the new engagement."),
+    owner_name: z.string().optional().describe("Name of the SC who should own this engagement (partial match). Use ONLY when explicitly asked to create on behalf of a colleague. Leave unset to own it yourself."),
+    owner_confirmed: z.boolean().optional().describe("REQUIRED when owner_name is set. Must be explicitly true AFTER showing the user the resolved full name and getting their explicit approval. Never set this without user confirmation of the exact name shown."),
     confirmed: z.boolean().optional().describe("MUST be true to actually create. Omit or set false to get a dry-run preview first. Always preview before creating."),
   },
-  async ({ opportunity_id, primary_product_id, name, type, completed_date, use_case, key_points, secondary_points, submission_date, next_actions, risks, stakeholders, notes, attendees, include_self, include_collaboration_team, confirmed }) => {
+  async ({ opportunity_id, primary_product_id, name, type, completed_date, use_case, key_points, secondary_points, submission_date, next_actions, risks, stakeholders, notes, attendees, include_self, include_collaboration_team, owner_name, owner_confirmed, confirmed }) => {
     requireGuid(opportunity_id, "opportunity_id");
     requireGuid(primary_product_id, "primary_product_id");
 
     const progress = makeProgress(server);
 
+    // Resolve owner early — needed in both preview and creation paths
+    const ownerUsers = owner_name ? await searchSystemUsers(owner_name, progress) : [];
+    const resolvedOwner = ownerUsers[0];
+
     // Dry-run: return a preview without writing anything
     if (!confirmed) {
       const opp = await fetchOpportunityById(opportunity_id, progress);
+      const ownerLine = owner_name
+        ? resolvedOwner
+          ? `**⚠️ Owner override:** This will be created under **${resolvedOwner.fullname}**'s name — NOT yours. Verify this is correct before confirming.`
+          : `**⚠️ Owner override requested ("${owner_name}") but no matching user found** — will create under your own name.`
+        : `**Owner:** You (current user)`;
       return {
         content: [{ type: "text", text:
           `📋 **Dry-run preview — nothing has been created yet.**\n\n` +
@@ -405,8 +421,23 @@ The Dynamics link is in the tool response. This applies to EVERY engagement crea
           `**Completed date:** ${completed_date ?? "not set"}\n` +
           `**Attendees to link:** ${attendees?.length ?? 0}\n` +
           `**Include self:** ${include_self ? "Yes" : "No"}\n` +
-          `**Include collaboration team:** ${include_collaboration_team ? "Yes" : "No"}\n\n` +
-          `Call again with \`confirmed: true\` to create this engagement.`
+          `**Include collaboration team:** ${include_collaboration_team ? "Yes" : "No"}\n` +
+          `${ownerLine}\n\n` +
+          (owner_name && resolvedOwner
+            ? `⚠️ **Creating under someone else's name is irreversible from Alfred** — the owner must reassign it back manually in Dynamics if incorrect.\n\nCall again with \`confirmed: true\` AND \`owner_confirmed: true\` to create this engagement.`
+            : `Call again with \`confirmed: true\` to create this engagement.`)
+        }],
+      };
+    }
+
+    // Safety gate: block creation under another user's name until owner_confirmed is explicitly true
+    if (owner_name && resolvedOwner && !owner_confirmed) {
+      return {
+        content: [{ type: "text", text:
+          `🛑 **Owner confirmation required.**\n\n` +
+          `This engagement will be created under **${resolvedOwner.fullname}** (${resolvedOwner.internalemailaddress ?? resolvedOwner.systemuserid})'s name.\n\n` +
+          `⚠️ This cannot be undone from Alfred — ${resolvedOwner.fullname} would need to manually reassign it in Dynamics if incorrect.\n\n` +
+          `Please confirm with the user: "Create this engagement under ${resolvedOwner.fullname}'s name?" — then retry with \`owner_confirmed: true\`.`
         }],
       };
     }
@@ -415,6 +446,13 @@ The Dynamics link is in the tool response. This applies to EVERY engagement crea
     progress(`🎯 Creating engagement: "${name}" (${type})`);
     const opp = await fetchOpportunityById(opportunity_id, progress);
     progress(`🏢 Account resolved: ${opp.accountName}`);
+
+    const ownerId = resolvedOwner?.systemuserid;
+    if (owner_name && !ownerId) {
+      progress(`⚠️ No user found for "${owner_name}" — creating under your own name`);
+    } else if (ownerId) {
+      progress(`👤 Owner: ${resolvedOwner!.fullname}`);
+    }
 
     const desc: EngagementDescription = { engagementType: type as EngagementType, useCase: use_case, keyPoints: key_points, secondaryPoints: secondary_points, submissionDate: submission_date, nextActions: next_actions, risks, stakeholders };
     const hasStructured = use_case || key_points?.length || secondary_points?.length || next_actions?.length || stakeholders;
@@ -428,6 +466,7 @@ The Dynamics link is in the tool response. This applies to EVERY engagement crea
       type: type as EngagementType,
       notes: finalNotes,
       completedDate: completed_date,
+      ownerId,
     }, progress);
 
     // Auto-link attendees if provided
@@ -547,7 +586,7 @@ BEFORE generating any content: read the existing engagement (get_engagement), li
     stakeholders: z.string().optional().describe("Stakeholders — use search_contacts for external titles. Internal SN: names only."),
     notes: z.string().optional().describe("Plain text description (only if structured fields not used)"),
     // Timeline note
-    timeline_title: z.string().optional().describe("Title for the timeline note (e.g. 'Discovery update - requirements captured')"),
+    timeline_title: z.string().optional().describe("Title for the timeline note. Use the engagement event date (completed_date or known date), NOT today. Format: '{Type} – {date}' for updates, e.g. 'Discovery – 2026-05-14'. Say 'updated', never 'created'."),
     timeline_text: z.string().optional().describe("Body text for the timeline note"),
   },
   async ({ engagement_id, name, type, primary_product_id, completed_date, mark_complete, use_case, key_points, secondary_points, submission_date, next_actions, risks, stakeholders, notes, timeline_title, timeline_text }) => {
@@ -744,14 +783,15 @@ IMPORTANT: Before calling this tool, ask the user:
 1. "Which date range? (e.g. 'this week', 'next 2 weeks', specific dates)"
 2. "Any keyword to filter by? (e.g. 'Fabrikam', 'ICW', 'standup' — or leave blank for all)"`,
   {
-    start_date: z.string().describe("Start date in ISO format, e.g. 2026-03-16"),
-    end_date:   z.string().describe("End date in ISO format, e.g. 2026-03-20"),
-    search:     z.string().optional().describe("Optional keyword to filter event subjects, organizer, or attendee names. ALWAYS provide this when looking for specific meetings — without it, ALL events in the range are returned."),
-    top:        z.number().optional().describe("Max events to fetch from Graph API (default 100). Use 25–50 for targeted searches."),
+    start_date:  z.string().describe("Start date in ISO format, e.g. 2026-03-16"),
+    end_date:    z.string().describe("End date in ISO format, e.g. 2026-03-20"),
+    search:      z.string().optional().describe("Optional keyword to filter event subjects, organizer, or attendee names. ALWAYS provide this when looking for specific meetings — without it, ALL events in the range are returned."),
+    top:         z.number().optional().describe("Max events to fetch from Graph API (default 100). Use 25–50 for targeted searches."),
+    categories:  z.array(z.string()).optional().describe("Filter to events matching these Outlook categories (e.g. ['on-site meeting']). Applied client-side after fetch."),
   },
-  async ({ start_date, end_date, search, top }) => {
+  async ({ start_date, end_date, search, top, categories }) => {
     const progress = makeProgress(server);
-    const events = await getCalendarEvents(start_date, end_date, search, progress, top ?? 100);
+    const events = await getCalendarEvents(start_date, end_date, search, progress, top ?? 100, categories);
     // bodyPreview and id are already stripped in outlookClient — return directly
     return {
       content: [{ type: "text", text: externalData("Outlook calendar", events) }],

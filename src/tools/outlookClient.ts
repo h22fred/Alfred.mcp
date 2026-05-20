@@ -391,6 +391,7 @@ export interface CalendarEvent {
   isOnlineMeeting?: boolean;
   bodyPreview?: string;
   webLink?: string;
+  categories?: string[];
 }
 
 export async function getCalendarEvents(
@@ -399,6 +400,7 @@ export async function getCalendarEvents(
   search?: string,
   progress: ProgressFn = () => {},
   top: number = 100,
+  categories?: string[],
 ): Promise<CalendarEvent[]> {
   await verifyOutlookConnection(progress);
   progress(`📅 Fetching calendar events ${startDate} → ${endDate}${search ? ` (filter: "${search}")` : ""}...`);
@@ -409,7 +411,7 @@ export async function getCalendarEvents(
   const params = new URLSearchParams({
     startDateTime: `${startDate}T00:00:00Z`,
     endDateTime:   `${endDate}T23:59:59Z`,
-    $select: "subject,start,end,location,organizer,attendees,isOnlineMeeting,webLink",
+    $select: "subject,start,end,location,organizer,attendees,isOnlineMeeting,webLink,categories",
     $top: String(top),
     $orderby: "start/dateTime",
   });
@@ -455,6 +457,7 @@ export async function getCalendarEvents(
     const startField = (e.Start ?? e.start) as { DateTime?: string; dateTime?: string } | undefined;
     const endField   = (e.End ?? e.end) as { DateTime?: string; dateTime?: string } | undefined;
     const locationField = (e.Location ?? e.location) as { DisplayName?: string; displayName?: string } | undefined;
+    const rawCategories = (e.Categories ?? e.categories) as string[] | undefined;
     return {
       id:              "",
       subject:         ((e.Subject ?? e.subject) as string) || "",
@@ -467,6 +470,7 @@ export async function getCalendarEvents(
       isOnlineMeeting: (e.IsOnlineMeeting ?? e.isOnlineMeeting) as boolean,
       bodyPreview:     undefined,
       webLink:         ((e.WebLink ?? e.webLink) as string) || undefined,
+      categories:      Array.isArray(rawCategories) && rawCategories.length > 0 ? rawCategories : undefined,
     };
   });
 
@@ -482,6 +486,16 @@ export async function getCalendarEvents(
     if (events.length < beforeCount) {
       progress(`🔍 Filtered ${beforeCount} → ${events.length} events matching "${search}"`);
     }
+  }
+
+  // Client-side categories filter (Graph calendarView doesn't support $filter on categories)
+  if (categories && categories.length > 0) {
+    const needles = categories.map(c => c.toLowerCase());
+    const beforeCount = events.length;
+    events = events.filter(e =>
+      e.categories && e.categories.some(c => needles.includes(c.toLowerCase()))
+    );
+    progress(`🏷️ Filtered by categories [${categories.join(", ")}]: ${beforeCount} → ${events.length} events`);
   }
 
   // Warn if we hit the $top limit — results may be truncated
