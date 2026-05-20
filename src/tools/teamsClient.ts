@@ -1,5 +1,5 @@
 import type { ProgressFn } from "../auth/tokenExtractor.js";
-import { isAlfredgable, getAlfredContext, getAlfredPages } from "../auth/tokenExtractor.js";
+import { isAlfredgable, getAlfredContext, getAlfredPages, scheduleIdleClose } from "../auth/tokenExtractor.js";
 import type { Page } from "playwright";
 import { loadCachedAuth, saveCachedAuth, clearCachedAuthFile } from "../auth/authFileCache.js";
 import { stripHtml, urlHostMatches } from "../shared.js";
@@ -318,6 +318,7 @@ export async function acquireTeamsGraphToken(progress: ProgressFn): Promise<stri
       teamsTokenCache = { token, expiresAt };
       saveCachedAuth("teamsGraphToken", token, expiresAt);
       progress("✅ Graph token acquired from MSAL cache");
+      scheduleIdleClose(3_000);
       return token;
     }
     if (attempt < 1) await new Promise(r => setTimeout(r, 1_000));
@@ -341,6 +342,7 @@ export async function acquireTeamsGraphToken(progress: ProgressFn): Promise<stri
     teamsTokenCache = { token: silentToken, expiresAt };
     saveCachedAuth("teamsGraphToken", silentToken, expiresAt);
     progress("✅ Graph token acquired via silent Azure AD auth");
+    scheduleIdleClose(3_000);
     return silentToken;
   }
 
@@ -422,6 +424,7 @@ async function acquireSkypeToken(progress: ProgressFn): Promise<{ token: string;
   skypeTokenCache = { token: skypeCookie.value, region, expiresAt };
   saveCachedAuth("teamsSkypeToken", skypeCookie.value, expiresAt);
   progress(`✅ Teams chat token acquired (region: ${region})`);
+  scheduleIdleClose(3_000);
   return { token: skypeCookie.value, region };
 }
 

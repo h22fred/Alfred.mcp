@@ -31,19 +31,20 @@ export type ProgressFn = (msg: string) => void;
 // Module-level Playwright context
 let _context: BrowserContext | null = null;
 
-// Auto-close the browser after 90s of inactivity (session persists via ~/.alfred-pw profile)
-const IDLE_CLOSE_MS = 90_000;
+// Auto-close the browser after a short idle period (session persists via ~/.alfred-pw profile).
+// Short window (10s) because file cache covers auth for hours — browser only needed during extraction.
+const IDLE_CLOSE_MS = 10_000;
 let _idleTimer: ReturnType<typeof setTimeout> | null = null;
 
-function scheduleIdleClose(): void {
+export function scheduleIdleClose(ms = IDLE_CLOSE_MS): void {
   if (_idleTimer) clearTimeout(_idleTimer);
   _idleTimer = setTimeout(() => {
     _idleTimer = null;
     if (_context) {
-      process.stderr.write("[alfred:info] Auto-closing idle Alfred browser (90s inactivity)\n");
+      process.stderr.write("[alfred:info] Auto-closing Alfred browser (idle after auth)\n");
       _context.close().catch(() => {});
     }
-  }, IDLE_CLOSE_MS);
+  }, ms);
 }
 
 function cancelIdleClose(): void {
@@ -263,6 +264,8 @@ export async function getAuthCookies(progress: ProgressFn = () => {}): Promise<s
       saveCachedAuth("dynamics", cookieHeader, expiresAt);
       const expiresIn = Math.round((expiresAt - Date.now()) / 60000);
       progress(`✅ Session cookies acquired — valid for ~${expiresIn} minutes`);
+      // Cookies cached to disk — browser no longer needed; close in 3s
+      scheduleIdleClose(3_000);
       return cookieHeader;
     } catch (e) {
       inflightDynamics = null;
@@ -325,6 +328,8 @@ export async function getOutlookCookies(progress: ProgressFn = () => {}): Promis
       saveCachedAuth("outlook", cookieHeader, expiresAt);
       const minsLeft = Math.round((expiresAt - Date.now()) / 60000);
       progress(`✅ Outlook cookies acquired — valid for ~${minsLeft} minutes`);
+      // Cookies cached to disk — browser no longer needed; close in 3s
+      scheduleIdleClose(3_000);
       return cookieHeader;
     } catch (e) {
       inflightOutlook = null;

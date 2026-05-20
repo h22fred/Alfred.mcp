@@ -1,7 +1,7 @@
 import { execFileSync } from "child_process";
 import { dirname, join } from "path";
 import { fileURLToPath } from "url";
-import { getAlfredPages } from "../auth/tokenExtractor.js";
+import { getAlfredPages, scheduleIdleClose } from "../auth/tokenExtractor.js";
 import type { ProgressFn } from "../auth/tokenExtractor.js";
 import { loadCachedAuth, saveCachedAuth, clearCachedAuthFile } from "../auth/authFileCache.js";
 import { stripHtml, urlHostMatches } from "../shared.js";
@@ -228,6 +228,7 @@ async function acquireOutlookRestToken(progress: ProgressFn): Promise<string> {
     saveCachedAuth("outlookRestToken", msalResult.token, expiresAt);
     const mins = Math.round((expiresAt - Date.now()) / 60_000);
     progress(`✅ Outlook REST token acquired from MSAL cache (~${mins} min valid, audience: ${msalResult.aud ?? "unknown"})`);
+    scheduleIdleClose(3_000);
     return msalResult.token;
   }
 
@@ -292,6 +293,7 @@ async function acquireOutlookRestToken(progress: ProgressFn): Promise<string> {
     outlookRestTokenCache = { token: capture.result.token, expiresAt, aud: capturedAud };
     saveCachedAuth("outlookRestToken", capture.result.token, expiresAt);
     progress(`✅ Outlook REST token captured via network interception (${capturedAud || "unknown origin"})`);
+    scheduleIdleClose(3_000);
     return capture.result.token;
   }
 
