@@ -430,6 +430,20 @@ The Dynamics link is in the tool response. This applies to EVERY engagement crea
       };
     }
 
+    // Bug 16: duplicate check BEFORE owner_confirmed gate — no point asking for confirmation
+    // if Dynamics would reject the create anyway
+    const existingEngs = await fetchEngagementsByOpportunity(opportunity_id, progress);
+    const dupEng = existingEngs.find(e => e.engagementTypeName === type);
+    if (dupEng) {
+      const isCancelled = dupEng.statusName?.toLowerCase().includes("cancel");
+      return {
+        content: [{ type: "text", text: isCancelled
+          ? `❌ A cancelled ${type} already exists on this opportunity: **${dupEng.sn_name}** (${dupEng.sn_engagementnumber ?? dupEng.sn_engagementid}). Reopen the existing one instead of creating a duplicate.`
+          : `❌ A ${type} engagement already exists on this opportunity: **${dupEng.sn_name}** (${dupEng.sn_engagementnumber ?? dupEng.sn_engagementid}). Collaborate on the existing one instead of creating a duplicate.`
+        }],
+      };
+    }
+
     // Safety gate: block creation under another user's name until owner_confirmed is explicitly true
     if (owner_name && resolvedOwner && !owner_confirmed) {
       return {

@@ -223,11 +223,12 @@ This gives context on what the customer owns — useful when reviewing engagemen
     async ({ opportunity_id }) => {
       const id = requireGuid(opportunity_id, "opportunity_id");
       const progress = makeProgress(server);
+      const fetchedAt = new Date().toISOString();
       const engagements = await fetchEngagementsByOpportunity(id, progress);
       if (engagements.length === 0) {
-        return { content: [{ type: "text", text: "No engagements found for this opportunity." }] };
+        return { content: [{ type: "text", text: `No engagements found for this opportunity. (Retrieved fresh from Dynamics at ${fetchedAt})` }] };
       }
-      const text = engagements.map(engagementListItem).join("\n\n---\n\n");
+      const text = engagements.map(engagementListItem).join("\n\n---\n\n") + `\n\n_Retrieved from Dynamics at ${fetchedAt}_`;
       return { content: [{ type: "text", text }] };
     }
   );

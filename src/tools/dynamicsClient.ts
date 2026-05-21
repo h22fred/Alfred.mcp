@@ -693,10 +693,11 @@ export async function fetchEngagementsByOpportunity(opportunityId: string, progr
     `&$expand=sn_engagementtypeid($select=sn_name),sn_primaryproductid($select=sn_name)` +
     `&$orderby=modifiedon desc`;
 
-  const res = await dynamicsFetch(path, {}, progress);
+  // no-cache: ensure we always read the latest state from Dynamics, never a stale HTTP cache
+  const res = await dynamicsFetch(path, { headers: { "Cache-Control": "no-cache", "Pragma": "no-cache" } }, progress);
   const data = await res.json();
   const results = (data.value ?? []).map(mapEngagement);
-  progress(`✅ Found ${results.length} engagements`);
+  progress(`✅ Found ${results.length} engagements (as of ${new Date().toISOString()})`);
   return results;
 }
 
