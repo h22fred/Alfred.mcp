@@ -48,7 +48,7 @@ export function scheduleIdleClose(ms = IDLE_CLOSE_MS): void {
   }, ms);
 }
 
-function cancelIdleClose(): void {
+export function cancelIdleClose(): void {
   if (_idleTimer) { clearTimeout(_idleTimer); _idleTimer = null; }
 }
 
@@ -254,7 +254,8 @@ export async function getAuthCookies(progress: ProgressFn = () => {}): Promise<s
       let authCookies = allCookies.filter(c => AUTH_COOKIE_NAMES.includes(c.name));
 
       if (authCookies.length === 0) {
-        // SSO may still be in-flight — navigate to Dynamics and wait for it to complete
+        // SSO may still be in-flight — cancel idle close so browser stays open during wait
+        cancelIdleClose();
         progress("🔄 Session refreshing — waiting for Dynamics SSO...");
         const pages = ctx.pages();
         const dynPage = pages.find(p => p.url().startsWith(DYNAMICS_URL)) ?? pages[0] ?? await ctx.newPage();
@@ -265,10 +266,11 @@ export async function getAuthCookies(progress: ProgressFn = () => {}): Promise<s
       }
 
       if (authCookies.length === 0) {
-        process.stderr.write("[alfred] Playwright auth: no Dynamics cookies found after retry — user not logged in\n");
+        // Session genuinely expired — leave browser open so user can log in, then retry
+        process.stderr.write("[alfred] Playwright auth: no Dynamics cookies found after retry — session expired\n");
         throw new Error(
-          "Could not acquire a Dynamics session.\n" +
-          "Please log into Dynamics in the Alfred browser window, then retry."
+          "Your Dynamics session has expired.\n" +
+          "The Alfred browser window is open — log into Dynamics there, then retry your request."
         );
       }
 

@@ -1,4 +1,4 @@
-import { getAuthCookies, clearMemoryAuthCache, type ProgressFn } from "../auth/tokenExtractor.js";
+import { getAuthCookies, clearMemoryAuthCache, cancelIdleClose, type ProgressFn } from "../auth/tokenExtractor.js";
 import { clearCachedAuthFile } from "../auth/authFileCache.js";
 import { userInfo } from "os";
 import { DYNAMICS_HOST, ENGAGEMENT_TYPE_GUIDS, type EngagementType } from "../config.js";
@@ -146,6 +146,7 @@ async function dynamicsFetch(path: string, options: RequestInit = {}, progress: 
     // Session expired — clear only Dynamics cookies (not Graph/Teams/Outlook tokens)
     clearMemoryAuthCache();
     clearCachedAuthFile("dynamics");
+    cancelIdleClose(); // keep browser open while we re-acquire — user may need to log in
     progress("🔄 Dynamics session expired — re-acquiring cookies...");
     let freshCookie: string;
     try {
