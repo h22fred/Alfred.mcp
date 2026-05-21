@@ -40,6 +40,8 @@ describe("dynamicsFetch retry logic (via fetchOpportunities)", () => {
       clearAuthCache: vi.fn(),
       clearMemoryAuthCache: vi.fn(),
       connectWithRetry: vi.fn(),
+      cancelIdleClose: vi.fn(),
+      scheduleIdleClose: vi.fn(),
     }));
 
     // Mock the config module to avoid reading the real config file
@@ -168,6 +170,8 @@ describe("getCalendarEvents Graph API error handling", () => {
       clearAuthCache: vi.fn(),
       clearMemoryAuthCache: vi.fn(),
       connectWithRetry: vi.fn(),
+      cancelIdleClose: vi.fn(),
+      scheduleIdleClose: vi.fn(),
     }));
 
     vi.doMock("../src/config.js", () => ({
@@ -280,6 +284,8 @@ describe("opportunity mapping via fetchOpportunities", () => {
       clearAuthCache: vi.fn(),
       clearMemoryAuthCache: vi.fn(),
       connectWithRetry: vi.fn(),
+      cancelIdleClose: vi.fn(),
+      scheduleIdleClose: vi.fn(),
     }));
 
     vi.doMock("../src/config.js", () => ({
@@ -402,6 +408,8 @@ describe("sanitizeODataSearch in OData URL context", () => {
       clearAuthCache: vi.fn(),
       clearMemoryAuthCache: vi.fn(),
       connectWithRetry: vi.fn(),
+      cancelIdleClose: vi.fn(),
+      scheduleIdleClose: vi.fn(),
     }));
     vi.doMock("../src/config.js", () => ({
       DYNAMICS_HOST: "https://test.crm.dynamics.com",
@@ -798,6 +806,8 @@ describe("listMailFolders parallel child folder batching", () => {
       clearAuthCache: vi.fn(),
       clearMemoryAuthCache: vi.fn(),
       connectWithRetry: vi.fn(),
+      cancelIdleClose: vi.fn(),
+      scheduleIdleClose: vi.fn(),
       isAlfredgable: vi.fn().mockResolvedValue(true),
       getCdpTargets: vi.fn().mockResolvedValue([]),
     }));
@@ -902,6 +912,8 @@ describe("fetchOpportunities parallel collab validation", () => {
       clearAuthCache: vi.fn(),
       clearMemoryAuthCache: vi.fn(),
       connectWithRetry: vi.fn(),
+      cancelIdleClose: vi.fn(),
+      scheduleIdleClose: vi.fn(),
     }));
     vi.doMock("../src/config.js", () => ({
       DYNAMICS_HOST: "https://test.crm.dynamics.com",

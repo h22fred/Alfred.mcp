@@ -13,6 +13,8 @@ jobs:
     name: Build & Test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 10
+    permissions:
+      contents: read
 
     strategy:
       fail-fast: false

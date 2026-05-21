@@ -244,9 +244,9 @@ async function acquireTokenViaSilentAuth(progress: ProgressFn): Promise<string |
     let token: string | null = null;
 
     const currentUrl = page.url();
-    if (currentUrl.includes("access_token=")) {
-      const hashPart = currentUrl.includes("#") ? currentUrl.split("#")[1]! : "";
-      token = new URLSearchParams(hashPart).get("access_token");
+    const urlHash = (() => { try { return new URL(currentUrl).hash.replace(/^#/, ""); } catch { return ""; } })();
+    if (urlHash.includes("access_token=")) {
+      token = new URLSearchParams(urlHash).get("access_token");
     }
 
     if (!token) {

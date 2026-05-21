@@ -155,7 +155,7 @@ async function verifyOutlookConnection(progress: ProgressFn): Promise<void> {
   }
 
   const tabUrl = outlookPage.url();
-  if (urlHostMatches(tabUrl, "login.microsoftonline.com") || urlHostMatches(tabUrl, "login.live.com") || tabUrl.includes("/oauth2/")) {
+  if (urlHostMatches(tabUrl, "login.microsoftonline.com") || urlHostMatches(tabUrl, "login.live.com") || (() => { try { return new URL(tabUrl).pathname; } catch { return ""; } })().includes("/oauth2/")) {
     throw new Error(
       "Outlook session has expired — the Alfred browser is on the Microsoft login page.\n" +
       "Please log back into Outlook in the Alfred window (make sure the inbox loads fully), then retry." + updateHint
@@ -207,7 +207,7 @@ async function acquireOutlookRestToken(progress: ProgressFn): Promise<string> {
 
   // Login page check
   const tabUrl = outlookPage.url();
-  if (urlHostMatches(tabUrl, "login.microsoftonline.com") || urlHostMatches(tabUrl, "login.live.com") || tabUrl.includes("/oauth2/")) {
+  if (urlHostMatches(tabUrl, "login.microsoftonline.com") || urlHostMatches(tabUrl, "login.live.com") || (() => { try { return new URL(tabUrl).pathname; } catch { return ""; } })().includes("/oauth2/")) {
     throw new Error(
       "Outlook tab is on the Microsoft login page — your session has expired.\n" +
       "Please log back into Outlook in the Alfred window (make sure the inbox is fully loaded), then retry."
@@ -306,17 +306,15 @@ async function acquireOutlookRestToken(progress: ProgressFn): Promise<string> {
 // Resolve the correct mail API base URL based on token audience.
 // New Outlook uses Graph API (graph.microsoft.com), old uses REST v2.0 (outlook.office.com).
 function getOutlookApiBase(): string {
-  // `aud` is the JWT audience claim (e.g. "https://graph.microsoft.com"), NOT a user-supplied URL.
-  // The substring checks below select which Microsoft API base URL to use — not URL validation.
-  // lgtm[js/incomplete-url-substring-sanitization]
+  // `aud` is a JWT audience claim from Microsoft's auth server, not user input.
+  // Parse it as a URL so hostname matching is precise (not substring search).
   const aud = outlookRestTokenCache?.aud ?? "";
-  // Graph API token — new Outlook uses this
-  if (aud.includes("graph.microsoft.com")) return "https://graph.microsoft.com/v1.0/me";
-  // Outlook REST API variants
-  if (aud.includes("outlook.office365")) return "https://outlook.office365.com/api/v2.0/me";
-  if (aud.includes("outlook.cloud.microsoft")) return "https://outlook.cloud.microsoft.com/api/v2.0/me";
-  if (aud.includes("outlook.microsoft")) return "https://outlook.microsoft.com/api/v2.0/me";
-  if (aud.includes("outlook.office.com")) return "https://outlook.office.com/api/v2.0/me";
+  const audHost = (() => { try { return new URL(aud.includes("://") ? aud : `https://${aud}`).hostname; } catch { return aud; } })();
+  if (audHost === "graph.microsoft.com" || audHost.endsWith(".graph.microsoft.com")) return "https://graph.microsoft.com/v1.0/me";
+  if (audHost === "outlook.office365.com" || audHost.endsWith(".outlook.office365.com")) return "https://outlook.office365.com/api/v2.0/me";
+  if (audHost === "outlook.cloud.microsoft" || audHost === "outlook.cloud.microsoft.com") return "https://outlook.cloud.microsoft.com/api/v2.0/me";
+  if (audHost === "outlook.microsoft.com" || audHost.endsWith(".outlook.microsoft.com")) return "https://outlook.microsoft.com/api/v2.0/me";
+  if (audHost === "outlook.office.com" || audHost.endsWith(".outlook.office.com")) return "https://outlook.office.com/api/v2.0/me";
   // If we detected the browser origin, use that
   if (detectedOutlookOrigin) return `${detectedOutlookOrigin}/api/v2.0/me`;
   // Fallback — try Graph API first (new Outlook default)

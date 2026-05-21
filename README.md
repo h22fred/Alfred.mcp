@@ -25,7 +25,7 @@ Two flavours — one installer:
 
 | Source | Capabilities |
 |--------|-------------|
-| **Dynamics 365** | List opportunities (incl. colleague pipeline), create/update/complete engagements, create on behalf of colleague, hygiene sweep, Tech Win assessment, delete cancelled engagements |
+| **Dynamics 365** | List opportunities (incl. colleague pipeline), create/update/complete engagements, create on behalf of colleague, hygiene sweep, Tech Win assessment, collaboration notes, delete cancelled engagements |
 | **Outlook Calendar** | Show calendar by date range, search meetings |
 | **Outlook Email** | Search emails, list inbox/sent/subfolders, full body, filter unread |
 | **Teams** | Get meeting transcripts, post to channels, read chats |
@@ -121,7 +121,7 @@ Download the LTS version and run (click Next through all defaults): [nodejs.org/
 ## Every session
 
 1. Open Claude Desktop — Alfred's browser launches automatically in the background
-2. **First time only:** log into Dynamics, Outlook and Teams (SSO) in the Alfred browser window — Alfred remembers you after that
+2. **First time (and ~every 8 hours when tokens expire):** log into Dynamics, Outlook and Teams (SSO) in the Alfred browser window — the browser appears briefly, then closes automatically once auth is complete
 
 ---
 
@@ -164,7 +164,7 @@ Auth flow:
 1. **Dynamics:** reads `CrmOwinAuthC1/C2` cookies from the live session
 2. **Outlook/Graph:** reads session cookies from the Outlook tab in the Alfred browser
 3. Tokens cached to disk — survive Claude Desktop restarts without re-login
-4. Browser closes automatically after 90 seconds of inactivity — reopens silently when next needed
+4. Browser closes automatically ~3 seconds after tokens are cached — reopens silently when next needed (typically every ~8 hours when the cache expires)
 
 ---
 
@@ -181,9 +181,13 @@ Both jobs run silently in the background. If Alfred isn't running or your Dynami
 
 To run manually at any time:
 ```bash
-# macOS
-node ~/Documents/Alfred/setup/hygiene-sweep.mjs
-node ~/Documents/Alfred/setup/post-meeting-sweep.mjs
+# macOS — SC variant
+node ~/Documents/alfred.sc/setup/hygiene-sweep.mjs
+node ~/Documents/alfred.sc/setup/post-meeting-sweep.mjs
+
+# macOS — Sales variant
+node ~/Documents/alfred.sales/setup/hygiene-sweep.mjs
+node ~/Documents/alfred.sales/setup/post-meeting-sweep.mjs
 ```
 
 To change the schedule:
@@ -245,7 +249,7 @@ The webhook URL is stored in `~/.alfred-config.json` on your machine only and is
 
 A full security review was conducted on this codebase covering credential handling, input validation, API calls, network exposure, and the install scripts. No vulnerabilities were found in the core data handling or CRM integration layer. Installer integrity can be verified via the checksum below.
 
-Automated audit run via [Ruflo](https://github.com/h22fred/ruflo) on 2026-03-25:
+Automated audit run via [Ruflo](https://github.com/h22fred/ruflo) on 2026-05-21:
 
 | Check | Result |
 |-------|--------|
@@ -253,7 +257,7 @@ Automated audit run via [Ruflo](https://github.com/h22fred/ruflo) on 2026-03-25:
 | Secrets / hardcoded credentials | ✅ None found |
 | CVEs (npm audit) | ✅ 0 vulnerabilities |
 | Prompt injection defence | ✅ 0 detections |
-| External dependencies | ✅ 8 only (MCP SDK, zod, Node built-ins) |
+| External dependencies | ✅ 3 only (MCP SDK, Playwright, Hono) |
 
 `npm ci` runs a vulnerability audit automatically on every install and will report any issues found in dependencies.
 
@@ -262,7 +266,7 @@ Automated audit run via [Ruflo](https://github.com/h22fred/ruflo) on 2026-03-25:
 | What | How |
 |------|-----|
 | **Credentials** | Never stored. Alfred reads your existing browser session via Playwright — no passwords, no API keys |
-| **Tokens** | Cached in memory only, cleared when Alfred restarts |
+| **Tokens** | Cached to disk and memory — survive Claude Desktop restarts without re-login |
 | **Config file** | `~/.alfred-config.json` — your machine only, permissions 600 |
 | **External calls** | Only to your own Dynamics 365, Microsoft Graph (Outlook/Teams), and your Teams webhook |
 | **No telemetry** | Alfred sends nothing to third parties |
