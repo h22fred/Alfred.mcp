@@ -58,23 +58,25 @@ Two flavours — one installer:
 
 ## Setup — macOS
 
-**Option A — Download and run** _(recommended)_
+**Option A — One-liner** _(no security prompts — recommended)_
+```bash
+curl -fsSL https://raw.githubusercontent.com/h22fred/Alfred.mcp/refs/heads/main/Setup_macOS.command | bash
+```
+
+> Piping directly to `bash` skips macOS Gatekeeper entirely — the script is never written to disk so no quarantine prompt appears.
+
+**Option B — Download and run**
 1. **[⬇️ Download Setup_macOS.command](https://raw.githubusercontent.com/h22fred/Alfred.mcp/refs/heads/main/Setup_macOS.command)**
 2. Open Terminal and run:
 ```bash
 bash ~/Downloads/Setup_macOS.command
 ```
 
-**Option B — One-liner** _(for the terminal-comfortable)_
-```bash
-curl -fsSL https://raw.githubusercontent.com/h22fred/Alfred.mcp/refs/heads/main/Setup_macOS.command | bash
-```
+> **macOS Sequoia+:** Downloaded files may be blocked ("cannot confirm it is free from malware"). Go to **System Settings → Privacy & Security**, scroll down and click **Open Anyway**, then re-run the command.
 
 > Git (via Xcode Command Line Tools) and Node.js (via nvm) are **installed automatically** if missing.
 >
 > If a popup appears asking to install Command Line Tools, click **Install**, wait for it to finish, then run the same command again.
->
-> **macOS Sequoia+:** If the file is blocked ("cannot confirm it is free from malware"), go to **System Settings → Privacy & Security**, scroll down and click **Open Anyway**.
 
 ## Setup — Windows
 
