@@ -1391,74 +1391,25 @@ export interface CollaborationNote {
 
 function mapCollabNote(r: Record<string, unknown>): CollaborationNote {
   const noteTypeCode = r.sn_notetype as number | undefined;
+  // Full body: try sn_notes first (custom field), then sn_notebody, then description (base activity field), then subject
+  const fullBody = (r.sn_notes as string | null | undefined)
+    ?? (r.sn_notebody as string | null | undefined)
+    ?? (r.description as string | null | undefined)
+    ?? (r.subject as string | null | undefined)
+    ?? "";
   return {
-    id: r.sn_activitycustomnoteid as string ?? r.sn_collaborationnoteid as string ?? r.activityid as string ?? "",
+    id: r.activityid as string ?? r.sn_activitycustomnoteid as string ?? r.sn_collaborationnoteid as string ?? "",
     noteType: (r["sn_notetype@OData.Community.Display.V1.FormattedValue"] as string)
               ?? COLLAB_NOTE_TYPE_NAMES[noteTypeCode ?? -1]
               ?? String(noteTypeCode ?? "Unknown"),
     noteTypeCode,
-    notes: r.sn_notes as string ?? r.description as string ?? "",
+    notes: fullBody,
     owner: r["_ownerid_value@OData.Community.Display.V1.FormattedValue"] as string ?? "",
     createdOn: r.createdon as string ?? "",
     modifiedOn: r.modifiedon as string,
     opportunityId: r._regardingobjectid_value as string,
     opportunityName: r["_regardingobjectid_value@OData.Community.Display.V1.FormattedValue"] as string,
   };
-}
-
-// Auto-discover the correct entity set name for Collaboration Notes (varies by Dynamics instance)
-const COLLAB_NOTE_ENTITY_CANDIDATES = [
-  "sn_activitycustomnotes",       // confirmed correct entity on this tenant
-  "sn_collaborationnotes",        // plural (standard ServiceNow pattern)
-  "sn_collaborationnote",         // singular
-  "sn_salescollaborationnotes",   // alternate naming
-  "msdyn_collaborationnotes",     // Microsoft Dynamics prefix
-];
-let resolvedCollabNoteEntity: string | null = null;
-
-async function getCollabNoteEntity(progress: ProgressFn): Promise<string> {
-  if (resolvedCollabNoteEntity) return resolvedCollabNoteEntity;
-
-  // Try each candidate until one doesn't 404
-  const triedCollab: string[] = [];
-  for (const entity of COLLAB_NOTE_ENTITY_CANDIDATES) {
-    try {
-      const res = await dynamicsFetch(`/${entity}?$top=1`, {}, () => {});
-      if (res.ok) {
-        resolvedCollabNoteEntity = entity;
-        progress(`✅ Discovered collaboration notes entity: ${entity}`);
-        return entity;
-      }
-      triedCollab.push(`${entity} (${res.status})`);
-    } catch (e) { triedCollab.push(`${entity} (${e instanceof Error ? e.message.slice(0, 60) : "error"})`); }
-  }
-
-  // Last resort: try metadata discovery
-  try {
-    progress("🔍 Searching Dynamics metadata for Collaboration Notes entity...");
-    const metaRes = await dynamicsFetch(
-      `/EntityDefinitions?$filter=contains(DisplayName/UserLocalizedLabel/Label,'Collaboration Note')&$select=LogicalName,EntitySetName&$top=3`,
-      {}, () => {}
-    );
-    if (metaRes.ok) {
-      const metaData = await metaRes.json() as { value: { LogicalName: string; EntitySetName: string }[] };
-      if (metaData.value?.[0]?.EntitySetName) {
-        resolvedCollabNoteEntity = metaData.value[0].EntitySetName;
-        progress(`✅ Found via metadata: ${resolvedCollabNoteEntity}`);
-        return resolvedCollabNoteEntity;
-      }
-    }
-  } catch (e) {
-    process.stderr.write(`[alfred:warn] Collab Notes metadata discovery failed: ${e instanceof Error ? e.message : String(e)}\n`);
-  }
-
-  throw new Error(
-    "Could not find the Collaboration Notes entity in Dynamics.\n" +
-    `Tried: ${triedCollab.join(", ")}\n` +
-    `Base URL: ${DYNAMICS_BASE}\n` +
-    "Please open a Collaboration Note in Dynamics 365, check the URL for the entity name, " +
-    "and let Fred know so he can update Alfred."
-  );
 }
 
 export async function listCollaborationNotes(
@@ -1468,15 +1419,32 @@ export async function listCollaborationNotes(
   requireGuid(opportunityId, "opportunityId");
   progress(`📝 Fetching collaboration notes for opportunity ${opportunityId}...`);
 
-  const entity = await getCollabNoteEntity(progress);
-  // No $select — entity schema varies per instance; mapCollabNote handles field fallbacks
+  // sn_activitycustomnotes is a Dynamics activity subtype — it is NOT queryable as its own
+  // top-level OData collection (all 5 entity name candidates return 404). The correct approach
+  // is the OData type-cast on /activities which returns the subtype's own fields (sn_notes etc.)
+  // alongside the base activity fields.
   const path =
-    `/${entity}` +
+    `/activities/Microsoft.Dynamics.CRM.sn_activitycustomnote` +
     `?$filter=_regardingobjectid_value eq ${opportunityId}` +
+    `&$select=activityid,subject,description,sn_notes,sn_notebody,sn_notetype,createdon,modifiedon,_ownerid_value,_regardingobjectid_value` +
     `&$orderby=createdon desc` +
     `&$top=50`;
 
-  const res = await dynamicsFetch(path, {}, progress);
+  let res: Response;
+  try {
+    res = await dynamicsFetch(path, {}, progress);
+  } catch (e) {
+    // Fallback: query without type-cast, filter by activitytypecode
+    progress("⚠️ Type-cast query failed — falling back to activitytypecode filter...");
+    const fallbackPath =
+      `/activities` +
+      `?$filter=activitytypecode eq 'sn_activitycustomnotes' and _regardingobjectid_value eq ${opportunityId}` +
+      `&$select=activityid,subject,description,sn_notes,createdon,modifiedon,_ownerid_value,_regardingobjectid_value` +
+      `&$orderby=createdon desc` +
+      `&$top=50`;
+    res = await dynamicsFetch(fallbackPath, {}, progress);
+  }
+
   const data = await res.json();
   const notes = (data.value ?? []).map(mapCollabNote);
   progress(`✅ Found ${notes.length} collaboration note(s)`);
@@ -1510,8 +1478,8 @@ export async function createCollaborationNote(
     "regardingobjectid_opportunity@odata.bind": `/opportunities(${input.opportunityId})`,
   };
 
-  const entity = await getCollabNoteEntity(progress);
-  const res = await dynamicsFetch(`/${entity}`, {
+  // POST to the specific activity subtype entity — same type-cast path as list uses
+  const res = await dynamicsFetch(`/sn_activitycustomnotes`, {
     method: "POST",
     headers: { "Content-Type": "application/json", Prefer: "return=representation" },
     body: JSON.stringify(body),
