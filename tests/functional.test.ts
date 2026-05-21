@@ -5,7 +5,7 @@
 import { describe, it, expect } from "vitest";
 import { buildDescription, stripBullet, sanitizeODataSearch } from "../src/tools/dynamicsClient.js";
 import { formatHygieneReport, type HygieneResult } from "../src/tools/hygieneClient.js";
-import { requireGuid, WriteRateLimiter, stripHtml, FORECAST_NAMES, SN_INTERNAL_DOMAINS, PERSONAL_EMAIL_DOMAINS, NON_CUSTOMER_DOMAINS } from "../src/shared.js";
+import { WriteRateLimiter, FORECAST_NAMES, SN_INTERNAL_DOMAINS, PERSONAL_EMAIL_DOMAINS, NON_CUSTOMER_DOMAINS } from "../src/shared.js";
 import { ALL_ENGAGEMENT_TYPES, ENGAGEMENT_TYPE_GUIDS } from "../src/config.js";
 
 // ---------------------------------------------------------------------------

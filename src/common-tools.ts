@@ -35,7 +35,6 @@ import {
   fetchMyCollaborationOpportunities,
   fetchEngagementParticipants,
   fetchMyEngagementAssignments,
-  searchContacts,
   resolveOpportunityId,
   listCollaborationNotes,
   createCollaborationNote,
@@ -96,8 +95,6 @@ function engagementListItem(e: Engagement): string {
   ];
   return lines.join("\n");
 }
-
-const ENGAGEMENT_TYPES = ALL_ENGAGEMENT_TYPES;
 
 // ---------------------------------------------------------------------------
 // Exported registration function

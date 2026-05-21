@@ -5,9 +5,6 @@
  * Requires Alfred Chrome window to be running (uses existing cookie auth).
  */
 
-import { createRequire } from "module";
-const require = createRequire(import.meta.url);
-
 // Reuse Alfred's auth + fetch
 const { getAuthCookies } = await import("../dist/auth/tokenExtractor.js");
 const { readFileSync } = await import("fs");

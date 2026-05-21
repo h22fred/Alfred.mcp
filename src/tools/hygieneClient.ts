@@ -5,7 +5,7 @@ import {
   type Opportunity,
   type Engagement,
 } from "./dynamicsClient.js";
-import { postTeamsNotification, postAdaptiveCard } from "./teamsClient.js";
+import { postAdaptiveCard } from "./teamsClient.js";
 import type { ProgressFn } from "../auth/tokenExtractor.js";
 
 // Fallback engagement types if none configured

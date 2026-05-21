@@ -1791,18 +1791,6 @@ export async function createContact(
   };
 }
 
-/** Stakeholder role codes for opportunity connections. */
-const STAKEHOLDER_ROLE_MAP: Record<string, number> = {
-  "champion": 876130000,
-  "economic buyer": 876130001,
-  "technical buyer": 876130002,
-  "coach": 876130003,
-  "decision maker": 876130004,
-  "influencer": 876130005,
-  "end user": 876130006,
-  "executive sponsor": 876130007,
-};
-
 export interface OpportunityContact {
   connectionid: string;
   contactId: string;
@@ -1857,7 +1845,6 @@ export async function addContactToOpportunity(
 
   // Try to find a matching connection role if specified
   if (role) {
-    const roleLower = role.toLowerCase();
     // Search for the role in Dynamics connection roles
     const safe = sanitizeODataSearch(role);
     const roleRes = await dynamicsFetch(

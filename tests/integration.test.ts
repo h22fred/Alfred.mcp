@@ -5,7 +5,7 @@
  * and post-meeting candidate matching.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { NON_CUSTOMER_DOMAINS, SN_INTERNAL_DOMAINS } from "../src/shared.js";
+import { NON_CUSTOMER_DOMAINS } from "../src/shared.js";
 
 // ---------------------------------------------------------------------------
 // Helper: create a minimal Response-like object for fetch mocking
