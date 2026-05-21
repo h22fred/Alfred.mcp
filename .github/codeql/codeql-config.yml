@@ -1,0 +1,12 @@
+name: "Alfred MCP CodeQL config"
+
+# Run the default security-and-quality suite
+queries:
+  - uses: security-and-quality
+
+query-filters:
+  # Cookie domain checks (c.domain === / .endsWith()) and filename filters
+  # are not URL security sanitization — they're browser cookie domain matching
+  # and file name string filtering. These are false positives in this codebase.
+  - exclude:
+      id: js/incomplete-url-substring-sanitization
