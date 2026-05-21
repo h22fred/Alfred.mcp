@@ -14,8 +14,8 @@ Two flavours — one installer:
 
 | Variant | Who | Install folder |
 |---------|-----|----------------|
-| **Alfred SC** | SC / SSC / Manager | `~/Documents/Alfred` |
-| **Alfred Sales** | AE / Sales Specialist / Manager | `~/Documents/Alfred` |
+| **Alfred SC** | SC / SSC / Manager | `~/Documents/alfred.sc` |
+| **Alfred Sales** | AE / Sales Specialist / Manager | `~/Documents/alfred.sales` |
 
 ---
 
