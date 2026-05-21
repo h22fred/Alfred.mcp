@@ -254,22 +254,33 @@ export async function getAuthCookies(progress: ProgressFn = () => {}): Promise<s
       let authCookies = allCookies.filter(c => AUTH_COOKIE_NAMES.includes(c.name));
 
       if (authCookies.length === 0) {
-        // SSO may still be in-flight — cancel idle close so browser stays open during wait
+        // SSO may still be in-flight, or session expired and user needs to log in.
+        // Cancel idle close and poll until cookies appear (up to 2 min).
         cancelIdleClose();
-        progress("🔄 Session refreshing — waiting for Dynamics SSO...");
+        progress("🔄 Waiting for Dynamics session — if expired, log into Dynamics in the Alfred browser window...");
         const pages = ctx.pages();
         const dynPage = pages.find(p => p.url().startsWith(DYNAMICS_URL)) ?? pages[0] ?? await ctx.newPage();
         await dynPage.goto(DYNAMICS_URL, { waitUntil: "domcontentloaded", timeout: 30_000 }).catch(() => {});
-        await new Promise(r => setTimeout(r, 4_000));
-        const retried = await ctx.cookies([DYNAMICS_URL]);
-        authCookies = retried.filter(c => AUTH_COOKIE_NAMES.includes(c.name));
+
+        const POLL_INTERVAL_MS = 3_000;
+        const POLL_TIMEOUT_MS = 120_000;
+        const pollStart = Date.now();
+        while (authCookies.length === 0 && Date.now() - pollStart < POLL_TIMEOUT_MS) {
+          await new Promise(r => setTimeout(r, POLL_INTERVAL_MS));
+          const polled = await ctx.cookies([DYNAMICS_URL]);
+          authCookies = polled.filter(c => AUTH_COOKIE_NAMES.includes(c.name));
+          if (authCookies.length === 0) {
+            const elapsed = Math.round((Date.now() - pollStart) / 1000);
+            process.stderr.write(`[alfred:auth] waiting for Dynamics cookies (${elapsed}s)...\n`);
+          }
+        }
       }
 
       if (authCookies.length === 0) {
-        // Session genuinely expired — leave browser open so user can log in, then retry
-        process.stderr.write("[alfred] Playwright auth: no Dynamics cookies found after retry — session expired\n");
+        // Timed out waiting — browser stays open for user to complete login
+        process.stderr.write("[alfred] Playwright auth: timed out waiting for Dynamics cookies\n");
         throw new Error(
-          "Your Dynamics session has expired.\n" +
+          "Your Dynamics session has expired and login timed out.\n" +
           "The Alfred browser window is open — log into Dynamics there, then retry your request."
         );
       }
