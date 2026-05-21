@@ -51,14 +51,12 @@ jobs:
           bash setup/setup.sh
 
       # ------------------------------------------------------------------
-      # 3. Verify Alfred.app was created on Desktop
+      # 3. Verify Alfred.app was removed from Desktop (Playwright replaces it)
       # ------------------------------------------------------------------
-      - name: Verify Alfred.app exists
+      - name: Verify Alfred.app removed
         run: |
-          [ -d "$HOME/Desktop/Alfred.app" ] || { echo "Alfred.app not found on Desktop"; exit 1; }
-          [ -x "$HOME/Desktop/Alfred.app/Contents/MacOS/Alfred" ] || { echo "Alfred binary not executable"; exit 1; }
-          bash -n "$HOME/Desktop/Alfred.app/Contents/MacOS/Alfred" || { echo "Alfred script has syntax errors"; exit 1; }
-          echo "Alfred.app OK"
+          [ ! -d "$HOME/Desktop/Alfred.app" ] || { echo "Alfred.app still on Desktop — setup.sh should have removed it"; exit 1; }
+          echo "Alfred.app correctly absent (browser now auto-launched by MCP server)"
 
       # ------------------------------------------------------------------
       # 4. Verify Claude Desktop config

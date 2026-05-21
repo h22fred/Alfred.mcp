@@ -150,7 +150,7 @@ async function openDefaultTabs(ctx: BrowserContext): Promise<void> {
  */
 export async function getAlfredContext(): Promise<BrowserContext> {
   if (_context && await isContextAlive()) return _context;
-  throw new Error("Alfred browser is not running. Launch Alfred from your Desktop first.");
+  throw new Error("Alfred browser is not running. It launches automatically — restart Claude Desktop to trigger it.");
 }
 
 /** Returns all open pages from the live context. Throws if not running. */
@@ -337,7 +337,7 @@ export async function getOutlookCookies(progress: ProgressFn = () => {}): Promis
       progress("🔐 Extracting Outlook cookies via Playwright...");
 
       if (!await isAlfredgable()) {
-        throw new Error("Alfred browser not available. Launch Alfred from your Desktop first.");
+        throw new Error("Alfred browser not available — it should launch automatically. Try restarting Claude Desktop.");
       }
 
       const ctx = await getAlfredContext();

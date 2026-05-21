@@ -962,6 +962,7 @@ server.tool(
     return { content: [{ type: "text", text:
       `✅ **Alfred updated and rebuilt!**\n\n` +
       `**Changes pulled:**\n\`\`\`\n${gitOutput.trim()}\n\`\`\`\n\n` +
+      `ℹ️ Alfred.app / Alfred.bat on your Desktop has been removed — Alfred now launches its browser automatically in the background. You don't need a Desktop launcher anymore.\n\n` +
       `⚠️ Restart Claude Desktop to load the new version.`
     }] };
   }
