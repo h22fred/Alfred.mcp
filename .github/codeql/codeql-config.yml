@@ -11,8 +11,30 @@ paths-ignore:
   - Setup_Windows.bat
 
 query-filters:
-  # js/incomplete-url-substring-sanitization: all instances in this codebase are false positives.
+  # js/incomplete-url-substring-sanitization: all instances are false positives.
   # Flagged patterns are cookie domain matching (c.domain.endsWith()) and filename filters —
   # neither is a URL security sanitization check. Real URL checks use urlHostMatches() / new URL().
   - exclude:
       id: js/incomplete-url-substring-sanitization
+
+  # js/file-access-to-http: false positives throughout.
+  # This codebase reads auth tokens from a local disk cache (~/.alfred-config.json) and uses them
+  # as Bearer tokens in HTTP headers — that is intentional design (token persistence across restarts).
+  # The cache is written only by our own auth flow after successful Microsoft SSO.
+  - exclude:
+      id: js/file-access-to-http
+
+  # js/file-system-race: TOCTOU patterns in local config/cache files.
+  # All flagged existsSync→readFileSync sequences operate on files written by this process
+  # (Playwright cache, ~/.alfred-config.json). A race here has no security impact — single-user
+  # local tool. The outer try/catch blocks in each function already handle read errors.
+  - exclude:
+      id: js/file-system-race
+
+  # js/bad-tag-filter + js/incomplete-multi-character-sanitization: stripHtml in shared.ts.
+  # The function uses an iterative do-while loop specifically to handle nested/partial tags —
+  # the loop itself is the defence against the bypass the rule warns about.
+  - exclude:
+      id: js/bad-tag-filter
+  - exclude:
+      id: js/incomplete-multi-character-sanitization

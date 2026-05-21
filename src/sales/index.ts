@@ -87,19 +87,6 @@ function engagementSummary(e: Engagement, action: "Created" | "Updated"): string
   return lines.join("\n");
 }
 
-function engagementListItem(e: Engagement): string {
-  const link = engagementLink(e);
-  const status = e.statuscode === 876130000 ? "Cancelled" : e.statecode === 0 ? "Open" : "Complete";
-  const completed = e.sn_completeddate ? ` · ${e.sn_completeddate.slice(0, 10)}` : "";
-  const product = e.primaryProductName ? ` · 📦 ${e.primaryProductName}` : "";
-  const lines = [
-    `**${e.sn_name}** (${e.sn_engagementnumber ?? "—"}) · ${e.engagementTypeName ?? "—"} · ${status}${completed}${product}`,
-    ...(link ? [`🔗 Open in Dynamics: ${link}`] : []),
-    ...(e.sn_description ? [e.sn_description] : []),
-  ];
-  return lines.join("\n");
-}
-
 const OPP_TYPE_CODES: Record<string, number> = {
   "new business": 1,
   "new":          1,
@@ -1074,9 +1061,8 @@ server.tool(
 
     progress("🔨 New version pulled — rebuilding...");
 
-    let buildOutput: string;
     try {
-      buildOutput = execFileSync("npm", ["run", "build"], {
+      execFileSync("npm", ["run", "build"], {
         encoding: "utf8",
         cwd: installDir,
         timeout: 60_000,

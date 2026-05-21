@@ -13,8 +13,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { readFileSync, existsSync, writeFileSync } from "fs";
 import { homedir } from "os";
-import { join, dirname } from "path";
-import { fileURLToPath } from "url";
+import { join } from "path";
 import { execFileSync } from "child_process";
 
 import { DYNAMICS_HOST, ALL_ENGAGEMENT_TYPES } from "./config.js";
@@ -83,19 +82,6 @@ type Engagement = import("./tools/dynamicsClient.js").Engagement;
 function engagementLink(e: Engagement): string | null {
   const id = e.sn_engagementid ?? "";
   return id ? `${DYNAMICS_BASE_URL}/main.aspx?etn=sn_engagement&id=${id}&pagetype=entityrecord` : null;
-}
-
-function engagementSummary(e: Engagement, action: "Created" | "Updated"): string {
-  const link = engagementLink(e);
-  const lines = [
-    `✅ ${action}: **${e.sn_name}** (${e.sn_engagementnumber ?? e.sn_engagementid ?? "—"})`,
-    `Type: ${e.engagementTypeName ?? "—"}`,
-    `Status: ${e.statuscode === 876130000 ? "Cancelled" : e.statecode === 0 ? "Open" : "Complete"}`,
-    ...(e.sn_completeddate ? [`Completed: ${e.sn_completeddate.slice(0, 10)}`] : []),
-    ...(link ? [`\n🔗 Open in Dynamics: ${link}`] : []),
-    ...(e.sn_description ? [`\n${e.sn_description}`] : []),
-  ];
-  return lines.join("\n");
 }
 
 function engagementListItem(e: Engagement): string {

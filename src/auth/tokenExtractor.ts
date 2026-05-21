@@ -61,8 +61,8 @@ function patchChromiumName(): void {
     const dirs = readdirSync(pwCache).filter(d => d.startsWith("chromium-"));
     for (const dir of dirs) {
       const plist = join(pwCache, dir, "chrome-mac", "Chromium.app", "Contents", "Info.plist");
-      if (!existsSync(plist)) continue;
-      let content = readFileSync(plist, "utf8");
+      let content: string;
+      try { content = readFileSync(plist, "utf8"); } catch { continue; }
       if (content.includes("<string>Alfred</string>")) break; // already patched
       content = content
         .replace(/(<key>CFBundleName<\/key>\s*<string>)[^<]*(<\/string>)/, "$1Alfred$2")
@@ -235,7 +235,7 @@ export async function getAuthCookies(progress: ProgressFn = () => {}): Promise<s
   }
 
   // Dedup: if another caller is already refreshing, wait for that result
-  if (inflightDynamics) return inflightDynamics;
+  if (inflightDynamics) return await inflightDynamics;
 
   const promise = (async () => {
     try {
@@ -330,7 +330,7 @@ export async function getOutlookCookies(progress: ProgressFn = () => {}): Promis
   }
 
   // Dedup: if another caller is already refreshing, wait for that result
-  if (inflightOutlook) return inflightOutlook;
+  if (inflightOutlook) return await inflightOutlook;
 
   const promise = (async () => {
     try {
