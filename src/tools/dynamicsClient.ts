@@ -533,7 +533,7 @@ export async function fetchEngagementsByAccount(accountId: string, typeFilter?: 
   requireGuid(accountId, "accountId");
   progress(`📡 Fetching engagements for account ${accountId}...`);
   let filter = `_sn_accountid_value eq ${accountId}`;
-  if (typeFilter) filter += ` and sn_engagementtypeid/sn_name eq '${typeFilter.replace(/'/g, "''")}'`;
+  if (typeFilter) filter += ` and sn_engagementtypeid/sn_name eq '${sanitizeODataSearch(typeFilter)}'`;
   const path =
     `/sn_engagements` +
     `?$filter=${filter}` +
@@ -625,8 +625,7 @@ export async function fetchEngagementsGlobal(
   const filters: string[] = [];
 
   if (filter.type) {
-    const safe = filter.type.replace(/'/g, "''");
-    filters.push(`sn_engagementtypeid/sn_name eq '${safe}'`);
+    filters.push(`sn_engagementtypeid/sn_name eq '${sanitizeODataSearch(filter.type)}'`);
   }
 
   const normStatus = filter.status?.toLowerCase();
