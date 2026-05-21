@@ -1,12 +1,18 @@
 name: "Alfred MCP CodeQL config"
 
-# Run the default security-and-quality suite
 queries:
   - uses: security-and-quality
 
+# Don't scan compiled output or installer scripts (different risk profile, not Node.js)
+paths-ignore:
+  - dist/**
+  - setup/**
+  - Setup_macOS.command
+  - Setup_Windows.bat
+
 query-filters:
-  # Cookie domain checks (c.domain === / .endsWith()) and filename filters
-  # are not URL security sanitization — they're browser cookie domain matching
-  # and file name string filtering. These are false positives in this codebase.
+  # js/incomplete-url-substring-sanitization: all instances in this codebase are false positives.
+  # Flagged patterns are cookie domain matching (c.domain.endsWith()) and filename filters —
+  # neither is a URL security sanitization check. Real URL checks use urlHostMatches() / new URL().
   - exclude:
       id: js/incomplete-url-substring-sanitization

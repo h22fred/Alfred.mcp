@@ -3,30 +3,47 @@ name: CodeQL
 on:
   push:
     branches: [main]
+    paths:
+      - 'src/**'
+      - 'tests/**'
+      - '.github/workflows/codeql.yml'
+      - '.github/codeql/**'
   pull_request:
     branches: [main]
+    paths:
+      - 'src/**'
+      - 'tests/**'
   schedule:
-    - cron: '0 10 * * 1'  # Monday 10:00 UTC
+    - cron: '30 9 * * 1'  # Monday 09:30 UTC
 
 permissions: read-all
 
 jobs:
   analyze:
-    name: Analyze (javascript-typescript)
+    name: CodeQL — javascript-typescript
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
       contents: read
-      security-events: write  # required to upload SARIF results
+      security-events: write
       actions: read
 
     steps:
       - uses: actions/checkout@v4
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci --no-fund
+
       - name: Initialize CodeQL
         uses: github/codeql-action/init@v3
         with:
           languages: javascript-typescript
+          build-mode: none
           config-file: .github/codeql/codeql-config.yml
 
       - name: Perform CodeQL Analysis
