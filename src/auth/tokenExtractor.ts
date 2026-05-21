@@ -1,5 +1,6 @@
 import { chromium, type BrowserContext } from "playwright";
 import { existsSync, readdirSync, readFileSync, writeFileSync } from "fs";
+import { execSync } from "child_process";
 import { homedir } from "os";
 import { join } from "path";
 import { DYNAMICS_HOST } from "../config.js";
@@ -67,6 +68,11 @@ function patchChromiumName(): void {
         .replace(/(<key>CFBundleName<\/key>\s*<string>)[^<]*(<\/string>)/, "$1Alfred$2")
         .replace(/(<key>CFBundleDisplayName<\/key>\s*<string>)[^<]*(<\/string>)/, "$1Alfred$2");
       writeFileSync(plist, content, "utf8");
+      // Force Dock to re-read the bundle — without this the old name stays cached
+      const appBundle = join(pwCache, dir, "chrome-mac", "Chromium.app");
+      try {
+        execSync(`/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/LaunchServices.framework/Versions/A/Support/lsregister -f "${appBundle}"`, { stdio: "ignore" });
+      } catch { /* non-fatal */ }
       break;
     }
   } catch { /* non-fatal */ }
@@ -245,12 +251,24 @@ export async function getAuthCookies(progress: ProgressFn = () => {}): Promise<s
       const ctx = await getAlfredContext();
       progress("🍪 Extracting Dynamics session cookies via Playwright...");
       const allCookies = await ctx.cookies([DYNAMICS_URL]);
-      const authCookies = allCookies.filter(c => AUTH_COOKIE_NAMES.includes(c.name));
+      let authCookies = allCookies.filter(c => AUTH_COOKIE_NAMES.includes(c.name));
+
       if (authCookies.length === 0) {
-        process.stderr.write("[alfred] Playwright auth: no Dynamics cookies found — user not logged in\n");
+        // SSO may still be in-flight — navigate to Dynamics and wait for it to complete
+        progress("🔄 Session refreshing — waiting for Dynamics SSO...");
+        const pages = ctx.pages();
+        const dynPage = pages.find(p => p.url().startsWith(DYNAMICS_URL)) ?? pages[0] ?? await ctx.newPage();
+        await dynPage.goto(DYNAMICS_URL, { waitUntil: "domcontentloaded", timeout: 30_000 }).catch(() => {});
+        await new Promise(r => setTimeout(r, 4_000));
+        const retried = await ctx.cookies([DYNAMICS_URL]);
+        authCookies = retried.filter(c => AUTH_COOKIE_NAMES.includes(c.name));
+      }
+
+      if (authCookies.length === 0) {
+        process.stderr.write("[alfred] Playwright auth: no Dynamics cookies found after retry — user not logged in\n");
         throw new Error(
-          "Alfred is open but you are not logged into Dynamics yet.\n" +
-          "Please log into Dynamics in the Alfred window, then retry."
+          "Could not acquire a Dynamics session.\n" +
+          "Please log into Dynamics in the Alfred browser window, then retry."
         );
       }
 
