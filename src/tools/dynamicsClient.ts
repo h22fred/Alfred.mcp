@@ -1003,6 +1003,8 @@ export async function createTimelineNote(
   text: string,
   progress: ProgressFn = () => {}
 ): Promise<void> {
+  requireGuid(engagementId, "engagementId");
+  auditLog("create_timeline_note", { engagementId, title });
   // Dedup guard: skip if a note with the same title was created in the last 60s
   try {
     const recentNotes = await listTimelineNotes(engagementId, () => {});
@@ -1047,6 +1049,8 @@ export async function updateEngagement(
   },
   progress: ProgressFn = () => {}
 ): Promise<Engagement> {
+  requireGuid(id, "engagementId");
+  auditLog("update_engagement", { id, fields: Object.keys(patch) });
   progress(`📝 Updating engagement ${id}...`);
 
   const payload: Record<string, unknown> = {};

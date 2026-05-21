@@ -257,7 +257,7 @@ async function acquireTokenViaSilentAuth(progress: ProgressFn): Promise<string |
       } else if (title.startsWith("ERROR:")) {
         process.stderr.write(`[alfred:warn] Silent auth: error in redirect: ${title.slice(0, 100)}\n`);
       } else {
-        process.stderr.write(`[alfred:warn] Silent auth: no token (title=${title.slice(0, 100)}, url=${currentUrl.slice(0, 100)})\n`);
+        process.stderr.write(`[alfred:warn] Silent auth: no token (title=${title.slice(0, 100)}, url=${currentUrl.split("#")[0].slice(0, 100)})\n`);
       }
     }
 

@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync, existsSync, unlinkSync } from "fs";
+import { readFileSync, writeFileSync, chmodSync, existsSync, unlinkSync } from "fs";
 import { homedir } from "os";
 import { join } from "path";
 
@@ -40,6 +40,8 @@ function writeCache(cache: CacheFile): void {
   _memCache = cache;
   try {
     writeFileSync(CACHE_FILE, JSON.stringify(cache, null, 2), { mode: 0o600 });
+    // chmodSync ensures perms are enforced even if the file already existed
+    chmodSync(CACHE_FILE, 0o600);
   } catch (e) {
     process.stderr.write(`[alfred:warn] auth cache write failed: ${e instanceof Error ? e.message : String(e)}\n`);
   }
