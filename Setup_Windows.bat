@@ -60,8 +60,13 @@ if exist "!INSTALL_DIR!\.git" (
     if !ERRORLEVEL! neq 0 (
         echo   WARNING: Could not fetch updates. Using existing version.
     ) else (
-        git -C "!INSTALL_DIR!" reset --hard origin/main >nul 2>&1
-        echo   Updated to latest
+        git -C "!INSTALL_DIR!" pull --ff-only origin main >nul 2>&1
+        if !ERRORLEVEL! neq 0 (
+            echo   WARNING: Fast-forward not possible. Run "git pull --rebase" manually in !INSTALL_DIR!
+            echo   Continuing with existing version...
+        ) else (
+            echo   Updated to latest
+        )
     )
 ) else (
     echo   Cloning alfred.mcp...

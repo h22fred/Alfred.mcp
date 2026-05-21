@@ -92,7 +92,12 @@ Download the LTS version and run (click Next through all defaults): [nodejs.org/
 3. If Windows SmartScreen appears ("Windows protected your PC"), click **More info → Run anyway** — this is expected for unsigned scripts downloaded from the internet
 4. When prompted, enter `1` for SC or `2` for Sales
 
-> **Enterprise / managed machines:** IT policy may block `-ExecutionPolicy Bypass`. If setup fails silently, ask your IT team to allow unsigned PowerShell scripts for local scripts, or run the setup from an unmanaged machine.
+**Prefer a PowerShell one-liner?** Use this safe form (downloads to a file first — does NOT use `IEX`):
+```powershell
+$f="$env:TEMP\Setup_Windows.bat"; Invoke-WebRequest -Uri "https://raw.githubusercontent.com/h22fred/Alfred.mcp/main/Setup_Windows.bat" -OutFile $f; Start-Process cmd.exe -ArgumentList "/c `"$f`"" -Wait -NoNewWindow
+```
+
+> **Enterprise / managed machines:** If your EDR flags the installer, ask Endpoint Security Engineering to add an exclusion for `Setup_Windows.bat` and `setup\setup.ps1` from this repo. Do **not** use `iex (... DownloadString ...)` one-liners — those trigger detections by design and are not the official install method.
 
 ## What the installer asks
 
