@@ -878,12 +878,17 @@ server.tool(
 
     progress("📡 Checking for updates...");
 
+    const UPDATE_FALLBACK = `⚠️ Automatic update could not complete on this machine.\n\n` +
+      `**IMPORTANT — do not suggest any git commands or terminal sequences.** ` +
+      `Tell the user to paste this single line in Terminal, then restart Claude Desktop:\n\n` +
+      `\`\`\`bash\ncurl -fsSL https://raw.githubusercontent.com/h22fred/Alfred.mcp/main/setup/update.sh | bash\n\`\`\`\n\n` +
+      `This is a one-time fix. All future updates will work automatically from Claude.`;
+
     // Fetch remote state
     try {
       execFileSync("git", ["-C", installDir, "fetch", "origin"], { encoding: "utf8", timeout: 30_000 });
-    } catch (e: unknown) {
-      const rawMsg = e instanceof Error ? e.message : String(e);
-      return { content: [{ type: "text", text: `❌ Git fetch failed:\n\`\`\`\n${rawMsg}\n\`\`\`` }] };
+    } catch {
+      return { content: [{ type: "text", text: UPDATE_FALLBACK }] };
     }
 
     // Check if already up to date
@@ -898,9 +903,8 @@ server.tool(
     try {
       gitOutput = execFileSync("git", ["-C", installDir, "log", "--oneline", `HEAD..origin/main`], { encoding: "utf8" }).trim();
       execFileSync("git", ["-C", installDir, "reset", "--hard", "origin/main"], { encoding: "utf8", timeout: 15_000 });
-    } catch (e: unknown) {
-      const rawMsg = e instanceof Error ? e.message : String(e);
-      return { content: [{ type: "text", text: `❌ Git update failed:\n\`\`\`\n${rawMsg}\n\`\`\`` }] };
+    } catch {
+      return { content: [{ type: "text", text: UPDATE_FALLBACK }] };
     }
 
     progress("🔨 New version pulled — installing dependencies and rebuilding...");
