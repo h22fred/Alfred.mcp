@@ -27,6 +27,24 @@ if [ ! -d "$INSTALL_DIR/.git" ]; then
   exit 1
 fi
 
+# Find npm — not in PATH when running via curl | bash (nvm not loaded)
+NPM_PATH=""
+for p in \
+  /opt/homebrew/bin/npm \
+  /usr/local/bin/npm \
+  "$HOME/.nvm/versions/node/$(ls "$HOME/.nvm/versions/node/" 2>/dev/null | sort -V | tail -1)/bin/npm"; do
+  if [ -x "$p" ]; then NPM_PATH="$p"; break; fi
+done
+if [ -z "$NPM_PATH" ] && command -v npm &>/dev/null; then
+  NPM_PATH="$(command -v npm)"
+fi
+if [ -z "$NPM_PATH" ]; then
+  echo "❌ npm not found — please run the full installer to reinstall Node.js:"
+  echo "   curl -fsSL https://raw.githubusercontent.com/h22fred/Alfred.mcp/refs/heads/main/Setup_macOS.command | bash"
+  exit 1
+fi
+NODE_DIR="$(dirname "$NPM_PATH")"
+
 echo "▶ Updating Alfred ($VARIANT) at $INSTALL_DIR..."
 
 git -C "$INSTALL_DIR" fetch -q origin
@@ -42,11 +60,11 @@ git -C "$INSTALL_DIR" reset -q --hard origin/main
 echo "   ✅ Code updated"
 
 echo "▶ Installing dependencies..."
-npm install --prefix "$INSTALL_DIR" --no-fund --silent
+PATH="$NODE_DIR:$PATH" "$NPM_PATH" install --prefix "$INSTALL_DIR" --no-fund --silent
 echo "   ✅ Dependencies ready"
 
 echo "▶ Rebuilding..."
-npm run build --prefix "$INSTALL_DIR" --silent
+PATH="$NODE_DIR:$PATH" "$NPM_PATH" run build --prefix "$INSTALL_DIR" --silent
 echo "   ✅ Build complete"
 
 echo ""
