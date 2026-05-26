@@ -16,7 +16,7 @@ import { homedir } from "os";
 import { join } from "path";
 import { execFileSync } from "child_process";
 
-import { DYNAMICS_HOST, ALL_ENGAGEMENT_TYPES } from "./config.js";
+import { DYNAMICS_HOST } from "./config.js";
 import { requireGuid, makeProgress, WriteRateLimiter, externalData } from "./shared.js";
 import {
   fetchEngagementsByOpportunity,
