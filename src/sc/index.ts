@@ -238,7 +238,7 @@ DISPLAY: Show both values clearly labelled — "NNACV: $X | ACV: $Y". NNACV (nna
     }
 
     return {
-      content: [{ type: "text", text: JSON.stringify({ ...opp, dynamicsLink: link }, null, 2) + extraSections }],
+      content: [{ type: "text", text: externalData("Dynamics opportunity + timeline", { ...opp, dynamicsLink: link, extraSections }) }],
     };
   }
 );
@@ -259,7 +259,7 @@ After fetching, ALSO call account_insights with the account name to get subscrip
     const id = requireGuid(account_id, "account_id");
     const progress = makeProgress(server);
     const account = await fetchAccountById(id, progress);
-    return { content: [{ type: "text", text: JSON.stringify(account, null, 2) }] };
+    return { content: [{ type: "text", text: externalData("Dynamics account", account) }] };
   }
 );
 
@@ -273,7 +273,7 @@ server.tool(
   async ({ name }) => {
     const progress = makeProgress(server);
     const accounts = await searchAccounts(name, progress);
-    return { content: [{ type: "text", text: JSON.stringify(accounts, null, 2) }] };
+    return { content: [{ type: "text", text: externalData("Dynamics accounts", accounts) }] };
   }
 );
 

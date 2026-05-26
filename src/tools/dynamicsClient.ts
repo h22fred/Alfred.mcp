@@ -19,8 +19,9 @@ process.stderr.write(`[alfred:config] Dynamics base URL: ${DYNAMICS_BASE}\n`);
  * slashes, OData operators) and escapes single quotes.
  */
 export function sanitizeODataSearch(input: string): string {
-  // Allow only safe characters: letters, digits, spaces, hyphens, dots, @ _ #
-  const stripped = input.replace(/[^a-zA-Z0-9 \-\.@_#]/g, "");
+  // Allow Unicode letters (covers accented/non-Latin names like Stéphane), digits,
+  // spaces, hyphens, dots, @ _ # — strip OData-dangerous chars (parens, slashes, quotes)
+  const stripped = input.replace(/[^\p{L}\p{N} \-\.@_#]/gu, "");
   // Escape remaining single quotes (belt-and-suspenders)
   return stripped.replace(/'/g, "''").slice(0, 100);
 }
@@ -2009,6 +2010,7 @@ export async function fetchEngagementParticipants(
   engagementId: string,
   progress: ProgressFn = () => {}
 ): Promise<EngagementParticipant[]> {
+  requireGuid(engagementId, "engagementId");
   progress(`👥 Fetching participants for engagement ${engagementId}...`);
   const path =
     `/sn_engagementassignees` +

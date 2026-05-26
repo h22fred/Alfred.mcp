@@ -101,7 +101,7 @@ server.tool(
   async ({ name }) => {
     const progress = makeProgress(server);
     const accounts = await searchAccounts(name, progress);
-    return { content: [{ type: "text", text: JSON.stringify(accounts, null, 2) }] };
+    return { content: [{ type: "text", text: externalData("Dynamics accounts", accounts) }] };
   }
 );
 
@@ -116,7 +116,7 @@ server.tool(
     const progress = makeProgress(server);
     requireGuid(account_id, "account_id");
     const account = await fetchAccountById(account_id, progress);
-    return { content: [{ type: "text", text: JSON.stringify(account, null, 2) }] };
+    return { content: [{ type: "text", text: externalData("Dynamics account", account) }] };
   }
 );
 
@@ -274,7 +274,7 @@ DISPLAY: Show both values clearly labelled — "NNACV: $X | ACV: $Y". NNACV (nna
       extraSections += "\n\n--- No timeline notes on this opportunity ---";
     }
 
-    return { content: [{ type: "text", text: JSON.stringify({ ...opp, dynamicsLink: link }, null, 2) + extraSections }] };
+    return { content: [{ type: "text", text: externalData("Dynamics opportunity + timeline", { ...opp, dynamicsLink: link, extraSections }) }] };
   }
 );
 
@@ -480,7 +480,7 @@ server.tool(
     requireGuid(opportunity_id, "opportunity_id");
     const progress = makeProgress(server);
     const notes = await listTimelineNotes(opportunity_id, progress);
-    return { content: [{ type: "text", text: JSON.stringify(notes, null, 2) }] };
+    return { content: [{ type: "text", text: externalData("Dynamics timeline notes", notes) }] };
   }
 );
 

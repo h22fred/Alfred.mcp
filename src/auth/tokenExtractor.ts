@@ -1,6 +1,6 @@
 import { chromium, type BrowserContext } from "playwright";
 import { existsSync, readdirSync, readFileSync, writeFileSync } from "fs";
-import { execSync } from "child_process";
+import { execFileSync } from "child_process";
 import { homedir } from "os";
 import { join } from "path";
 import { DYNAMICS_HOST } from "../config.js";
@@ -71,7 +71,7 @@ function patchChromiumName(): void {
       // Force Dock to re-read the bundle — without this the old name stays cached
       const appBundle = join(pwCache, dir, "chrome-mac", "Chromium.app");
       try {
-        execSync(`/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/LaunchServices.framework/Versions/A/Support/lsregister -f "${appBundle}"`, { stdio: "ignore" });
+        execFileSync("/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/LaunchServices.framework/Versions/A/Support/lsregister", ["-f", appBundle], { stdio: "ignore" });
       } catch { /* non-fatal */ }
       break;
     }

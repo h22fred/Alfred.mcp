@@ -222,10 +222,11 @@ describe("sanitizeODataSearch", () => {
     expect(sanitizeODataSearch("")).toBe("");
   });
 
-  it("strips unicode characters (only ASCII allowed)", () => {
-    // sanitizeODataSearch allows only [a-zA-Z0-9 \-\.@_#]
-    expect(sanitizeODataSearch("Zürich")).toBe("Zrich");
-    expect(sanitizeODataSearch("Straße")).toBe("Strae");
+  it("preserves unicode letters (e.g. accented names)", () => {
+    // sanitizeODataSearch allows Unicode letters so names like Stéphane and Zürich are not mangled
+    expect(sanitizeODataSearch("Zürich")).toBe("Zürich");
+    expect(sanitizeODataSearch("Straße")).toBe("Straße");
+    expect(sanitizeODataSearch("Stéphane")).toBe("Stéphane");
   });
 
   it("preserves email addresses", () => {
