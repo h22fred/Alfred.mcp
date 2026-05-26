@@ -876,30 +876,40 @@ server.tool(
 
     progress("📡 Checking for updates...");
 
-    let gitOutput: string;
+    // Fetch remote state
     try {
-      gitOutput = execFileSync("git", ["-C", installDir, "pull", "--ff-only"], { encoding: "utf8", timeout: 30_000 });
+      execFileSync("git", ["-C", installDir, "fetch", "origin"], { encoding: "utf8", timeout: 30_000 });
     } catch (e: unknown) {
-      const msg = (e instanceof Error ? e.message : String(e)).toLowerCase();
-      const isDiverged = msg.includes("not possible to fast-forward") || msg.includes("diverged");
       const rawMsg = e instanceof Error ? e.message : String(e);
-      return { content: [{ type: "text", text: isDiverged
-        ? `❌ Local branch has diverged from remote — cannot fast-forward.\n\n` +
-          `**Safe fix:** open Terminal and run:\n` +
-          `\`\`\`bash\ncd ${installDir}\ngit pull --rebase\n\`\`\`\n\n` +
-          `⚠️ Do NOT run \`git reset --hard\` — that discards local changes permanently.`
-        : `❌ Git pull failed:\n\`\`\`\n${rawMsg}\n\`\`\``
-      }] };
+      return { content: [{ type: "text", text: `❌ Git fetch failed:\n\`\`\`\n${rawMsg}\n\`\`\`` }] };
     }
 
-    const alreadyUpToDate = gitOutput.includes("Already up to date");
-    if (alreadyUpToDate) {
+    // Check if already up to date
+    const localSha  = execFileSync("git", ["-C", installDir, "rev-parse", "HEAD"],          { encoding: "utf8" }).trim();
+    const remoteSha = execFileSync("git", ["-C", installDir, "rev-parse", "origin/main"],   { encoding: "utf8" }).trim();
+    if (localSha === remoteSha) {
       return { content: [{ type: "text", text: "✅ Alfred is already up to date — no rebuild needed." }] };
     }
 
-    progress("🔨 New version pulled — rebuilding...");
+    // Sync to latest — reset is correct here: users never have local changes to preserve
+    let gitOutput: string;
+    try {
+      gitOutput = execFileSync("git", ["-C", installDir, "log", "--oneline", `HEAD..origin/main`], { encoding: "utf8" }).trim();
+      execFileSync("git", ["-C", installDir, "reset", "--hard", "origin/main"], { encoding: "utf8", timeout: 15_000 });
+    } catch (e: unknown) {
+      const rawMsg = e instanceof Error ? e.message : String(e);
+      return { content: [{ type: "text", text: `❌ Git update failed:\n\`\`\`\n${rawMsg}\n\`\`\`` }] };
+    }
+
+    progress("🔨 New version pulled — installing dependencies and rebuilding...");
 
     try {
+      execFileSync("npm", ["install"], {
+        encoding: "utf8",
+        cwd: installDir,
+        timeout: 120_000,
+        env: { ...process.env, PATH: process.env.PATH ?? "/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin" },
+      });
       execFileSync("npm", ["run", "build"], {
         encoding: "utf8",
         cwd: installDir,
