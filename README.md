@@ -123,6 +123,18 @@ $f="$env:TEMP\Setup_Windows.bat"; Invoke-WebRequest -Uri "https://raw.githubuser
 
 ---
 
+## Updating Alfred
+
+In Claude Desktop, just say **"update Alfred"** — the `update_alfred` tool handles it automatically.
+
+If you're on an older version where the auto-update fails, run this one-liner in Terminal (once):
+```bash
+curl -fsSL https://raw.githubusercontent.com/h22fred/Alfred.mcp/main/setup/update.sh | bash
+```
+After that, `update_alfred` in Claude will work for all future updates.
+
+---
+
 ## Every session
 
 1. Open Claude Desktop — Alfred's browser launches automatically in the background
