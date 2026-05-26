@@ -151,8 +151,9 @@ CROSS-REFERENCE: After presenting pipeline results, compare with the Data_Analyt
     include_closed: z.boolean().optional().describe("Include won/lost/closed opportunities — default false (open only). Set true when user asks about a specific opp by OPTY number or explicitly wants closed deals."),
     include_zero_value: z.boolean().optional().describe("Include $0 NNACV opportunities — default false (excluded as noise). Set true only if user explicitly asks for $0 deals."),
     colleague_name: z.string().optional().describe("Filter by a colleague's name (partial match) — returns all opportunities where they appear as either AE (owner) or SC. Use for coverage/backup scenarios, e.g. 'show me Stéphane's pipeline'."),
+    close_quarter: z.string().optional().describe("Filter by closing quarter using the CRM sn_closequarter field — format '26-Q3'. When set, returns all deals in that quarter (up to 200) regardless of close date sort order. Use for dashboard/forecast views: '26-Q2' for current quarter, '26-Q3' for next."),
   },
-  async ({ top, search, min_nnacv, my_opportunities_only, include_closed, include_zero_value, colleague_name }) => {
+  async ({ top, search, min_nnacv, my_opportunities_only, include_closed, include_zero_value, colleague_name, close_quarter }) => {
     const progress = makeProgress(server);
     const myOpps = my_opportunities_only ?? (isSSC || isManager ? false : true);
     const filter: OpportunityFilter = {
@@ -165,6 +166,7 @@ CROSS-REFERENCE: After presenting pipeline results, compare with the Data_Analyt
       includeClosed: include_closed ?? false,
       includeZeroValue: include_zero_value ?? false,
       colleagueSearch: colleague_name,
+      closeQuarter: close_quarter,
     };
     const opportunities = await fetchOpportunities(filter, progress);
     return {

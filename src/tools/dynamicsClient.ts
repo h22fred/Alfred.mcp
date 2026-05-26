@@ -280,6 +280,7 @@ export interface OpportunityFilter {
   territoryCode?: string; // filter by territory code (e.g. "CHLPC-TER-6")
   excludeAppStoreRenewals?: boolean; // exclude $0 "App Store Renewal" opps — default false (set true for pipeline views)
   skipCollabValidation?: boolean; // skip cross-checking results against the collaboration team table
+  closeQuarter?: string; // filter by sn_closequarter field, e.g. "26-Q3" — bypasses stale-date exclusion
 }
 
 export async function fetchCurrentUserId(progress: ProgressFn = () => {}): Promise<string> {
@@ -291,7 +292,7 @@ export async function fetchCurrentUserId(progress: ProgressFn = () => {}): Promi
 }
 
 export async function fetchOpportunities(filter: OpportunityFilter = {}, progress: ProgressFn = () => {}): Promise<Opportunity[]> {
-  const top = filter.top ?? 50;
+  const top = filter.top ?? (filter.closeQuarter ? 200 : 50);
   auditLog("fetch_opportunities", { myOpportunitiesOnly: filter.myOpportunitiesOnly ?? true, search: filter.search ?? null, top });
   progress(`📡 Querying Dynamics for open opportunities (max ${top})...`);
 
@@ -318,8 +319,13 @@ export async function fetchOpportunities(filter: OpportunityFilter = {}, progres
     // Include opps >= threshold OR negative (negative NNACV is always important)
     filterClause += ` and (sn_netnewacv ge ${filter.minNnacv} or sn_netnewacv lt 0)`;
   }
-  // Exclude zombie opps — close date > 6 months in the past (default: on)
-  if (filter.excludeStale !== false) {
+  // Quarter filter — direct OData match on sn_closequarter field (e.g. "26-Q3")
+  // When set, skip the stale-date exclusion (historical quarters must be reachable)
+  if (filter.closeQuarter) {
+    const safeQ = sanitizeODataSearch(filter.closeQuarter);
+    filterClause += ` and sn_closequarter eq '${safeQ}'`;
+  } else if (filter.excludeStale !== false) {
+    // Exclude zombie opps — close date > 6 months in the past (default: on)
     const sixMonthsAgo = new Date();
     sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6);
     const staleDate = sixMonthsAgo.toISOString().slice(0, 10);

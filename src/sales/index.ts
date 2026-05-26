@@ -189,8 +189,9 @@ CROSS-REFERENCE: After presenting pipeline results, compare with the Data_Analyt
         : "Filter to your owned opportunities — default true."
     ),
     colleague_name: z.string().optional().describe("Filter by a colleague's name (partial match) — returns all opportunities where they appear as either AE (owner) or SC. Use for coverage/backup scenarios, e.g. 'show me Stéphane's pipeline'."),
+    close_quarter: z.string().optional().describe("Filter by closing quarter using the CRM sn_closequarter field — format '26-Q3'. When set, returns all deals in that quarter (up to 200) regardless of close date sort order. Use for dashboard/forecast views: '26-Q2' for current quarter, '26-Q3' for next."),
   },
-  async ({ search, min_nnacv, top, include_closed, include_zero_value, my_opportunities_only, colleague_name }) => {
+  async ({ search, min_nnacv, top, include_closed, include_zero_value, my_opportunities_only, colleague_name, close_quarter }) => {
     const progress = makeProgress(server);
     const myOpps = my_opportunities_only ?? (isSalesSpecialist || isSalesManager ? false : true);
     const opps = await fetchOpportunities({
@@ -203,6 +204,7 @@ CROSS-REFERENCE: After presenting pipeline results, compare with the Data_Analyt
       includeZeroValue: include_zero_value ?? false,
       top: top ?? 50,
       colleagueSearch: colleague_name,
+      closeQuarter: close_quarter,
     }, progress);
     return { content: [{ type: "text", text: JSON.stringify(opps, null, 2) }] };
   }
