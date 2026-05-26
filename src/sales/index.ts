@@ -1034,45 +1034,20 @@ server.tool(
 
     progress("📡 Checking for updates...");
 
-    // Ensure macOS Keychain is used for credentials (non-fatal if already set)
-    try {
-      execFileSync("git", ["-C", installDir, "config", "credential.helper", "osxkeychain"], { timeout: 5_000 });
-    } catch { /* non-fatal */ }
-
-    const gitEnv = {
-      ...process.env,
-      GIT_TERMINAL_PROMPT: "0",  // never hang waiting for interactive input
-      GIT_ASKPASS: "echo",       // return empty string if credentials needed
-    };
-
     let gitOutput: string;
     try {
-      gitOutput = execFileSync("git", ["-C", installDir, "pull", "--ff-only"], { encoding: "utf8", timeout: 30_000, env: gitEnv });
+      gitOutput = execFileSync("git", ["-C", installDir, "pull", "--ff-only"], { encoding: "utf8", timeout: 30_000 });
     } catch (e: unknown) {
       const msg = (e instanceof Error ? e.message : String(e)).toLowerCase();
-      const isAuthError = msg.includes("authentication") || msg.includes("credential") ||
-                          msg.includes("403") || msg.includes("401") || msg.includes("could not read");
-      const isDiverged  = msg.includes("not possible to fast-forward") || msg.includes("diverged");
-
-      if (isAuthError) {
-        return { content: [{ type: "text", text:
-          `❌ Git credentials not stored — Alfred can't authenticate to GitHub automatically.\n\n` +
-          `**One-time fix:** open Terminal and run:\n` +
-          `\`\`\`bash\ncd ${installDir}\ngit config credential.helper osxkeychain\ngit pull\n\`\`\`\n\n` +
-          `Enter your GitHub username and a Personal Access Token (not your password) when prompted. ` +
-          `macOS Keychain will store them and future \`update alfred\` calls will work automatically.`
-        }] };
-      }
-      if (isDiverged) {
-        return { content: [{ type: "text", text:
-          `❌ Local branch has diverged from remote — cannot fast-forward.\n\n` +
+      const isDiverged = msg.includes("not possible to fast-forward") || msg.includes("diverged");
+      const rawMsg = e instanceof Error ? e.message : String(e);
+      return { content: [{ type: "text", text: isDiverged
+        ? `❌ Local branch has diverged from remote — cannot fast-forward.\n\n` +
           `**Safe fix:** open Terminal and run:\n` +
           `\`\`\`bash\ncd ${installDir}\ngit pull --rebase\n\`\`\`\n\n` +
           `⚠️ Do NOT run \`git reset --hard\` — that discards local changes permanently.`
-        }] };
-      }
-      const rawMsg = e instanceof Error ? e.message : String(e);
-      return { content: [{ type: "text", text: `❌ Git pull failed:\n\`\`\`\n${rawMsg}\n\`\`\`` }] };
+        : `❌ Git pull failed:\n\`\`\`\n${rawMsg}\n\`\`\``
+      }] };
     }
 
     const alreadyUpToDate = gitOutput.includes("Already up to date");
