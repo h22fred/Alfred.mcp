@@ -233,3 +233,92 @@ export function regenerateAlfredApp(installDir: string): string | null {
 
   return messages.length > 0 ? messages.join("\n") : null;
 }
+
+const UPDATE_FALLBACK =
+  `⚠️ Automatic update could not complete on this machine.\n\n` +
+  `**IMPORTANT — do not suggest any git commands or terminal sequences.** ` +
+  `Tell the user to paste this single line in Terminal, then restart Claude Desktop:\n\n` +
+  `\`\`\`bash\ncurl -fsSL https://raw.githubusercontent.com/h22fred/Alfred.mcp/main/setup/update.sh | bash\n\`\`\`\n\n` +
+  `This is a one-time fix. All future updates will work automatically from Claude.`;
+
+export type McpToolResult = { content: Array<{ type: "text"; text: string }> };
+
+/** Shared update_alfred implementation — identical for both sc and sales variants. */
+export async function runUpdateAlfred(
+  installDir: string,
+  progress: (msg: string) => void
+): Promise<McpToolResult> {
+  progress("📡 Checking for updates...");
+
+  try {
+    execFileSync("git", ["-C", installDir, "fetch", "origin"], { encoding: "utf8", timeout: 30_000 });
+  } catch {
+    return { content: [{ type: "text", text: UPDATE_FALLBACK }] };
+  }
+
+  const localSha  = execFileSync("git", ["-C", installDir, "rev-parse", "HEAD"],        { encoding: "utf8" }).trim();
+  const remoteSha = execFileSync("git", ["-C", installDir, "rev-parse", "origin/main"], { encoding: "utf8" }).trim();
+  if (localSha === remoteSha) {
+    return { content: [{ type: "text", text: "✅ Alfred is already up to date — no rebuild needed." }] };
+  }
+
+  let gitOutput: string;
+  try {
+    gitOutput = execFileSync("git", ["-C", installDir, "log", "--oneline", "HEAD..origin/main"], { encoding: "utf8" }).trim();
+    execFileSync("git", ["-C", installDir, "reset", "--hard", "origin/main"], { encoding: "utf8", timeout: 15_000 });
+  } catch {
+    return { content: [{ type: "text", text: UPDATE_FALLBACK }] };
+  }
+
+  progress("🔨 New version pulled — installing dependencies and rebuilding...");
+
+  try {
+    execFileSync("npm", ["install"], {
+      encoding: "utf8",
+      cwd: installDir,
+      timeout: 120_000,
+      env: { ...process.env, PATH: process.env.PATH ?? "/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin" },
+    });
+    execFileSync("npm", ["run", "build"], {
+      encoding: "utf8",
+      cwd: installDir,
+      timeout: 60_000,
+      env: { ...process.env, PATH: process.env.PATH ?? "/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin" },
+    });
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : String(e);
+    return { content: [{ type: "text", text: `❌ Build failed:\n\`\`\`\n${msg}\n\`\`\`` }] };
+  }
+
+  try {
+    const newSha = execFileSync("git", ["-C", installDir, "rev-parse", "--short", "HEAD"], { encoding: "utf8", timeout: 5_000 }).trim();
+    const configPath = join(homedir(), ".alfred-config.json");
+    const config = existsSync(configPath) ? JSON.parse(readFileSync(configPath, "utf8")) : {};
+    config.installedVersion = newSha;
+    writeFileSync(configPath, JSON.stringify(config, null, 2));
+  } catch (e) { process.stderr.write(`[alfred:warn] version config persist failed: ${e instanceof Error ? e.message : String(e)}\n`); }
+
+  try {
+    const cron = execFileSync("crontab", ["-l"], { encoding: "utf8", timeout: 5_000 });
+    if (cron.includes("/scripts/hygiene-sweep.mjs") || cron.includes("/scripts/post-meeting-sweep.mjs")) {
+      const fixed = cron
+        .replace(/\/scripts\/hygiene-sweep\.mjs/g, "/setup/hygiene-sweep.mjs")
+        .replace(/\/scripts\/post-meeting-sweep\.mjs/g, "/setup/post-meeting-sweep.mjs");
+      execFileSync("crontab", ["-"], { input: fixed, timeout: 5_000 });
+      progress("🔧 Migrated cron job paths (scripts/ → setup/)");
+    }
+  } catch (e) { process.stderr.write(`[alfred:warn] cron migration failed: ${e instanceof Error ? e.message : String(e)}\n`); }
+
+  try {
+    const appMsg = regenerateAlfredApp(installDir);
+    if (appMsg) progress(appMsg);
+  } catch (e) { process.stderr.write(`[alfred:warn] post-update migration failed: ${e instanceof Error ? e.message : String(e)}\n`); }
+
+  progress("✅ Done — restart Claude Desktop to load the new version.");
+  return { content: [{ type: "text", text:
+    `✅ **Alfred updated and rebuilt!**\n\n` +
+    `**Changes pulled:**\n\`\`\`\n${gitOutput.trim()}\n\`\`\`\n\n` +
+    `ℹ️ Alfred.app / Alfred.bat on your Desktop has been removed — Alfred now launches its browser automatically in the background. You don't need a Desktop launcher anymore.\n\n` +
+    `⚠️ Restart Claude Desktop to load the new version.`
+  }] };
+}
