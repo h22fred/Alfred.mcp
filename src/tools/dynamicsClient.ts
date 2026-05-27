@@ -1081,7 +1081,15 @@ export async function updateEngagement(
     } catch { /* non-fatal — Dynamics will set its own default */ }
   }
 
-  if (patch.completedDate) payload.sn_completeddate = patch.completedDate;
+  if (patch.completedDate) {
+    payload.sn_completeddate = patch.completedDate;
+    // Auto-mark Complete when setting a past/today date (unless explicitly reopening)
+    const todayForUpdate = new Date().toISOString().slice(0, 10);
+    if (patch.markComplete !== false && patch.completedDate <= todayForUpdate) {
+      payload.statecode = 1;
+      payload.statuscode = 2;
+    }
+  }
   if (patch.markComplete === true)  { payload.statecode = 1; payload.statuscode = 2; }
   if (patch.markComplete === false) { payload.statecode = 0; payload.statuscode = 1; }
   if (patch.description) payload.sn_description = buildDescription(patch.description);
