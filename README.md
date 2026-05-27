@@ -8,7 +8,9 @@ Built by **Fred** — Solution Consultant
 
 <a href="https://twitter.com/intent/follow?screen_name=h22fred"><img src="setup/assets/btn-x.svg" alt="Follow on X" height="60"></a>&nbsp;&nbsp;<a href="https://github.com/h22fred"><img src="setup/assets/btn-github.svg" alt="Follow on GitHub" height="60"></a>
 
-Connects Claude Desktop directly to your CRM, calendar, email and Teams — using your existing browser session. No Azure app registration. No stored credentials. No CRM admin work ever again.
+Connects Claude Desktop directly to your CRM — using your existing browser session. No Azure app registration. No stored credentials. No CRM admin work ever again.
+
+> **Note:** Calendar, email, and Teams chat are now handled by the [Microsoft 365 connector](https://claude.ai/settings/integrations) in Claude Desktop — no Alfred needed for those.
 
 Two flavours — one installer:
 
@@ -26,9 +28,7 @@ Two flavours — one installer:
 | Source | Capabilities |
 |--------|-------------|
 | **Dynamics 365** | List opportunities (incl. colleague pipeline), create/update/complete engagements, create on behalf of colleague, hygiene sweep, Tech Win assessment, collaboration notes, delete cancelled engagements |
-| **Outlook Calendar** | Show calendar by date range, search meetings |
-| **Outlook Email** | Search emails, list inbox/sent/subfolders, full body, filter unread |
-| **Teams** | Get meeting transcripts, post to channels, read chats |
+| **Teams** | Get meeting transcripts (unique — not in M365 connector), post to channels |
 | **Account Insights** | License utilization, renewal dates, upsell/cross-sell detection |
 
 ### Alfred Sales (Account Executive)
@@ -36,9 +36,7 @@ Two flavours — one installer:
 | Source | Capabilities |
 |--------|-------------|
 | **Dynamics 365** | Create & update opportunities, assign SC, search accounts/users, add notes, territory pipeline overview |
-| **Outlook Calendar** | Show calendar by date range, search meetings |
-| **Outlook Email** | Search emails, list inbox/sent/subfolders, full body, filter unread |
-| **Teams** | Get meeting transcripts, post to channels, read chats |
+| **Teams** | Get meeting transcripts (unique — not in M365 connector), post to channels |
 | **Account Insights** | License utilization, renewal dates, upsell/cross-sell detection |
 
 ---
@@ -138,7 +136,7 @@ After that, `update_alfred` in Claude will work for all future updates.
 ## Every session
 
 1. Open Claude Desktop — Alfred's browser launches automatically in the background
-2. **First time (and ~every 8 hours when tokens expire):** log into Dynamics, Outlook and Teams (SSO) in the Alfred browser window — the browser appears briefly, then closes automatically once auth is complete
+2. **First time (and ~every 8 hours when tokens expire):** log into Dynamics and Teams (SSO) in the Alfred browser window — the browser appears briefly, then closes automatically once auth is complete
 
 ---
 
@@ -152,7 +150,6 @@ Which accounts are missing a Technical Win?
 Assess the Tech Win for Acme Corp
 Create a Discovery engagement for Contoso from my Tuesday meeting
 Mark the Acme Tech Win as complete
-Show my calendar this week
 Get the transcript from my Contoso demo last Thursday
 Detect post-meeting engagements from this week
 Delete the cancelled Demo engagement on Fabrikam
@@ -179,7 +176,7 @@ Alfred launches a private Chromium browser (named "Alfred") via Playwright with 
 
 Auth flow:
 1. **Dynamics:** reads `CrmOwinAuthC1/C2` cookies from the live session
-2. **Outlook/Graph:** reads session cookies from the Outlook tab in the Alfred browser
+2. **Teams Graph token:** captured from the Teams tab (used for meeting transcripts only)
 3. Tokens cached to disk — survive Claude Desktop restarts without re-login
 4. Browser closes automatically ~3 seconds after tokens are cached — reopens silently when next needed (typically every ~8 hours when the cache expires)
 
