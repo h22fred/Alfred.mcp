@@ -1,5 +1,5 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { copyFileSync, existsSync, readFileSync, readdirSync, rmSync, writeFileSync } from "fs";
+import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "fs";
 import { execFileSync } from "child_process";
 import { homedir } from "os";
 import { join } from "path";
@@ -50,6 +50,39 @@ export class WriteRateLimiter {
     }
     this.timestamps.push(now);
   }
+}
+
+const NOTICE_DIR = join(homedir(), ".alfred", "notices");
+const MS365_MIGRATION_FLAG = join(NOTICE_DIR, "ms365-migration-shown");
+
+/**
+ * Returns migration notice text if this is the first time it's been shown, otherwise null.
+ * Writes the flag file on first call so subsequent calls return null.
+ */
+export function getMs365MigrationNotice(): string | null {
+  if (existsSync(MS365_MIGRATION_FLAG)) return null;
+  try {
+    mkdirSync(NOTICE_DIR, { recursive: true });
+    writeFileSync(MS365_MIGRATION_FLAG, new Date().toISOString(), "utf8");
+  } catch { /* non-fatal */ }
+  return [
+    "📢 **Alfred update notice — Microsoft 365 tools moved**",
+    "",
+    "Calendar, email, and Teams chat features are no longer in Alfred.",
+    "They are now available through the **Microsoft 365 connector** in Claude,",
+    "which provides full read access to your calendar, mail, and Teams conversations",
+    "without requiring Alfred to be running.",
+    "",
+    "**What moved:**",
+    "- `get_calendar_events` → use Microsoft 365 connector",
+    "- `search_emails` → use Microsoft 365 connector",
+    "- `list_mail_folders` → use Microsoft 365 connector",
+    "- `get_teams_chats` → use Microsoft 365 connector",
+    "",
+    "**Still in Alfred:** `get_teams_transcript` (meeting transcripts — not yet in M365 connector)",
+    "",
+    "This message will not appear again.",
+  ].join("\n");
 }
 
 /**

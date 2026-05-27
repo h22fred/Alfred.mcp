@@ -128,7 +128,7 @@ async function launchContext(): Promise<BrowserContext> {
   return ctx;
 }
 
-/** Open default tabs: reuse page[0] for Dynamics, create 2 more for Outlook + Teams. */
+/** Open default tabs: Dynamics (required) + Teams (for transcript auth). */
 async function openDefaultTabs(ctx: BrowserContext): Promise<void> {
   const pages = ctx.pages();
   const dynPage = pages[0] ?? await ctx.newPage();
@@ -137,11 +137,9 @@ async function openDefaultTabs(ctx: BrowserContext): Promise<void> {
       process.stderr.write(`[alfred:warn] failed to navigate to Dynamics: ${e instanceof Error ? e.message : String(e)}\n`);
     });
   }
-  for (const url of [OUTLOOK_URLS[0]!, "https://teams.microsoft.com/v2/"]) {
-    await ctx.newPage().then(p => p.goto(url, { waitUntil: "domcontentloaded", timeout: 30_000 })).catch((e) => {
-      process.stderr.write(`[alfred:warn] failed to open tab ${url}: ${e instanceof Error ? e.message : String(e)}\n`);
-    });
-  }
+  await ctx.newPage().then(p => p.goto("https://teams.microsoft.com/v2/", { waitUntil: "domcontentloaded", timeout: 30_000 })).catch((e) => {
+    process.stderr.write(`[alfred:warn] failed to open Teams tab: ${e instanceof Error ? e.message : String(e)}\n`);
+  });
 }
 
 /**
@@ -198,20 +196,14 @@ export async function ensureAlfred(progress: ProgressFn = () => {}): Promise<voi
   progress("✅ Alfred ready — please log into Dynamics, Outlook and Teams in the new window");
 }
 
-/** Probe Dynamics and Outlook cookies to warn if sessions are expired or missing. */
+/** Probe Dynamics cookies to warn if session is expired or missing. */
 async function verifySessionHealth(progress: ProgressFn): Promise<void> {
   try {
     const ctx = await getAlfredContext();
-    const cookies = await ctx.cookies([DYNAMICS_URL, ...OUTLOOK_URLS]);
+    const cookies = await ctx.cookies([DYNAMICS_URL]);
     const hasDynamics = cookies.some(c => AUTH_COOKIE_NAMES.includes(c.name));
-    const hasOutlook = cookies.some(c => c.domain?.includes("outlook") || c.domain?.includes("office"));
-
-    const warnings: string[] = [];
-    if (!hasDynamics) warnings.push("Dynamics (not logged in)");
-    if (!hasOutlook)  warnings.push("Outlook (not logged in)");
-
-    if (warnings.length > 0) {
-      progress(`⚠️ Alfred is running but missing sessions: ${warnings.join(", ")}. Please log in.`);
+    if (!hasDynamics) {
+      progress("⚠️ Alfred is running but not logged into Dynamics. Please log in.");
     }
   } catch {
     // Non-fatal

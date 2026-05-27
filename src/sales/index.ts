@@ -29,7 +29,6 @@ import {
   type EngagementType,
   type EngagementDescription,
 } from "../tools/dynamicsClient.js";
-import { getCalendarEvents } from "../tools/outlookClient.js";
 import { registerCommonTools } from "../common-tools.js";
 import { execFileSync } from "child_process";
 import { readFileSync, existsSync, writeFileSync } from "fs";
@@ -991,34 +990,6 @@ IMPORTANT: This is irreversible. Always:
       `✅ Deleted: **${engagement.sn_name}** (${engagement.sn_engagementnumber ?? engagement_id})\n` +
       `Type: ${engagement.engagementTypeName ?? "—"} · Opportunity: ${engagement.opportunityName ?? "—"}`
     }] };
-  }
-);
-
-// ---------------------------------------------------------------------------
-// Tool: get_calendar_events
-// ---------------------------------------------------------------------------
-server.tool(
-  "get_calendar_events",
-  `Fetch calendar events from Outlook via the debug Chrome window.
-
-Requires the user to be logged into Outlook (outlook.cloud.microsoft.com) in the Alfred Chrome window.
-
-IMPORTANT: Before calling this tool, ask the user:
-1. "Which date range? (e.g. 'this week', 'next 2 weeks', specific dates)"
-2. "Any keyword to filter by? (e.g. 'Fabrikam', 'ICW', 'standup' — or leave blank for all)"`,
-  {
-    start_date:  z.string().describe("Start date in ISO format, e.g. 2026-03-16"),
-    end_date:    z.string().describe("End date in ISO format, e.g. 2026-03-20"),
-    search:      z.string().optional().describe("Optional keyword to filter event subjects, organizer, or attendee names."),
-    top:         z.number().optional().describe("Max events to fetch (default 100)."),
-    categories:  z.array(z.string()).optional().describe("Filter to events matching these Outlook categories (e.g. ['on-site meeting']). Applied client-side after fetch."),
-  },
-  async ({ start_date, end_date, search, top, categories }) => {
-    const progress = makeProgress(server);
-    const events = await getCalendarEvents(start_date, end_date, search, progress, top ?? 100, categories);
-    return {
-      content: [{ type: "text", text: externalData("Outlook calendar", events) }],
-    };
   }
 );
 

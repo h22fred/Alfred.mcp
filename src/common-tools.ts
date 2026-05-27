@@ -17,7 +17,7 @@ import { join } from "path";
 import { execFileSync } from "child_process";
 
 import { DYNAMICS_HOST } from "./config.js";
-import { requireGuid, makeProgress, WriteRateLimiter, externalData } from "./shared.js";
+import { requireGuid, makeProgress, WriteRateLimiter, externalData, getMs365MigrationNotice } from "./shared.js";
 import {
   fetchEngagementsByOpportunity,
   fetchEngagementsByAccount,
@@ -56,8 +56,8 @@ import {
   type EngagementDescription,
 } from "./tools/dynamicsClient.js";
 import { ensureAlfred, exitAlfred, restartAlfred, clearAuthCache } from "./auth/tokenExtractor.js";
-import { getEmails, listMailFolders, clearGraphTokenCache } from "./tools/outlookClient.js";
-import { postTeamsNotification, getTeamsTranscript, getTeamsChats, setTeamsWebhook } from "./tools/teamsClient.js";
+import { clearGraphTokenCache } from "./tools/outlookClient.js";
+import { postTeamsNotification, getTeamsTranscript, setTeamsWebhook } from "./tools/teamsClient.js";
 import { runHygieneSweep, formatHygieneReport } from "./tools/hygieneClient.js";
 import { detectPostMeetingEngagements, notifyPostMeetingCandidates } from "./tools/postMeetingClient.js";
 
@@ -100,12 +100,16 @@ export function registerCommonTools(
   // against the same ceiling as sc/sales-specific write operations (M1 fix).
   const engagementWriteLimiter = writeLimiter ?? new WriteRateLimiter(10, 10 * 60 * 1000);
 
+  // Emit migration notice to stderr on startup; injected into first tool response below.
+  const migrationNotice = getMs365MigrationNotice();
+  if (migrationNotice) process.stderr.write(`[alfred:notice] ${migrationNotice.replace(/\n/g, " | ")}\n`);
+
   // ---------------------------------------------------------------------------
   // Tool: open_chrome_debug
   // ---------------------------------------------------------------------------
   server.tool(
     "open_chrome_debug",
-    `Launch Alfred (Chrome with remote debugging on port 9222) if it's not already running. Opens Dynamics, Outlook and Teams tabs automatically.
+    `Launch Alfred (browser) if it's not already running. Opens Dynamics and Teams tabs automatically.
 
 IMPORTANT: Call this tool AUTOMATICALLY — without asking the user — whenever any tool fails with an error mentioning:
 - "Alfred not running"
@@ -120,18 +124,20 @@ IMPORTANT: Call this tool AUTOMATICALLY — without asking the user — whenever
 This tool also clears all cached auth tokens, so call it proactively if you suspect a stale session.
 
 IMPORTANT AFTER CALLING THIS TOOL:
-- Tell the user: "Alfred is open — please log into Dynamics, Outlook and Teams, then let me know when you're ready."
+- Tell the user: "Alfred is open — please log into Dynamics and Teams, then let me know when you're ready."
 - STOP and wait for the user to confirm they are logged in before retrying any other tool.
 - Do NOT automatically retry the original tool — the user must log in first.`,
     {},
     async () => {
       const progress = makeProgress(server);
-      // Clear all token caches — ensures fresh auth after any Chrome restart
+      // Clear all token caches — ensures fresh auth after any browser restart
       clearAuthCache();
       clearGraphTokenCache();
       await ensureAlfred(progress);
+      const notice = getMs365MigrationNotice();
+      const baseMsg = "✅ Alfred is open. Please log into Dynamics and Teams in the browser window, then tell me when you're ready and I'll continue.";
       return {
-        content: [{ type: "text", text: "✅ Alfred is open. Please log into Dynamics, Outlook and Teams in the Chrome window, then tell me when you're ready and I'll continue." }],
+        content: [{ type: "text", text: notice ? `${notice}\n\n---\n\n${baseMsg}` : baseMsg }],
       };
     }
   );
@@ -1033,35 +1039,6 @@ Requires Alfred to be running with Teams or Outlook open. The Graph token is cap
   );
 
   // ---------------------------------------------------------------------------
-  // Tool: get_teams_chats
-  // ---------------------------------------------------------------------------
-  server.tool(
-    "get_teams_chats",
-    `Fetch Teams chat conversations via Microsoft Graph. Can list recent chats, search by person/topic, or fetch messages from a specific chat.
-
-Requires Alfred to be running with Teams or Outlook open. The Graph token is captured automatically.
-
-Use cases:
-- "Show my recent Teams chats with Fabrikam"
-- "Get messages from my chat with John"
-- "Show DMs about Acme Corp renewal"`,
-    {
-      search:           z.string().optional().describe("Filter chats by topic or member name (e.g. 'Fabrikam', 'John Smith')"),
-      chat_id:          z.string().optional().describe("Fetch a specific chat by its Graph chat ID"),
-      include_messages: z.boolean().optional().describe("Include recent messages for each chat (default false — list chats only)"),
-      top:              z.number().optional().describe("Max chats to return (default 50)"),
-    },
-    async ({ search, chat_id, include_messages, top }) => {
-      const progress = makeProgress(server);
-      const chats = await getTeamsChats(
-        { search, chatId: chat_id, includeMessages: include_messages ?? false, top },
-        progress
-      );
-      return { content: [{ type: "text", text: externalData("Teams chats", chats) }] };
-    }
-  );
-
-  // ---------------------------------------------------------------------------
   // Tool: run_hygiene_sweep
   // ---------------------------------------------------------------------------
   server.tool(
@@ -1087,68 +1064,6 @@ CROSS-REFERENCE: After presenting results, use Data_Analytics_Connection account
         excludeAppStore: exclude_app_store,
       }, progress);
       return { content: [{ type: "text", text: formatHygieneReport(results) }] };
-    }
-  );
-
-  // ---------------------------------------------------------------------------
-  // Tool: search_emails
-  // ---------------------------------------------------------------------------
-  server.tool(
-    "search_emails",
-    `Search or list emails from Outlook via the debug Chrome window.
-
-Requires the user to be logged into Outlook in the Alfred Chrome window.
-No Azure registration needed — the request runs inside the already-authenticated browser tab.
-
-SEARCH STRATEGY — pick the right approach based on context:
-
-1. **Client/account query** (e.g. "emails about Acme Corp", "Fabrikam correspondence"):
-   → First try folder = client name (this user organises into client folders like "Acme Corp", "Fabrikam").
-   → If folder search fails or returns nothing, retry WITHOUT folder to search all mail.
-
-2. **General keyword search** (e.g. "budget Q3", "renewal"):
-   → Omit folder — searches ALL mail across every folder including client folders.
-
-3. **Browse recent mail** (e.g. "latest emails", "unread"):
-   → Omit folder + omit search — defaults to inbox.
-
-Use list_mail_folders first if unsure whether a client folder exists. Keep search keywords SHORT (1-3 words) — the full-text index handles short terms best.`,
-    {
-      search:      z.string().optional().describe("Full-text search query (e.g. 'Fabrikam renewal', 'budget'). Without a folder, searches ALL mail across every folder."),
-      folder:      z.string().optional().describe("Folder to search/browse. Omit to search ALL mail. Use 'inbox', 'sentitems', 'drafts', or a custom folder name (e.g. 'Acme Corp', 'Fabrikam'). Resolved by display name."),
-      top:         z.number().optional().describe("Max number of messages to return (default 25)"),
-      unread_only: z.boolean().optional().describe("If true, return only unread messages (only applies when not searching)"),
-      full_body:   z.boolean().optional().describe("If true, fetch the full email body (HTML stripped to clean plain text). Default false — returns preview only."),
-    },
-    async ({ search, folder, top, unread_only, full_body }) => {
-      const progress = makeProgress(server);
-      const messages = await getEmails(
-        { search, folder, top: top ?? 25, unreadOnly: unread_only, fullBody: full_body },
-        progress
-      );
-      return {
-        content: [{ type: "text", text: externalData("Outlook emails", messages) }],
-      };
-    }
-  );
-
-  // ---------------------------------------------------------------------------
-  // Tool: list_mail_folders
-  // ---------------------------------------------------------------------------
-  server.tool(
-    "list_mail_folders",
-    "List all mail folders in the user's Outlook mailbox, including custom client folders. Use this to discover folder names before searching emails in a specific folder.",
-    {},
-    async () => {
-      const progress = makeProgress(server);
-      const folders = await listMailFolders(progress);
-      const lines = folders.map(f => {
-        const unread = f.unreadItemCount > 0 ? ` (${f.unreadItemCount} unread)` : "";
-        return `• **${f.displayName}** — ${f.totalItemCount} items${unread}`;
-      });
-      return {
-        content: [{ type: "text", text: lines.length ? lines.join("\n") : "No mail folders found." }],
-      };
     }
   );
 

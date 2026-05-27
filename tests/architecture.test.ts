@@ -50,11 +50,7 @@ describe("SC / Sales tool parity", () => {
     "get_engagement_participants",
     "search_my_engagements",
     "search_my_collaboration_opportunities",
-    "get_calendar_events",
-    "search_emails",
-    "list_mail_folders",
     "get_teams_transcript",
-    "get_teams_chats",
     "configure_teams_webhook",
     "post_teams_notification",
     "run_hygiene_sweep",
@@ -300,13 +296,10 @@ describe("tool description safety", () => {
   });
 
   it("external data sources use externalData wrapper", () => {
-    // Calendar, email, transcript, chats should all use externalData()
-    // These may live in common-tools.ts, sc/index.ts, or sales/index.ts
+    // Transcript (still in Alfred) must use externalData().
+    // Calendar/email/chats moved to M365 connector — no longer in Alfred.
     const allSrc = scSrc + salesSrc + commonSrc;
-    expect(allSrc).toContain('externalData("Outlook calendar"');
-    expect(allSrc).toContain('externalData("Outlook emails"');
     expect(allSrc).toContain('externalData("Teams transcripts"');
-    expect(allSrc).toContain('externalData("Teams chats"');
   });
 
   it("read-before-write instruction in create_engagement", () => {
