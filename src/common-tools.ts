@@ -91,9 +91,14 @@ function engagementListItem(e: Engagement): string {
 // Exported registration function
 // ---------------------------------------------------------------------------
 
-export function registerCommonTools(server: McpServer, _role: "sc" | "sales"): void {
-  // Rate limiters — fresh instances per server process
-  const engagementWriteLimiter = new WriteRateLimiter(10, 10 * 60 * 1000); // 10 per 10 min
+export function registerCommonTools(
+  server: McpServer,
+  _role: "sc" | "sales",
+  writeLimiter?: WriteRateLimiter
+): void {
+  // Reuse the caller's limiter if provided — ensures common-tools operations count
+  // against the same ceiling as sc/sales-specific write operations (M1 fix).
+  const engagementWriteLimiter = writeLimiter ?? new WriteRateLimiter(10, 10 * 60 * 1000);
 
   // ---------------------------------------------------------------------------
   // Tool: open_chrome_debug

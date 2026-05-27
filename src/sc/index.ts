@@ -90,7 +90,7 @@ const server = new McpServer({
 });
 
 // Register the 37 shared tools (identical/cosmetic between SC and Sales)
-registerCommonTools(server, "sc");
+registerCommonTools(server, "sc", engagementWriteLimiter);
 
 // ---------------------------------------------------------------------------
 // Tool: list_opportunities

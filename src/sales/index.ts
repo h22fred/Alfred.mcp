@@ -89,7 +89,7 @@ const server = new McpServer({
   version: "1.0.0",
 });
 
-registerCommonTools(server, "sales");
+registerCommonTools(server, "sales", engagementWriteLimiter);
 
 // ---------------------------------------------------------------------------
 // Tool: search_accounts

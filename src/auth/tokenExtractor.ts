@@ -309,6 +309,7 @@ export async function getAuthCookies(progress: ProgressFn = () => {}): Promise<s
   try {
     return await promise;
   } finally {
+    // lgtm[js/missing-await] — intentional Promise reference comparison for dedup guard
     if (inflightDynamics === promise) inflightDynamics = null;
   }
 }
@@ -373,6 +374,7 @@ export async function getOutlookCookies(progress: ProgressFn = () => {}): Promis
   try {
     return await promise;
   } finally {
+    // lgtm[js/missing-await] — intentional Promise reference comparison for dedup guard
     if (inflightOutlook === promise) inflightOutlook = null;
   }
 }
