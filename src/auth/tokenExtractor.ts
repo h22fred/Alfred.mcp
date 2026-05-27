@@ -58,7 +58,7 @@ function patchChromiumName(): void {
   try {
     const pwCache = join(homedir(), "Library", "Caches", "ms-playwright");
     if (!existsSync(pwCache)) return;
-    const dirs = readdirSync(pwCache).filter(d => d.startsWith("chromium-"));
+    const dirs = readdirSync(pwCache).filter(d => /^chromium-\d+$/.test(d));
     for (const dir of dirs) {
       const plist = join(pwCache, dir, "chrome-mac", "Chromium.app", "Contents", "Info.plist");
       let content: string;

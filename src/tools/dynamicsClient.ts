@@ -204,11 +204,13 @@ async function dynamicsFetch(path: string, options: RequestInit = {}, progress: 
   // Guard against HTML responses on success (e.g. auth redirects returning 200)
   const ct = response.headers.get("content-type") ?? "";
   if (ct && !ct.includes("json") && !ct.includes("octet") && options.method !== "DELETE" && response.status !== 204) {
-    const snippet = await response.text().catch(() => "").then(t => t.slice(0, 150));
+    // Log the raw snippet to stderr only — do not expose auth redirect content to MCP callers
+    response.text().catch(() => "").then(t => {
+      process.stderr.write(`[alfred:warn] non-JSON response (${ct}): ${t.slice(0, 150)}\n`);
+    });
     throw new Error(
       `Dynamics returned ${ct} instead of JSON — likely a session redirect.\n` +
-      `Open Alfred and confirm you are logged into Dynamics.\n` +
-      `Response preview: ${snippet}`
+      `Open Alfred and confirm you are logged into Dynamics.`
     );
   }
 
@@ -647,7 +649,7 @@ export async function fetchEngagementsGlobal(
 
   // Country filter — OData navigation property path through linked account
   if (filter.country) {
-    const safe = filter.country.replace(/'/g, "''");
+    const safe = sanitizeODataSearch(filter.country);
     filters.push(`sn_accountid/address1_country eq '${safe}'`);
   } else if (filter.region) {
     // Resolve region name → country list (case-insensitive key lookup)
@@ -1358,7 +1360,8 @@ export async function completeActivity(
     phonecall: "phonecalls",
     task: "tasks",
   };
-  const entity = entityMap[safe.toLowerCase()] ?? `${safe.toLowerCase()}s`;
+  const entity = entityMap[safe.toLowerCase()];
+  if (!entity) throw new Error(`Unknown activity type '${safe}' — supported: appointment, phonecall, task`);
 
   await dynamicsFetch(`/${entity}(${activityId})`, {
     method: "PATCH",
@@ -1955,8 +1958,11 @@ export async function fetchMyCollaborationOpportunities(
 
   const collabRes = await dynamicsFetch(collabPath, {}, progress);
   const collabData = await collabRes.json();
+  const COLLAB_GUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
   const oppIds = [...new Set(
-    (collabData.value ?? []).map((r: Record<string, unknown>) => r._sn_opportunity_value as string).filter(Boolean)
+    (collabData.value ?? [])
+      .map((r: Record<string, unknown>) => r._sn_opportunity_value as string)
+      .filter((id: string) => typeof id === "string" && COLLAB_GUID_RE.test(id))
   )] as string[];
 
   if (oppIds.length === 0) {

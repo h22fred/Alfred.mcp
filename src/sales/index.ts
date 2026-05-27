@@ -130,7 +130,7 @@ server.tool(
   async ({ name }) => {
     const progress = makeProgress(server);
     const users = await searchSystemUsers(name, progress);
-    return { content: [{ type: "text", text: JSON.stringify(users, null, 2) }] };
+    return { content: [{ type: "text", text: externalData("Dynamics users", users) }] };
   }
 );
 
@@ -206,7 +206,7 @@ CROSS-REFERENCE: After presenting pipeline results, compare with the Data_Analyt
       colleagueSearch: colleague_name,
       closeQuarter: close_quarter,
     }, progress);
-    return { content: [{ type: "text", text: JSON.stringify(opps, null, 2) }] };
+    return { content: [{ type: "text", text: externalData("Dynamics opportunities", opps) }] };
   }
 );
 

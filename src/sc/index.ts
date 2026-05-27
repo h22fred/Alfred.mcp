@@ -170,7 +170,7 @@ CROSS-REFERENCE: After presenting pipeline results, compare with the Data_Analyt
     };
     const opportunities = await fetchOpportunities(filter, progress);
     return {
-      content: [{ type: "text", text: JSON.stringify(opportunities, null, 2) }],
+      content: [{ type: "text", text: externalData("Dynamics opportunities", opportunities) }],
     };
   }
 );

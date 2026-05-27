@@ -393,7 +393,7 @@ Filtering by country/region only matches engagements with a linked account that 
       const progress = makeProgress(server);
       const product = await getProductById(id, progress);
       return {
-        content: [{ type: "text", text: JSON.stringify(product, null, 2) }],
+        content: [{ type: "text", text: externalData("Dynamics product", product) }],
       };
     }
   );
@@ -814,7 +814,7 @@ Format for readability. After generating, ask the user: "Save this to Dynamics a
         existingSummary: existingSummary.length > 0 ? existingSummary[0] : null,
       };
 
-      return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
+      return { content: [{ type: "text", text: externalData("Dynamics opportunity context", data) }] };
     }
   );
 

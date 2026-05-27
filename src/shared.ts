@@ -199,7 +199,7 @@ export function regenerateAlfredApp(installDir: string): string | null {
     const pwCache = join(home, "Library", "Caches", "ms-playwright");
     if (existsSync(pwCache)) {
       try {
-        const dirs = readdirSync(pwCache).filter(d => d.startsWith("chromium-"));
+        const dirs = readdirSync(pwCache).filter(d => /^chromium-\d+$/.test(d));
         for (const dir of dirs) {
           const bundle = join(pwCache, dir, "chrome-mac", "Chromium.app");
           const icnsDest = join(bundle, "Contents", "Resources", "app.icns");
