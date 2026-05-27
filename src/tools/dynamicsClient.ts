@@ -848,16 +848,13 @@ export interface CreateAccountEngagementInput {
   notes?: string;
   completedDate?: string;
   primaryProductId?: string;
-  category?: "Pre Sale" | "Post Sale"; // sn_categorycode — defaults based on type if omitted
   description?: string; // pre-built structured description (from buildDescription)
   ownerId?: string; // systemuser GUID — set when creating on behalf of another SC
 }
 
-// Option set values for sn_categorycode
-const ENGAGEMENT_CATEGORY_CODES: Record<"Pre Sale" | "Post Sale", number> = {
-  "Pre Sale": 1,
-  "Post Sale": 2,
-};
+// sn_categorycode option set — valid range 876130000-876130011
+// 876130000 = "Solution Consultant" (confirmed from Dynamics form; default for all SC/AE engagements)
+const ENGAGEMENT_CATEGORY_SC = 876130000;
 
 // Event-type engagements: point-in-time events that auto-complete even without a completedDate
 const EVENT_TYPE_ENGAGEMENTS = new Set<EngagementType>(["Workshop", "EBC", "Customer Business Review"]);
@@ -873,14 +870,11 @@ export async function createAccountEngagement(input: CreateAccountEngagementInpu
   const isCompleted = isEventTypeAE || (!!input.completedDate && input.completedDate <= todayStrAE);
   const effectiveCompletedDateAE = input.completedDate ?? (isEventTypeAE ? todayStrAE : undefined);
 
-  // Default Pre/Post Sale based on type when not explicitly provided
-  const category = input.category ?? (input.type === "Post Sale Engagement" ? "Post Sale" : "Pre Sale");
-
   const payload: Record<string, unknown> = {
     sn_name: input.name,
     sn_description: input.description ?? input.notes,
     sn_completeddate: effectiveCompletedDateAE,
-    sn_categorycode: ENGAGEMENT_CATEGORY_CODES[category],
+    sn_categorycode: ENGAGEMENT_CATEGORY_SC,
     "sn_engagementtypeid@odata.bind": `/sn_engagementtypes(${typeGuid})`,
     "sn_accountid@odata.bind": `/accounts(${input.accountId})`,
     ...(input.primaryProductId ? { "sn_primaryproductid@odata.bind": `/sn_productfamilies(${input.primaryProductId})` } : {}),

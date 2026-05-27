@@ -275,7 +275,6 @@ Never omit the link.`,
       type:               z.enum(["EBC", "Workshop", "Customer Business Review", "Discovery", "Post Sale Engagement"] as const).describe("Engagement type"),
       name:               z.string().describe("Engagement name, e.g. 'On-Site EBC – Contoso – May 2026'"),
       primary_product_id: z.string().optional().describe("Product family GUID — required by Dynamics. Use get_product or list_products to look up the GUID."),
-      pre_post_sale:      z.enum(["Pre Sale", "Post Sale"]).optional().describe("Pre or Post Sale — defaults to 'Post Sale' for Post Sale Engagement, 'Pre Sale' for all others."),
       key_points:         z.array(z.string()).optional().describe("Main topics covered / outcomes. Each item becomes a bullet point."),
       next_actions:       z.array(z.string()).optional().describe("Follow-up actions. Each item becomes a bullet point."),
       risks:              z.string().optional().describe("Risks or help required (free text)."),
@@ -286,7 +285,7 @@ Never omit the link.`,
       owner_name:         z.string().optional().describe("Name of the SC who should own this engagement (partial match). Use ONLY when explicitly asked to create on behalf of a colleague."),
       owner_confirmed:    z.boolean().optional().describe("REQUIRED when owner_name is set. Must be explicitly true AFTER showing the user the resolved full name and getting their explicit approval."),
     },
-    async ({ account_id, type, name, primary_product_id, pre_post_sale, key_points, next_actions, risks, stakeholders, notes, completed_date, attendees, owner_name, owner_confirmed }) => {
+    async ({ account_id, type, name, primary_product_id, key_points, next_actions, risks, stakeholders, notes, completed_date, attendees, owner_name, owner_confirmed }) => {
       const id = requireGuid(account_id, "account_id");
       const progress = makeProgress(server);
       engagementWriteLimiter.check("create_account_engagement");
@@ -318,7 +317,6 @@ Never omit the link.`,
         type,
         name,
         primaryProductId: primary_product_id,
-        category: pre_post_sale,
         description,
         notes: description ? undefined : notes,
         completedDate: completed_date,
