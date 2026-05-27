@@ -302,17 +302,43 @@ export async function fetchOpportunities(filter: OpportunityFilter = {}, progres
   let filterClause = filter.includeClosed ? "statecode ge 0" : "statecode eq 0";
   if (filter.search) {
     const words = filter.search.trim().split(/\s+/).filter(Boolean);
+
+    // Pre-resolve account IDs matching the full search term — contains() on navigation
+    // properties (parentaccountid/name) is unreliable in some Dynamics instances.
+    // Using _parentaccountid_value eq '<guid>' is always reliable.
+    let accountIds: string[] = [];
+    try {
+      const safeQ = sanitizeODataSearch(filter.search);
+      const acctRes = await dynamicsFetch(
+        `/accounts?$select=accountid&$filter=contains(name,'${safeQ}')&$top=10`,
+        {}, progress
+      );
+      if (acctRes.ok) {
+        const acctData = await acctRes.json() as { value: { accountid: string }[] };
+        accountIds = (acctData.value ?? []).map(a => a.accountid).filter(Boolean);
+      }
+    } catch { /* non-fatal — fall back to name-only search */ }
+
+    const acctClause = accountIds.length > 0
+      ? " or " + accountIds.map(id => `_parentaccountid_value eq ${id}`).join(" or ")
+      : "";
+
     if (words.length === 1) {
       const safe = sanitizeODataSearch(words[0]!);
-      filterClause += ` and (contains(name,'${safe}') or contains(sn_number,'${safe}') or contains(parentaccountid/name,'${safe}'))`;
+      filterClause += ` and (contains(name,'${safe}') or contains(sn_number,'${safe}')${acctClause})`;
     } else {
-      // Multi-word: each word must appear in name OR account name (cross-field AND)
-      // e.g. "SITA Risk" → opp named "Risk Mngt" on account "SITA" → matches
-      const wordClauses = words.map(w => {
+      // Multi-word: each word must appear somewhere in name or number,
+      // OR the account matches (account lookup covers the cross-field case)
+      const nameClauses = words.map(w => {
         const safe = sanitizeODataSearch(w);
-        return `(contains(name,'${safe}') or contains(parentaccountid/name,'${safe}'))`;
+        return `(contains(name,'${safe}') or contains(sn_number,'${safe}'))`;
       });
-      filterClause += ` and (${wordClauses.join(" and ")})`;
+      if (acctClause) {
+        // All words match opp name/number OR account matches full search
+        filterClause += ` and ((${nameClauses.join(" and ")})${acctClause})`;
+      } else {
+        filterClause += ` and (${nameClauses.join(" and ")})`;
+      }
     }
   }
   if (!filter.includeZeroValue && filter.minNnacv !== 0) {
@@ -822,16 +848,9 @@ export async function createEngagement(input: CreateEngagementInput, progress: P
   progress("✅ Engagement created successfully");
 
   // Auto-generate a timeline note using the actual event date, not today
-  if (engId) {
+  if (engId && input.notes) {
     const noteDate = effectiveCompletedDate ?? todayStr;
-    await createTimelineNote(
-      engId,
-      `${input.type} – ${noteDate}`,
-      input.notes
-        ? `Engagement created.\n\n${input.notes}`
-        : `Engagement created.`,
-      progress
-    );
+    await createTimelineNote(engId, `${input.type} – ${noteDate}`, input.notes, progress);
   }
 
   return engagement;
@@ -857,7 +876,7 @@ export interface CreateAccountEngagementInput {
 const ENGAGEMENT_CATEGORY_SC = 876130000;
 
 // Event-type engagements: point-in-time events that auto-complete even without a completedDate
-const EVENT_TYPE_ENGAGEMENTS = new Set<EngagementType>(["Workshop", "EBC", "Customer Business Review"]);
+const EVENT_TYPE_ENGAGEMENTS = new Set<EngagementType>(["Workshop", "EBC", "Customer Business Review", "POV"]);
 
 export async function createAccountEngagement(input: CreateAccountEngagementInput, progress: ProgressFn = () => {}): Promise<Engagement> {
   auditLog("create_account_engagement", { type: input.type, accountId: input.accountId });
@@ -912,14 +931,9 @@ export async function createAccountEngagement(input: CreateAccountEngagementInpu
 
   progress("✅ Account engagement created successfully");
 
-  if (engIdAE) {
+  if (engIdAE && (input.notes || input.description)) {
     const noteDate = effectiveCompletedDateAE ?? todayStrAE;
-    await createTimelineNote(
-      engIdAE,
-      `${input.type} – ${noteDate}`,
-      input.notes ? `Engagement created.\n\n${input.notes}` : `Engagement created.`,
-      progress
-    );
+    await createTimelineNote(engIdAE, `${input.type} – ${noteDate}`, input.notes ?? input.description!, progress);
   }
 
   return engagement;

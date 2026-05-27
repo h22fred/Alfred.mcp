@@ -77,9 +77,8 @@ export async function runHygieneSweep(opts: {
     if (!seen.has(o.opportunityid)) { seen.add(o.opportunityid); allOpps.push(o); }
   }
 
-  // Apply threshold filters client-side
+  // Apply threshold filters client-side (statecode=0 = open — already filtered server-side)
   const opps = allOpps.filter(o =>
-    o.statuscode === 1 &&                                   // open only
     o.nnacv != null && o.nnacv !== 0 &&                     // non-zero NNACV
     (o.nnacv >= minNnacv || o.nnacv < 0)                    // above threshold or negative
   );

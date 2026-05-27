@@ -408,8 +408,10 @@ describe("hygiene sweep filtering", () => {
     expect(hygieneSrc).toMatch(/nnacv.*>=.*minNnacv|minNnacv.*<=.*nnacv|o\.nnacv >= minNnacv/);
   });
 
-  it("hygiene sweep filters to open opportunities only", () => {
-    expect(hygieneSrc).toContain("statuscode === 1");
+  it("hygiene sweep filters to open opportunities via server-side includeClosed:false", () => {
+    // open filter is applied server-side via includeClosed:false; no client-side statuscode filter
+    expect(hygieneSrc).toContain("includeClosed: false");
+    expect(hygieneSrc).not.toContain("statuscode === 1");
   });
 });
 
