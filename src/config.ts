@@ -38,7 +38,7 @@ if (existsSync(configPath)) {
 }
 
 /** Base URL of the customer's Dynamics 365 instance, e.g. https://acme.crm.dynamics.com */
-const rawDynamicsUrl = typeof raw.dynamicsUrl === "string" ? raw.dynamicsUrl : "https://servicenow.crm.dynamics.com";
+const rawDynamicsUrl = (typeof raw.dynamicsUrl === "string" ? raw.dynamicsUrl : "https://servicenow.crm.dynamics.com").replace(/\/+$/, "");
 
 // Validate URL format — catch bad config early
 if (!/^https?:\/\/[\w.-]+\.crm[\d]*\.dynamics\.com$/i.test(rawDynamicsUrl)) {

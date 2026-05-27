@@ -851,7 +851,7 @@ BEFORE generating any content: read the existing engagement (get_engagement), li
     risks: z.string().optional().describe("Risks or help required"),
     stakeholders: z.string().optional().describe("Stakeholders — use search_contacts for external titles. Internal SN: names only."),
     notes: z.string().optional().describe("Plain text description (only if structured fields not used)"),
-    timeline_title: z.string().optional().describe("Title for the timeline note (e.g. 'Discovery update - requirements captured')"),
+    timeline_title: z.string().optional().describe("Title for the timeline note. Use the engagement event date (completed_date or known date), NOT today. Format: '{Type} – {date}' e.g. 'Discovery – 2026-05-14'. Say 'updated', never 'created'."),
     timeline_text: z.string().optional().describe("Body text for the timeline note"),
   },
   async ({ engagement_id, name, type, primary_product_id, completed_date, mark_complete, use_case, key_points, secondary_points, submission_date, next_actions, risks, stakeholders, notes, timeline_title, timeline_text }) => {
