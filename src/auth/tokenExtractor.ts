@@ -137,9 +137,13 @@ async function openDefaultTabs(ctx: BrowserContext): Promise<void> {
       process.stderr.write(`[alfred:warn] failed to navigate to Dynamics: ${e instanceof Error ? e.message : String(e)}\n`);
     });
   }
-  await ctx.newPage().then(p => p.goto("https://teams.microsoft.com/v2/", { waitUntil: "domcontentloaded", timeout: 30_000 })).catch((e) => {
-    process.stderr.write(`[alfred:warn] failed to open Teams tab: ${e instanceof Error ? e.message : String(e)}\n`);
-  });
+  // Only open a Teams tab if one doesn't already exist in the persistent profile
+  const hasTeams = pages.some(p => p.url().startsWith("https://teams.microsoft.com"));
+  if (!hasTeams) {
+    await ctx.newPage().then(p => p.goto("https://teams.microsoft.com/v2/", { waitUntil: "domcontentloaded", timeout: 30_000 })).catch((e) => {
+      process.stderr.write(`[alfred:warn] failed to open Teams tab: ${e instanceof Error ? e.message : String(e)}\n`);
+    });
+  }
 }
 
 /**
@@ -181,7 +185,7 @@ export async function restartAlfred(progress: ProgressFn = () => {}): Promise<vo
   progress("🚀 Restarting Alfred...");
   _context = await launchContext();
   await openDefaultTabs(_context);
-  progress("✅ Alfred restarted — please log into Dynamics, Outlook and Teams if needed");
+  progress("✅ Alfred restarted — please log into Dynamics and Teams if needed");
 }
 
 export async function ensureAlfred(progress: ProgressFn = () => {}): Promise<void> {
@@ -193,7 +197,7 @@ export async function ensureAlfred(progress: ProgressFn = () => {}): Promise<voi
   progress("🚀 Launching Alfred automatically...");
   _context = await launchContext();
   await openDefaultTabs(_context);
-  progress("✅ Alfred ready — please log into Dynamics, Outlook and Teams in the new window");
+  progress("✅ Alfred ready — please log into Dynamics and Teams in the new window");
 }
 
 /** Probe Dynamics cookies to warn if session is expired or missing. */
