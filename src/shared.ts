@@ -68,13 +68,13 @@ export function getMs365MigrationNotice(): string | null {
   return [
     "⚠️  ALFRED UPDATE — ACTION REQUIRED",
     "",
-    "Alfred is now Dynamics-only. Calendar, email, and Teams chats are",
-    "handled by the official Microsoft 365 MCP connector.",
+    "Alfred is now Dynamics-only. Calendar, email, Teams chats, and",
+    "meeting transcripts are handled by the official Microsoft 365 MCP connector.",
     "",
     "WHAT YOU NEED TO DO:",
     "1. Install the Microsoft 365 MCP connector in Claude (one-time setup)",
     "2. In the Alfred Chrome window, only ONE tab is now required:",
-    "   servicenow.crm.dynamics.com — no more Outlook tab needed",
+    "   servicenow.crm.dynamics.com — no Outlook or Teams tab needed",
     "",
     "WHY THIS IS BETTER:",
     "- No more \"open Outlook in the Alfred window\" errors",
@@ -84,6 +84,7 @@ export function getMs365MigrationNotice(): string | null {
     "- Pagination on large result sets",
     "- Delegated calendar access (check a colleague's calendar)",
     "- No more silent token drops",
+    "- Meeting transcripts via MS 365 connector (OnlineMeetingTranscript.Read.All)",
     "",
     "ALFRED STILL OWNS EVERYTHING DYNAMICS:",
     "opportunities, engagements, hygiene sweep, deal review,",
@@ -92,7 +93,7 @@ export function getMs365MigrationNotice(): string | null {
     "",
     "Old M365 tools are parked (not deleted) — if the MS 365 connector",
     "regresses, we can roll them back. Going forward, please use the",
-    "MS 365 connector for calendar/email/Teams reads.",
+    "MS 365 connector for calendar/email/Teams/transcripts.",
     "",
     "Questions or issues during cutover? Reach out to Fredrik.",
   ].join("\n");
@@ -287,6 +288,16 @@ const UPDATE_FALLBACK =
   `\`\`\`bash\ncurl -fsSL https://raw.githubusercontent.com/h22fred/Alfred.mcp/main/setup/update.sh | bash\n\`\`\`\n\n` +
   `This is a one-time fix. All future updates will work automatically from Claude.`;
 
+const UPDATE_NO_GIT =
+  `⚠️ **Alfred was installed without Git** — automatic updates aren't available yet.\n\n` +
+  `To enable one-click updates, install Git for Windows and convert Alfred to a Git install:\n\n` +
+  `1. Install Git from https://git-scm.com/download/win (use the default options)\n` +
+  `2. Open **Git Bash** and run:\n` +
+  `\`\`\`bash\ncd ~/Documents\ngit clone https://github.com/h22fred/Alfred.mcp alfred.sc\n\`\`\`\n` +
+  `3. Update your Claude Desktop config to point at the new folder\n` +
+  `4. Delete the old extracted zip folder\n\n` +
+  `After that, \`update_alfred\` will work automatically from Claude.`;
+
 export type McpToolResult = { content: Array<{ type: "text"; text: string }> };
 
 /** Shared update_alfred implementation — identical for both sc and sales variants. */
@@ -294,6 +305,11 @@ export async function runUpdateAlfred(
   installDir: string,
   progress: (msg: string) => void
 ): Promise<McpToolResult> {
+  // Zip-installed users have no .git — detect early and give helpful instructions.
+  if (!existsSync(join(installDir, ".git"))) {
+    return { content: [{ type: "text", text: UPDATE_NO_GIT }] };
+  }
+
   progress("📡 Checking for updates...");
 
   try {

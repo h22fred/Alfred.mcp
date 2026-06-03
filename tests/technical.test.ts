@@ -512,11 +512,9 @@ describe("exitAlfred and restartAlfred lifecycle", () => {
     expect(launchIdx).toBeGreaterThan(exitIdx);
   });
 
-  it("restartAlfred opens Dynamics, Outlook and Teams tabs", () => {
-    // openDefaultTabs (called by restartAlfred) navigates to all 3 services
+  it("restartAlfred opens Dynamics tab only", () => {
+    // Alfred is now Dynamics-only — M365 connector handles Teams/Outlook
     expect(tokenSrc).toContain("DYNAMICS_URL");
-    expect(tokenSrc).toContain("OUTLOOK_URLS");
-    expect(tokenSrc).toContain("teams.microsoft.com");
     const fnBody = tokenSrc.slice(tokenSrc.indexOf("export async function restartAlfred"));
     expect(fnBody).toContain("openDefaultTabs");
   });

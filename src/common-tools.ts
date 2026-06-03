@@ -57,9 +57,15 @@ import {
 } from "./tools/dynamicsClient.js";
 import { ensureAlfred, exitAlfred, restartAlfred, clearAuthCache } from "./auth/tokenExtractor.js";
 import { clearGraphTokenCache } from "./tools/outlookClient.js";
-import { postTeamsNotification, getTeamsTranscript, setTeamsWebhook } from "./tools/teamsClient.js";
+import { postTeamsNotification, setTeamsWebhook } from "./tools/teamsClient.js";
 import { runHygieneSweep, formatHygieneReport } from "./tools/hygieneClient.js";
 import { detectPostMeetingEngagements, notifyPostMeetingCandidates } from "./tools/postMeetingClient.js";
+import { detectStalledDeals } from "./tools/stallClient.js";
+import {
+  loadExclusions, formatExclusions,
+  addExcludedOpp, addExcludedMilestones, addParentChildLink,
+  removeExcludedOpp, removeExcludedMilestones, removeParentChildLink,
+} from "./tools/hygieneExclusions.js";
 
 // ---------------------------------------------------------------------------
 // Internal helpers
@@ -990,55 +996,6 @@ assigned to a specific engagement record.`,
   );
 
   // ---------------------------------------------------------------------------
-  // Tool: get_teams_transcript
-  // ---------------------------------------------------------------------------
-  server.tool(
-    "get_teams_transcript",
-    `Fetch Teams meeting transcripts via Microsoft Graph. Use this to auto-generate engagement descriptions from recorded meetings.
-
-Requires Alfred to be running with Teams or Outlook open. The Graph token is captured automatically.`,
-    {
-      search:     z.string().optional().describe("Keyword to match meeting subject (e.g. 'Fabrikam ICW')"),
-      start_date: z.string().optional().describe("Search from this date (ISO, e.g. 2026-01-01) — defaults to 30 days ago"),
-      end_date:   z.string().optional().describe("Search to this date (ISO) — defaults to today"),
-      meeting_id: z.string().optional().describe("If already known, fetch transcript for this specific meeting ID directly"),
-    },
-    async ({ search, start_date, end_date, meeting_id }) => {
-      const progress = makeProgress(server);
-      const transcripts = await getTeamsTranscript({ search, startDate: start_date, endDate: end_date, meetingId: meeting_id }, progress);
-
-      if (transcripts.length === 0) {
-        return { content: [{ type: "text", text: "No meetings with transcripts found." }] };
-      }
-
-      const formatted = transcripts.map(t => {
-        const date = t.start ? new Date(t.start).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }) : "—";
-        const time = t.start ? new Date(t.start).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" }) : "";
-        const duration = t.start && t.end
-          ? `${Math.round((new Date(t.end).getTime() - new Date(t.start).getTime()) / 60000)} min`
-          : "";
-        const attendeeList = t.attendees.length ? t.attendees.join(", ") : "—";
-
-        const lines = [
-          `## ${t.subject ?? "Untitled Meeting"}`,
-          `📅 ${date}${time ? ` at ${time}` : ""}${duration ? ` · ${duration}` : ""}`,
-          `👥 ${attendeeList}`,
-        ];
-
-        if (t.transcript) {
-          lines.push("", "**Transcript:**", t.transcript);
-        } else {
-          lines.push("", "_No transcript available for this meeting._");
-        }
-
-        return lines.join("\n");
-      }).join("\n\n---\n\n");
-
-      return { content: [{ type: "text", text: externalData("Teams transcripts", formatted) }] };
-    }
-  );
-
-  // ---------------------------------------------------------------------------
   // Tool: run_hygiene_sweep
   // ---------------------------------------------------------------------------
   server.tool(
@@ -1200,6 +1157,246 @@ After uninstall, the user must restart Claude Desktop.`,
         fs.default.writeFileSync(cfgPath, JSON.stringify(cfg, null, 2));
       } catch (e) { process.stderr.write(`[alfred:warn] webhook config persist failed: ${e instanceof Error ? e.message : String(e)}\n`); }
       return { content: [{ type: "text", text: "✅ Teams webhook configured and saved. Notifications will post to that channel." }] };
+    }
+  );
+
+  // ---------------------------------------------------------------------------
+  // Tool: manage_hygiene_exclusions
+  // ---------------------------------------------------------------------------
+  server.tool(
+    "manage_hygiene_exclusions",
+    `Manage per-user hygiene exclusion rules stored in ~/.alfred/hygiene-exclusions.json.
+
+Exclusions prevent the same false positives from appearing on every hygiene sweep run:
+- **exclude_opp**: skip an opp entirely (backup scope, not your responsibility)
+- **exclude_milestones**: ignore specific milestone types for an opp or account
+  ("OPTY6321632 doesn't need Discovery/Demo — Tech Win context was enough")
+- **link_parent**: child opp inherits milestones from parent
+  ("OPTY1998441 is a renewal of OPTY1998351 — parent covers the Discovery/Demo")
+- **remove**: undo any of the above
+- **list**: show all active exclusions
+
+Opp references use the OPTY#### number (visible in Dynamics and in hygiene reports).
+Account references match the exact account name (case-insensitive).`,
+    {
+      action: z.enum(["list", "exclude_opp", "exclude_milestones", "link_parent", "remove_opp", "remove_milestones", "remove_link"])
+        .describe("What to do"),
+      opp: z.string().optional()
+        .describe("OPTY#### number of the opportunity to act on"),
+      account: z.string().optional()
+        .describe("Account name (for exclude_milestones at account level — applies to all opps on this account)"),
+      milestones: z.array(z.string()).optional()
+        .describe("Milestone type names to exclude, e.g. ['Discovery', 'Demo']"),
+      parent_opp: z.string().optional()
+        .describe("Parent OPTY#### number (for link_parent — child inherits parent's completed milestones)"),
+      reason: z.string().optional()
+        .describe("Optional note explaining why this exclusion exists (saved for reference)"),
+    },
+    async ({ action, opp, account, milestones, parent_opp, reason }) => {
+      switch (action) {
+        case "list":
+          return { content: [{ type: "text", text: formatExclusions(loadExclusions()) }] };
+
+        case "exclude_opp": {
+          if (!opp) return { content: [{ type: "text", text: "❌ `opp` is required for exclude_opp." }] };
+          addExcludedOpp(opp, reason);
+          return { content: [{ type: "text", text: `✅ **${opp.toUpperCase()}** excluded from hygiene sweeps.${reason ? `\nReason: ${reason}` : ""}` }] };
+        }
+
+        case "exclude_milestones": {
+          if (!opp && !account) return { content: [{ type: "text", text: "❌ Either `opp` or `account` is required for exclude_milestones." }] };
+          if (!milestones?.length) return { content: [{ type: "text", text: "❌ `milestones` list is required for exclude_milestones." }] };
+          addExcludedMilestones({ opp, account }, milestones, reason);
+          const target = opp ? `opp **${opp.toUpperCase()}**` : `account **${account}**`;
+          return { content: [{ type: "text", text: `✅ Milestones **${milestones.join(", ")}** will no longer be flagged for ${target}.${reason ? `\nReason: ${reason}` : ""}` }] };
+        }
+
+        case "link_parent": {
+          if (!opp || !parent_opp) return { content: [{ type: "text", text: "❌ Both `opp` (child) and `parent_opp` are required for link_parent." }] };
+          addParentChildLink(opp, parent_opp, reason);
+          return { content: [{ type: "text", text: `✅ **${opp.toUpperCase()}** will inherit milestones from parent **${parent_opp.toUpperCase()}** during hygiene checks.${reason ? `\nReason: ${reason}` : ""}` }] };
+        }
+
+        case "remove_opp": {
+          if (!opp) return { content: [{ type: "text", text: "❌ `opp` is required for remove_opp." }] };
+          const removed = removeExcludedOpp(opp);
+          return { content: [{ type: "text", text: removed ? `✅ Exclusion for **${opp.toUpperCase()}** removed.` : `⚠️ No exclusion found for **${opp.toUpperCase()}**.` }] };
+        }
+
+        case "remove_milestones": {
+          if (!opp && !account) return { content: [{ type: "text", text: "❌ Either `opp` or `account` is required for remove_milestones." }] };
+          const removed = removeExcludedMilestones({ opp, account });
+          const target = opp ?? account!;
+          return { content: [{ type: "text", text: removed ? `✅ Milestone exclusions for **${target}** removed.` : `⚠️ No milestone exclusions found for **${target}**.` }] };
+        }
+
+        case "remove_link": {
+          if (!opp) return { content: [{ type: "text", text: "❌ `opp` (child) is required for remove_link." }] };
+          const removed = removeParentChildLink(opp);
+          return { content: [{ type: "text", text: removed ? `✅ Parent link for **${opp.toUpperCase()}** removed.` : `⚠️ No parent link found for **${opp.toUpperCase()}**.` }] };
+        }
+      }
+    }
+  );
+
+  // ---------------------------------------------------------------------------
+  // Tool: find_stalled_deals
+  // ---------------------------------------------------------------------------
+  server.tool(
+    "find_stalled_deals",
+    `Find open opportunities with no engagement activity in the last N days.
+
+Different from hygiene sweep — this isn't about missing milestone types, it's about deals going quiet.
+Sorted by stall score (days × NNACV), so the biggest neglected deals surface first.
+
+A deal with no engagement ever ranks highest — those are often forgotten pipeline.
+Use this to identify deals that need a nudge before they slip past close date.`,
+    {
+      days: z.number().int().min(7).max(365).optional()
+        .describe("Flag deals with no activity in this many days (default: 30)"),
+      min_nnacv: z.number().min(0).optional()
+        .describe("Only include deals above this NNACV threshold (e.g. 50000 to focus on six-figure opps)"),
+      my_pipeline_only: z.boolean().optional()
+        .describe("true = your assigned opps only (default), false = full team / territory view (manager use)"),
+    },
+    async ({ days, min_nnacv, my_pipeline_only }) => {
+      const progress = makeProgress(server);
+      const results = await detectStalledDeals(
+        {
+          daysThreshold: days ?? 30,
+          minNnacv: min_nnacv ?? 0,
+          myOpportunitiesOnly: my_pipeline_only !== false,
+        },
+        progress
+      );
+
+      if (results.length === 0) {
+        return { content: [{ type: "text", text: `✅ No stalled deals — all open opportunities have had engagement activity in the last ${days ?? 30} days.` }] };
+      }
+
+      const threshold = days ?? 30;
+      const lines: string[] = [
+        `## Stalled deals — no engagement in ${threshold}+ days`,
+        `_${results.length} deal${results.length === 1 ? "" : "s"} found, sorted by urgency (stall days × NNACV)_`,
+        "",
+      ];
+
+      for (const d of results) {
+        const nnacvStr = d.nnacv
+          ? `$${(d.nnacv / 1000).toFixed(0)}K`
+          : "—";
+        const stallStr = d.daysSinceLastEngagement === null
+          ? "**No engagements ever**"
+          : `${d.daysSinceLastEngagement} days ago`;
+        const lastStr = d.daysSinceLastEngagement === null
+          ? ""
+          : ` (${d.lastEngagementType ?? "Unknown"} on ${d.lastEngagementDate})`;
+
+        lines.push(
+          `### ${d.oppName}`,
+          `- **Account:** ${d.accountName}`,
+          `- **NNACV:** ${nnacvStr}`,
+          `- **Close date:** ${d.closeDate ?? "—"}`,
+          `- **Last engagement:** ${stallStr}${lastStr}`,
+          "",
+        );
+      }
+
+      return { content: [{ type: "text", text: lines.join("\n") }] };
+    }
+  );
+
+  // ---------------------------------------------------------------------------
+  // Tool: configure_alfred
+  // ---------------------------------------------------------------------------
+  server.tool(
+    "configure_alfred",
+    `View or update Alfred's configuration stored in ~/.alfred-config.json.
+
+Use this tool to set up Alfred for the first time (e.g. after a zip install) or to
+change any setting conversationally without editing JSON files.
+
+Readable fields: dynamicsUrl, role, teamsWebhook, internalDomains, installedVersion.
+Writable fields: dynamicsUrl, role, teamsWebhook, internalDomains.
+
+**First-time setup flow:**
+1. Ask the user for their Dynamics URL (e.g. https://contoso.crm.dynamics.com)
+2. Ask for their role: sc | ssc | manager | sales | sales_specialist | sales_manager
+3. Optionally ask for Teams webhook URL
+4. Call configure_alfred with the gathered values
+
+**After updating dynamicsUrl**, tell the user to restart Claude Desktop so Alfred
+reconnects to the correct Dynamics instance.`,
+    {
+      action: z.enum(["read", "write"]).describe("'read' to show current config, 'write' to update one or more fields"),
+      dynamicsUrl: z.string().optional().describe("Dynamics 365 base URL, e.g. https://contoso.crm.dynamics.com"),
+      role: z.enum(["sc", "ssc", "manager", "sales", "sales_specialist", "sales_manager"]).optional().describe("User role"),
+      teamsWebhook: z.string().optional().describe("Teams incoming webhook URL for notifications"),
+      internalDomains: z.array(z.string()).optional().describe("List of internal email domains (e.g. ['contoso.com'])"),
+    },
+    async ({ action, dynamicsUrl, role, teamsWebhook, internalDomains }) => {
+      const cfgPath = join(homedir(), ".alfred-config.json");
+
+      if (action === "read") {
+        if (!existsSync(cfgPath)) {
+          return { content: [{ type: "text", text: "No config file found at ~/.alfred-config.json. Use action=write to create one." }] };
+        }
+        try {
+          const raw = JSON.parse(readFileSync(cfgPath, "utf8")) as Record<string, unknown>;
+          // Redact webhook URL for display (it's a secret token)
+          const display = { ...raw };
+          if (typeof display.teamsWebhook === "string" && display.teamsWebhook.length > 0) {
+            display.teamsWebhook = display.teamsWebhook.slice(0, 40) + "…[redacted]";
+          }
+          return { content: [{ type: "text", text: `**Alfred config** (~/.alfred-config.json):\n\`\`\`json\n${JSON.stringify(display, null, 2)}\n\`\`\`` }] };
+        } catch (e) {
+          return { content: [{ type: "text", text: `❌ Could not read config: ${e instanceof Error ? e.message : String(e)}` }] };
+        }
+      }
+
+      // action === "write"
+      const updates: Record<string, unknown> = {};
+      if (dynamicsUrl !== undefined) {
+        const trimmed = dynamicsUrl.trim().replace(/\/+$/, "");
+        if (!/^https?:\/\/[\w.-]+\.crm[\d]*\.dynamics\.com$/i.test(trimmed)) {
+          return { content: [{ type: "text", text: `❌ Invalid Dynamics URL. Expected format: https://COMPANY.crm.dynamics.com` }] };
+        }
+        updates.dynamicsUrl = trimmed;
+      }
+      if (role !== undefined)            updates.role = role;
+      if (teamsWebhook !== undefined) {
+        try {
+          const u = new URL(teamsWebhook);
+          if (!u.hostname.endsWith(".webhook.office.com")) {
+            return { content: [{ type: "text", text: "❌ teamsWebhook must be a *.webhook.office.com URL." }] };
+          }
+        } catch {
+          return { content: [{ type: "text", text: "❌ teamsWebhook is not a valid URL." }] };
+        }
+        updates.teamsWebhook = teamsWebhook;
+      }
+      if (internalDomains !== undefined) updates.internalDomains = internalDomains;
+
+      if (Object.keys(updates).length === 0) {
+        return { content: [{ type: "text", text: "Nothing to update — no fields were provided." }] };
+      }
+
+      try {
+        const existing = existsSync(cfgPath)
+          ? JSON.parse(readFileSync(cfgPath, "utf8")) as Record<string, unknown>
+          : {};
+        const merged = { ...existing, ...updates };
+        writeFileSync(cfgPath, JSON.stringify(merged, null, 2), "utf8");
+      } catch (e) {
+        return { content: [{ type: "text", text: `❌ Could not write config: ${e instanceof Error ? e.message : String(e)}` }] };
+      }
+
+      const changed = Object.keys(updates).join(", ");
+      const needsRestart = "dynamicsUrl" in updates;
+      return { content: [{ type: "text", text:
+        `✅ Config updated: ${changed}\n\n` +
+        (needsRestart ? "⚠️ **Restart Claude Desktop** for the new Dynamics URL to take effect." : "")
+      }] };
     }
   );
 

@@ -50,10 +50,11 @@ describe("SC / Sales tool parity", () => {
     "get_engagement_participants",
     "search_my_engagements",
     "search_my_collaboration_opportunities",
-    "get_teams_transcript",
     "configure_teams_webhook",
     "post_teams_notification",
     "run_hygiene_sweep",
+    "manage_hygiene_exclusions",
+    "find_stalled_deals",
     "detect_post_meeting_engagements",
     "search_accounts",
     "get_account",
@@ -85,6 +86,7 @@ describe("SC / Sales tool parity", () => {
     "update_opportunity_summary",
     "list_quotes",
     "create_account_engagement",
+    "configure_alfred",
   ];
 
   for (const tool of REQUIRED_SHARED) {
@@ -296,10 +298,10 @@ describe("tool description safety", () => {
   });
 
   it("external data sources use externalData wrapper", () => {
-    // Transcript (still in Alfred) must use externalData().
-    // Calendar/email/chats moved to M365 connector — no longer in Alfred.
+    // All M365 tools (calendar/email/chats/transcripts) moved to M365 connector.
+    // Remaining external data: Dynamics API responses wrapped in dynamicsClient.
     const allSrc = scSrc + salesSrc + commonSrc;
-    expect(allSrc).toContain('externalData("Teams transcripts"');
+    expect(allSrc).toContain("externalData(");
   });
 
   it("read-before-write instruction in create_engagement", () => {

@@ -10,7 +10,7 @@ Built by **Fred** — Solution Consultant
 
 Connects Claude Desktop directly to your CRM — using your existing browser session. No Azure app registration. No stored credentials. No CRM admin work ever again.
 
-> **Note:** Calendar, email, and Teams chat are now handled by the [Microsoft 365 connector](https://claude.ai/settings/integrations) in Claude Desktop — no Alfred needed for those.
+> **Note:** Calendar, email, Teams chat, and meeting transcripts are now handled by the [Microsoft 365 connector](https://claude.ai/settings/integrations) in Claude Desktop — no Alfred needed for those.
 
 Two flavours — one installer:
 
@@ -28,7 +28,7 @@ Two flavours — one installer:
 | Source | Capabilities |
 |--------|-------------|
 | **Dynamics 365** | List opportunities (incl. colleague pipeline), create/update/complete engagements, create on behalf of colleague, hygiene sweep, Tech Win assessment, collaboration notes, delete cancelled engagements |
-| **Teams** | Get meeting transcripts (unique — not in M365 connector), post to channels |
+| **Teams** | Post to channels |
 | **Account Insights** | License utilization, renewal dates, upsell/cross-sell detection |
 
 ### Alfred Sales (Account Executive)
@@ -36,7 +36,7 @@ Two flavours — one installer:
 | Source | Capabilities |
 |--------|-------------|
 | **Dynamics 365** | Create & update opportunities, assign SC, search accounts/users, add notes, territory pipeline overview |
-| **Teams** | Get meeting transcripts (unique — not in M365 connector), post to channels |
+| **Teams** | Post to channels |
 | **Account Insights** | License utilization, renewal dates, upsell/cross-sell detection |
 
 ---
@@ -150,7 +150,6 @@ Which accounts are missing a Technical Win?
 Assess the Tech Win for Acme Corp
 Create a Discovery engagement for Contoso from my Tuesday meeting
 Mark the Acme Tech Win as complete
-Get the transcript from my Contoso demo last Thursday
 Detect post-meeting engagements from this week
 Delete the cancelled Demo engagement on Fabrikam
 Show me Stéphane's open pipeline
@@ -176,9 +175,8 @@ Alfred launches a private Chromium browser (named "Alfred") via Playwright with 
 
 Auth flow:
 1. **Dynamics:** reads `CrmOwinAuthC1/C2` cookies from the live session
-2. **Teams Graph token:** captured from the Teams tab (used for meeting transcripts only)
-3. Tokens cached to disk — survive Claude Desktop restarts without re-login
-4. Browser closes automatically ~3 seconds after tokens are cached — reopens silently when next needed (typically every ~8 hours when the cache expires)
+2. Tokens cached to disk — survive Claude Desktop restarts without re-login
+3. Browser closes automatically ~3 seconds after tokens are cached — reopens silently when next needed (typically every ~8 hours when the cache expires)
 
 ---
 

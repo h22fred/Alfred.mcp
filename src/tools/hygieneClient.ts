@@ -7,6 +7,12 @@ import {
 } from "./dynamicsClient.js";
 import { postAdaptiveCard } from "./teamsClient.js";
 import type { ProgressFn } from "../auth/tokenExtractor.js";
+import {
+  loadExclusions,
+  isOppExcluded,
+  getExcludedMilestones,
+  getParentLink,
+} from "./hygieneExclusions.js";
 
 // Fallback engagement types if none configured
 const DEFAULT_REQUIRED: string[] = ["Discovery", "Demo", "Technical Win"];
@@ -84,12 +90,20 @@ export async function runHygieneSweep(opts: {
   );
 
   // Client-side filter for noise patterns (App Store renewals, etc.)
-  const filtered = excludeAppStore
+  const noiseFiltered = excludeAppStore
     ? opps.filter(o => !NOISE_PATTERNS.some(p => p.test(o.name)))
     : opps;
 
-  if (filtered.length < opps.length) {
-    progress(`🧹 Filtered ${opps.length - filtered.length} noise opportunities (App Store renewals etc.)`);
+  if (noiseFiltered.length < opps.length) {
+    progress(`🧹 Filtered ${opps.length - noiseFiltered.length} noise opportunities (App Store renewals etc.)`);
+  }
+
+  // Apply per-user exclusions from ~/.alfred/hygiene-exclusions.json
+  const exclusions = loadExclusions();
+  const filtered = noiseFiltered.filter(o => !isOppExcluded(o, exclusions));
+  const excludedCount = noiseFiltered.length - filtered.length;
+  if (excludedCount > 0) {
+    progress(`🚫 Skipped ${excludedCount} user-excluded opportunit${excludedCount === 1 ? "y" : "ies"}`);
   }
 
   progress(`📋 Checking ${filtered.length} opportunities...`);
@@ -105,9 +119,30 @@ export async function runHygieneSweep(opts: {
         // Exclude cancelled engagements entirely
         const activeEngagements = engagements.filter(e => !e.statusName?.toLowerCase().includes("cancel"));
         // For "type present?" check, count both open and completed — a completed Discovery still counts
-        const typeNames = activeEngagements.map(e => e.engagementTypeName ?? "").filter(Boolean);
+        let typeNames = activeEngagements.map(e => e.engagementTypeName ?? "").filter(Boolean);
 
-        const missingRequired = requiredTypes.filter(t => !typeNames.includes(t));
+        // Parent-child link: merge parent's engagement types so child isn't penalised
+        // for milestones covered by the parent deal (e.g. renewal inheriting parent scope)
+        const parentOptyNum = getParentLink(opp, exclusions);
+        if (parentOptyNum) {
+          // Find the parent opp in the already-fetched set first (common case)
+          const parentOpp = filtered.find(o => o.sn_number?.toUpperCase() === parentOptyNum.toUpperCase());
+          const parentId = parentOpp?.opportunityid;
+          if (parentId) {
+            const parentEngagements = await fetchEngagementsByOpportunity(parentId, progress);
+            const parentTypes = parentEngagements
+              .filter(e => !e.statusName?.toLowerCase().includes("cancel"))
+              .map(e => e.engagementTypeName ?? "")
+              .filter(Boolean);
+            typeNames = [...new Set([...typeNames, ...parentTypes])];
+          }
+        }
+
+        // Apply per-opp and per-account milestone exclusions
+        const excludedMilestones = getExcludedMilestones(opp, exclusions);
+        const effectiveRequired = requiredTypes.filter(t => !excludedMilestones.has(t));
+
+        const missingRequired = effectiveRequired.filter(t => !typeNames.includes(t));
         const missingOptional: string[] = [];
 
         const status: HygieneResult["status"] =
