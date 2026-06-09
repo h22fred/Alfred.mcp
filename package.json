@@ -13,7 +13,7 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",
-    "hono": "^4.12.21",
+    "hono": "^4.12.25",
     "playwright": "^1.60.0"
   },
   "devDependencies": {
